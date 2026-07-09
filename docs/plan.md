@@ -633,27 +633,27 @@ PLAN_MODE_MIN_WORDS = 200
 
 ### Step 1.1 — Config Layer
 
-- [ ] `config/defaults.py` — All default constants (model, limits, paths, thresholds)
-- [ ] `config/settings.py` — `Settings` class: env vars, optional config file, CLI arg overlay
+- [x] `config/defaults.py` — All default constants (model, limits, paths, thresholds)
+- [x] `config/settings.py` — `Settings` class: env vars, optional config file, CLI arg overlay
 
 ### Step 1.2 — LLM Types
 
-- [ ] `llm/types.py` — `ContentBlock`, `Message`, `StreamEvent`, `TokenUsage`, `LLMResponse`
+- [x] `llm/types.py` — `ContentBlock`, `Message`, `StreamEvent`, `TokenUsage`, `LLMResponse`
 
 ### Step 1.3 — Agent Events
 
-- [ ] `agent/events.py` — `AgentEvent` base + `TextDelta`, `ToolCallStart/Delta/End`, `PlanProposed`, `AgentPaused`, `AgentFinished`, `AgentError`
+- [x] `agent/events.py` — `AgentEvent` base + `TextDelta`, `ToolCallStart/Delta/End`, `PlanProposed`, `AgentPaused`, `AgentFinished`, `AgentError`
 
 ### Step 1.4 — Tool Base
 
-- [ ] `tools/base.py` — `Permission` enum, `BaseTool` ABC, `ToolResult` dataclass
+- [x] `tools/base.py` — `Permission` enum, `BaseTool` ABC, `ToolResult` dataclass
 
 ### Step 1.5 — Package Skeleton
 
-- [ ] `pyproject.toml` — Package metadata, dependencies, entry point
-- [ ] `__init__.py` files for all packages
+- [x] `pyproject.toml` — Package metadata, dependencies, entry point
+- [x] `__init__.py` files for all packages
 
-**Milestone**: All core abstractions defined and importable. Unit tests pass for data model serialization.
+**Milestone**: ~~All core abstractions defined and importable. Unit tests pass for data model serialization.~~ ✅ Complete — all modules verified importable with Python 3.14.5.
 
 ---
 
