@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Literal
+from datetime import UTC, datetime
+from typing import Literal, Self
 
 # ---------------------------------------------------------------------------
 # Content blocks — the building blocks of messages
@@ -42,11 +42,13 @@ class ContentBlock:
     # ------------------------------------------------------------------
 
     @classmethod
-    def text_block(cls, text: str) -> "ContentBlock":
+    def text_block(cls, text: str) -> Self:
         return cls(type="text", text=text)
 
     @classmethod
-    def tool_use_block(cls, tool_id: str, tool_name: str, tool_input: dict) -> "ContentBlock":
+    def tool_use_block(
+        cls, tool_id: str, tool_name: str, tool_input: dict
+    ) -> Self:
         return cls(
             type="tool_use",
             tool_id=tool_id,
@@ -57,7 +59,7 @@ class ContentBlock:
     @classmethod
     def tool_result_block(
         cls, tool_id: str, content: str, *, is_error: bool = False
-    ) -> "ContentBlock":
+    ) -> Self:
         return cls(
             type="tool_result",
             tool_id=tool_id,
@@ -77,28 +79,30 @@ class Message:
 
     role: Literal["system", "user", "assistant", "tool"]
     content: list[ContentBlock]
-    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     @classmethod
-    def system(cls, text: str) -> "Message":
+    def system(cls, text: str) -> Self:
         return cls(role="system", content=[ContentBlock.text_block(text)])
 
     @classmethod
-    def user(cls, text: str) -> "Message":
+    def user(cls, text: str) -> Self:
         return cls(role="user", content=[ContentBlock.text_block(text)])
 
     @classmethod
-    def assistant(cls, blocks: list[ContentBlock] | None = None) -> "Message":
+    def assistant(cls, blocks: list[ContentBlock] | None = None) -> Self:
         return cls(role="assistant", content=blocks or [])
 
     @classmethod
-    def tool(cls, blocks: list[ContentBlock]) -> "Message":
+    def tool(cls, blocks: list[ContentBlock]) -> Self:
         return cls(role="tool", content=blocks)
 
     @property
     def text(self) -> str:
         """Concatenated text from all text blocks (convenience)."""
-        return "".join(b.text for b in self.content if b.type == "text" and b.text)
+        return "".join(
+            b.text for b in self.content if b.type == "text" and b.text
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -155,12 +159,12 @@ class TokenUsage:
     def total(self) -> int:
         return self.input_tokens + self.output_tokens
 
-    def __add__(self, other: "TokenUsage") -> "TokenUsage":
+    def __add__(self, other: Self) -> Self:
         return TokenUsage(
             input_tokens=self.input_tokens + other.input_tokens,
             output_tokens=self.output_tokens + other.output_tokens,
             cache_read_tokens=self.cache_read_tokens + other.cache_read_tokens,
-            cache_creation_tokens=self.cache_creation_tokens + other.cache_creation_tokens,
+            cache_creation_tokens=self.cache_creation_tokens + other.cache_creation_tokens,  # noqa: E501
         )
 
 
