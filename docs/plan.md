@@ -679,15 +679,15 @@ PLAN_MODE_MIN_WORDS = 200
 
 **Goal**: Complete tool suite for file ops, shell, git, and search.
 
-- [ ] `tools/registry.py` — `ToolRegistry` (register/deregister/get/list_schemas)
-- [ ] `tools/executor.py` — `ToolExecutor` (permission gates, checkpoint hook stubbed for later)
-- [ ] `tools/files.py` — `ReadFile`, `WriteFile`, `EditFile`
+- [x] `tools/registry.py` — `ToolRegistry` (register/deregister/get/list_schemas)
+- [x] `tools/executor.py` — `ToolExecutor` (permission gates, checkpoint hook stubbed for later)
+- [x] `tools/files.py` — `ReadFile`, `WriteFile`, `EditFile`
     - `EditFile` validates `old_string` appears exactly once
-- [ ] `tools/shell.py` — `Shell` with timeout, working dir, env isolation, command classification
-- [ ] `tools/search.py` — `Grep` (subprocess `grep -rn`), `Glob` (`pathlib.glob`)
-- [ ] `tools/git.py` — `GitDiff`, `GitLog`, `GitStatus`, `GitCommit`, `GitBranch`
+- [x] `tools/shell.py` — `Shell` with timeout, working dir, env isolation, command classification
+- [x] `tools/search.py` — `Grep` (subprocess `grep -rn`), `Glob` (`pathlib.glob`)
+- [x] `tools/git.py` — `GitDiff`, `GitLog`, `GitStatus`, `GitCommit`, `GitBranch`
 
-**Milestone**: All tools execute correctly in isolated temp directories. Permission classification works.
+**Milestone**: ~~All tools execute correctly in isolated temp directories. Permission classification works.~~ ✅ Complete — all tools verified with integration tests, ruff clean.
 
 ---
 
