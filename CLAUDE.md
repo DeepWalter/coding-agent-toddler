@@ -2,6 +2,17 @@
 
 Custom Python CLI coding agent. See `docs/plan.md` for architecture and roadmap.
 
+## Development Environment
+
+Always use the project virtual environment `.venv` for all Python commands:
+
+```
+.venv/bin/python   # Python interpreter
+.venv/bin/pip      # Package installer
+```
+
+Never use the system Python or any other interpreter.
+
 ## Commit Conventions
 
 All commits follow `.github/COMMIT_STYLE_GUIDE.md`.

@@ -661,9 +661,9 @@ PLAN_MODE_MIN_WORDS = 200
 
 **Goal**: Working OpenAI-compatible API integration with streaming and tool use.
 
-- [ ] `llm/base.py` — `BaseLLMProvider` ABC (provider-agnostic interface)
-- [ ] `llm/token_counter.py` — tiktoken-based counting with model-specific encodings
-- [ ] `llm/provider.py` — `OpenAICompatibleProvider`:
+- [x] `llm/base.py` — `BaseLLMProvider` ABC (provider-agnostic interface)
+- [x] `llm/token_counter.py` — tiktoken-based counting with model-specific encodings
+- [x] `llm/provider.py` — `OpenAICompatibleProvider`:
     - Uses `openai.AsyncOpenAI` with configurable `base_url` and `api_key`
     - Streaming via `chat.completions.create(stream=True)`
     - Tool calling via the API's native `tools` parameter and `tool_calls` response
@@ -671,7 +671,7 @@ PLAN_MODE_MIN_WORDS = 200
     - Error handling: API errors, rate limits (429), context length exceeded
     - Works with DeepSeek, OpenAI, and any compatible endpoint
 
-**Milestone**: Can send messages to DeepSeek and stream responses. Token counting works. Provider is swappable via config.
+**Milestone**: ~~Can send messages to DeepSeek and stream responses. Token counting works. Provider is swappable via config.~~ ✅ Complete — all modules verified importable, ruff clean, message conversion tests pass.
 
 ---
 
