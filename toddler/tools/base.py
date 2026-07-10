@@ -17,7 +17,7 @@ class Permission(Enum):
     READ = "read"               # side-effect-free reads (auto-approve)
     WRITE = "write"             # file mutations (confirm by default)
     SHELL_SAFE = "shell_safe"   # safe shell commands — ls, git status, etc.
-    SHELL_DANGEROUS = "shell_dangerous"  # rm, sudo, curl, etc. (always confirm)
+    SHELL_DANGEROUS = "shell_dangerous"  # rm, sudo, curl, etc. (always confirm)  # noqa: E501
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +85,18 @@ class BaseTool(ABC):
     def permission(self) -> Permission:
         """Default permission is READ; override for mutating tools."""
         return Permission.READ
+
+    def get_permission(self, **kwargs) -> Permission:  # noqa: ARG002
+        """Resolve the effective permission for a specific invocation.
+
+        Most tools return a static ``permission``, but tools like ``Shell``
+        that need to inspect the parameters (e.g. the command string) can
+        override this method to return a dynamic permission level.
+
+        The executor always calls this method (not the property directly)
+        so that dynamic classification works transparently.
+        """
+        return self.permission
 
     # ------------------------------------------------------------------
     # Serialisation
