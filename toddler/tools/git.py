@@ -44,7 +44,11 @@ async def _git(
 
 def _resolve_repo_path(repo_path: str | None) -> str:
     """Resolve the repo path, defaulting to cwd."""
-    return str(Path(repo_path).expanduser().resolve()) if repo_path else os.getcwd()
+    return (
+        str(Path(repo_path).expanduser().resolve())
+        if repo_path
+        else os.getcwd()
+    )
 
 
 def _git_error(tool_name: str, stderr: str, returncode: int) -> ToolResult:
@@ -138,7 +142,7 @@ class GitDiff(BaseTool):
             },
             "target": {
                 "type": "string",
-                "description": "Optional file or directory to restrict the diff to.",
+                "description": "Optional file or directory to restrict the diff to.",  # noqa: E501
             },
             "commit": {
                 "type": "string",
@@ -217,7 +221,7 @@ class GitLog(BaseTool):
             },
             "max_count": {
                 "type": "integer",
-                "description": "Maximum number of commits to show (default: 20).",
+                "description": "Maximum number of commits to show (default: 20).",  # noqa: E501
                 "default": 20,
             },
             "oneline": {

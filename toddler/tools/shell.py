@@ -190,7 +190,9 @@ class Shell(BaseTool):
         "required": ["command"],
     }
 
-    def __init__(self, default_timeout: int = 60, max_output: int = 50_000) -> None:
+    def __init__(
+        self, default_timeout: int = 60, max_output: int = 50_000
+    ) -> None:
         self._default_timeout = default_timeout
         self._max_output = max_output
 
@@ -219,8 +221,12 @@ class Shell(BaseTool):
         working_dir: str | None = None,
         timeout: int | None = None,
     ) -> ToolResult:
-        cwd = Path(working_dir).expanduser().resolve() if working_dir else None
-        if cwd and not cwd.is_dir():
+        cwd = (
+            str(Path(working_dir).expanduser().resolve())
+            if working_dir
+            else os.getcwd()
+        )
+        if working_dir and not Path(cwd).is_dir():
             return ToolResult(
                 tool_id="",
                 tool_name=self.name,
@@ -229,12 +235,14 @@ class Shell(BaseTool):
                 error=f"Working directory does not exist: {cwd}",
             )
 
-        effective_timeout = timeout if timeout is not None else self._default_timeout
+        effective_timeout = (
+            timeout if timeout is not None else self._default_timeout
+        )
 
         try:
             stdout, stderr, returncode = await _run_command(
                 command,
-                cwd=str(cwd) if cwd else None,
+                cwd=cwd,
                 timeout=effective_timeout,
             )
         except TimeoutError:
@@ -243,7 +251,8 @@ class Shell(BaseTool):
                 tool_name=self.name,
                 success=False,
                 output="",
-                error=f"Command timed out after {effective_timeout}s: {command[:200]}",
+                error=f"Command timed out after {effective_timeout}s: "
+                      f"{command[:200]}",
             )
         except Exception as exc:
             return ToolResult(
@@ -278,7 +287,7 @@ class Shell(BaseTool):
             metadata={
                 "command": command,
                 "returncode": returncode,
-                "cwd": str(cwd) if cwd else os.getcwd(),
+                "cwd": cwd,
                 "timeout": effective_timeout,
             },
         )

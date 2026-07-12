@@ -49,7 +49,7 @@ class Grep(BaseTool):
             },
             "max_results": {
                 "type": "integer",
-                "description": "Maximum number of matches to return (default: 100).",
+                "description": "Maximum number of matches to return (default: 100).",  # noqa: E501
                 "default": 100,
             },
             "ignore_case": {
@@ -267,7 +267,7 @@ class Glob(BaseTool):
             "pattern": {
                 "type": "string",
                 "description": (
-                    "Glob pattern, e.g. ``'**/*.py'`` or ``'src/**/test_*.py'``."
+                    "Glob pattern, e.g. ``'**/*.py'`` or ``'src/**/test_*.py'``."  # noqa: E501
                 ),
             },
             "path": {
@@ -332,7 +332,7 @@ class Glob(BaseTool):
         truncated = len(matches) > max_results
         output = "\n".join(result_lines)
         if truncated:
-            output += f"\n\n... ({len(matches) - max_results} more results not shown)"
+            output += f"\n\n... ({len(matches) - max_results} more results not shown)"  # noqa: E501
 
         return ToolResult(
             tool_id="",
