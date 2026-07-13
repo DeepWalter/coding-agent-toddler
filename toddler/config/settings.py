@@ -6,11 +6,13 @@ import argparse
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 from dotenv import load_dotenv
 
 from toddler.config import defaults
+
+# ruff: noqa: E501
 
 # Load .env from cwd (and parent dirs) before reading env vars
 load_dotenv()
@@ -94,7 +96,7 @@ class Settings:
 
     # ------------------------------------------------------------------
     @classmethod
-    def from_cli(cls, cli_args: argparse.Namespace) -> "Settings":
+    def from_cli(cls, cli_args: argparse.Namespace) -> Self:
         """Build Settings from defaults + env + CLI Namespace overlay."""
         base = cls()
 
