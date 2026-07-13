@@ -56,7 +56,7 @@ class ToolCallEnd(AgentEvent):
     tool_id: str
     tool_name: str
     input: dict
-    result: "ToolResult | None" = None
+    result: ToolResult | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -68,7 +68,7 @@ class ToolCallEnd(AgentEvent):
 class PlanProposed(AgentEvent):
     """The agent is presenting a plan for user approval."""
 
-    plan: "Plan"  # noqa: F821  # forward reference to agent.state_machine.Plan
+    plan: Plan  # noqa: F821  # forward reference to agent.state_machine.Plan
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +94,7 @@ class AgentFinished(AgentEvent):
     """The agent has completed the task."""
 
     reason: str
-    usage: "TokenUsage | None" = None
+    usage: TokenUsage | None = None
 
 
 @dataclass

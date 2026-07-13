@@ -683,15 +683,15 @@ PLAN_MODE_MIN_WORDS = 200
 
 **Goal**: The core tool-calling loop works end-to-end (non-streaming first).
 
-- [ ] `agent/stop_conditions.py` — `StopConditionChecker`
-- [ ] `agent/loop.py` — `AgentLoop`:
+- [x] `agent/stop_conditions.py` — `StopConditionChecker`
+- [x] `agent/loop.py` — `AgentLoop`:
     - Prepare messages → call LLM → parse response
     - If text-only + end_turn → done
     - If tool calls → execute via ToolExecutor → feed results back → loop
     - Permission checking with callback-based user confirmation
     - Error recovery: tool errors fed back to LLM as `is_error=true`
 
-**Milestone**: Agent loop works with mock LLM. Handles text, tool calls, errors, and stop conditions.
+**Milestone**: ~~Agent loop works with mock LLM. Handles text, tool calls, errors, and stop conditions.~~ ✅ Complete — 33 tests pass, ruff clean.
 
 ---
 
