@@ -237,42 +237,30 @@ class Plan:
 
 ## Agent Loop State Machine
 
-```
-                    ┌──────────────────┐
-                    │       IDLE       │
-                    └────────┬─────────┘
-                             │ user input received
-                             ▼
-                    ┌──────────────────┐
-                    │  CLASSIFY_INTENT │  ← Heuristic: complexity?
-                    └──────┬───────┬───┘
-                           │       │
-               simple      │       │  complex / --plan / /plan
-                           ▼       ▼
-                    ┌──────────┐ ┌────────────────┐
-                    │ EXECUTING│ │ PLAN_EXPLORING │  ← Agent researches, reads files
-                    └────┬─────┘ └───────┬────────┘
-                         │               │ agent signals done
-                         │        ┌──────▼────────┐
-                         │        │ PLAN_PROPOSING│  ← Agent presents plan to user
-                         │        └──────┬────────┘
-                         │               │
-                         │        ┌──────▼────────┐
-                         │        │ PLAN_WAITING  │  ← Awaiting user action
-                         │        └──┬─────────┬──┘
-                         │    reject │         │approve
-                         │    (with  │         ▼
-                         │  feedback)│ ┌────────────────┐
-                         │        ┌──┘ │PLAN_EXECUTING  │  ← Execute approved plan
-                         │        ▼    └──────┬─────────┘
-                         │  PLAN_EXPLORING    │
-                         │                    │
-                         └────────────────────┘
-                                  │ agent signals finished
-                                  ▼
-                         ┌──────────────────┐
-                         │     FINISHED     │
-                         └──────────────────┘
+```mermaid
+---
+title: Agent Loop State Machine
+---
+flowchart TD
+    IDLE[IDLE] -->|user input received| CLASSIFY_INTENT[CLASSIFY_INTENT]
+
+    CLASSIFY_INTENT -->|Heuristic| COMPLEXITY{complexity}
+
+    COMPLEXITY -->|simple| EXECUTING[EXECUTING]
+    COMPLEXITY -->|"complex / '--plan' / '/plan'"| PLAN_EXPLORING["`**PLAN_EXPLORING**<br/>Agent researches, reads files`"]
+
+    EXECUTING -->|agent signals finished| FINISHED[FINISHED]
+
+    PLAN_EXPLORING -->|agent signals done| PLAN_PROPOSING["`**PLAN_PROPOSING**<br/>Agent presents plan to user`"]
+
+    PLAN_PROPOSING --> PLAN_WAITING["`**PLAN_WAITING**<br/>Awaiting user action`"]
+
+    PLAN_WAITING -->|approve| PLAN_EXECUTING["`**PLAN_EXECUTING**
+    Execute approved plan`"]
+    PLAN_WAITING -->|"reject<br/>(plain)"| FINISHED
+    PLAN_WAITING -->|"reject<br/>(with feedback)"| PLAN_EXPLORING
+
+    PLAN_EXECUTING -->|agent signals finished| FINISHED
 ```
 
 ### Complexity Heuristic (Auto-Trigger Plan Mode)
