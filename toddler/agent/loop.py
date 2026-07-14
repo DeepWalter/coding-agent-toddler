@@ -85,7 +85,7 @@ class AgentLoop:
 
         # Confirmation gate — see _execute_with_gating for the protocol.
         self._approval_event: asyncio.Event | None = None
-        self._approval_result: bool = False
+        self._approval_granted: bool = False
 
     # ==================================================================
     # Public API
@@ -221,7 +221,7 @@ class AgentLoop:
                     # approve/deny immediately without a race.
                     if self._needs_confirmation_for(call):
                         self._approval_event = asyncio.Event()
-                        self._approval_result = False
+                        self._approval_granted = False
 
                         tool = self._registry.get(call.tool_name)
                         summary = (
@@ -288,12 +288,12 @@ class AgentLoop:
 
     async def approve_tool_call(self, tool_id: str = "") -> None:  # noqa: ARG002
         """Approve the pending tool confirmation and unblock the loop."""
-        self._approval_result = True
+        self._approval_granted = True
         self._signal_approval()
 
     async def deny_tool_call(self, tool_id: str = "") -> None:  # noqa: ARG002
         """Deny the pending tool confirmation and unblock the loop."""
-        self._approval_result = False
+        self._approval_granted = False
         self._signal_approval()
 
     def _signal_approval(self) -> None:
@@ -338,7 +338,7 @@ class AgentLoop:
         if self._approval_event is not None:
             await self._approval_event.wait()
 
-        if not self._approval_result:
+        if not self._approval_granted:
             return ToolResult(
                 tool_id=call.tool_id,
                 tool_name=call.tool_name,
