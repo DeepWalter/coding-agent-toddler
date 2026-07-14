@@ -1,8 +1,9 @@
 """Core agent loop — the tool-calling orchestration engine.
 
-Phase 4 implements the basic non-streaming loop: send messages to the LLM,
-parse the response, execute any requested tool calls, feed results back,
-and repeat until the LLM signals ``end_turn`` or a stop condition is hit.
+Phase 4 implemented the basic non-streaming loop.  Phase 6 adds streaming
+support: the agent now calls the LLM with ``stream=True`` by default and
+uses :class:`~toddler.streaming.handler.StreamHandler` to process the
+real-time token stream, yielding :class:`AgentEvent` objects as they arrive.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from toddler.agent.events import (
     ToolCallStart,
 )
 from toddler.agent.stop_conditions import StopConditionChecker
-from toddler.llm.types import ContentBlock, Message
+from toddler.llm.types import ContentBlock, Message, TokenUsage
 from toddler.tools.base import Permission, ToolCall, ToolResult
 
 if TYPE_CHECKING:
@@ -98,6 +99,7 @@ class AgentLoop:
         system_prompt: str | None = None,
         max_iterations: int | None = None,
         token_budget: int | None = None,
+        stream: bool = False,
     ) -> AsyncIterator[AgentEvent]:
         """Run the agent loop for a single user request.
 
@@ -112,6 +114,10 @@ class AgentLoop:
             Override the configured max iterations.
         token_budget:
             Hard cap on total tokens consumed across all LLM calls.
+        stream:
+            When ``True``, uses streaming LLM calls with real-time
+            token-by-token output (default ``False`` for backward
+            compatibility with tests and non-streaming flows).
         """
         # --- setup ---
         sys_text = (
@@ -143,53 +149,66 @@ class AgentLoop:
                 yield AgentFinished(reason=stop_reason.message, usage=None)
                 return
 
-            # -- call LLM (non-streaming) ---
+            # -- call LLM ---
             logger.debug(
                 f"Iteration {stop_checker.iteration} — "
-                f"calling LLM with {len(messages)} messages"
+                f"calling LLM with {len(messages)} messages "
+                f"(stream={stream})"
             )
-            try:
-                response = await self._llm.generate(
-                    messages,
-                    tools,
-                    max_tokens=self._settings.max_tokens_per_response,
-                    temperature=self._settings.temperature,
-                    stream=False,
+
+            if stream:
+                # ── streaming path ───────────────────────────────────
+                async for event in self._call_llm_streaming(
+                    messages, tools,
+                ):
+                    yield event
+                assistant_msg = self._stream_handler.assemble_message()
+                stop_reason = (
+                    self._stream_handler.stop_reason or "end_turn"
                 )
-            except Exception as exc:
-                logger.exception("LLM call failed")
-                yield AgentError(message=str(exc), recoverable=True)
+                usage = self._stream_handler.usage or TokenUsage()
+            else:
+                # ── non-streaming path ───────────────────────────────
+                try:
+                    assistant_msg, stop_reason, usage = (
+                        await self._call_llm_non_streaming(
+                            messages, tools,
+                        )
+                    )
+                except Exception as exc:
+                    logger.exception("LLM call failed")
+                    yield AgentError(
+                        message=str(exc), recoverable=True,
+                    )
+                    yield AgentFinished(
+                        reason=f"LLM error: {exc}", usage=None,
+                    )
+                    return
+
+                # Yield text (all at once in non-streaming mode).
+                text = assistant_msg.text
+                if text:
+                    yield TextDelta(text=text)
+
+            # If the LLM call itself failed fatally, assistant_msg will be
+            # None and we should stop.
+            if assistant_msg is None:
                 yield AgentFinished(
-                    reason=f"LLM error: {exc}", usage=None
+                    reason=f"LLM error: {stop_reason or 'unknown'}",
+                    usage=usage,
                 )
                 return
 
-            stop_checker.add_tokens(response.usage)
-
-            # -- extract assistant message ---
-            assistant_msg = (
-                response.messages[0]
-                if response.messages
-                else Message.assistant()
-            )
-
-            # -- yield any text ---
-            text = assistant_msg.text
-            if text:
-                yield TextDelta(text=text)
+            stop_checker.add_tokens(usage)
 
             # -- handle stop reason ---
-            sr = StopConditionChecker.from_llm_stop_reason(
-                response.stop_reason
-            )
+            sr = StopConditionChecker.from_llm_stop_reason(stop_reason)
             if sr is not None:
-                yield AgentFinished(
-                    reason=sr.message, usage=response.usage
-                )
+                yield AgentFinished(reason=sr.message, usage=usage)
                 return
 
             # -- tool_use: execute and feed back ---
-            if response.stop_reason == "tool_use":
+            if stop_reason == "tool_use":
                 tool_calls = self._extract_tool_calls(assistant_msg)
 
                 if not tool_calls:
@@ -200,7 +219,7 @@ class AgentLoop:
                     yield AgentFinished(
                         reason="LLM indicated tool use but produced no "
                         "tool calls.",
-                        usage=response.usage,
+                        usage=usage,
                     )
                     return
 
@@ -277,8 +296,8 @@ class AgentLoop:
 
             # -- unexpected stop reason ---
             yield AgentFinished(
-                reason=f"Unexpected stop reason: {response.stop_reason}",
-                usage=response.usage,
+                reason=f"Unexpected stop reason: {stop_reason}",
+                usage=usage,
             )
             return
 
@@ -299,6 +318,64 @@ class AgentLoop:
     def _signal_approval(self) -> None:
         if self._approval_event is not None:
             self._approval_event.set()
+
+    # ==================================================================
+    # LLM calling helpers
+    # ==================================================================
+
+    async def _call_llm_streaming(
+        self, messages: list[Message], tools: list[dict],
+    ) -> AsyncIterator[AgentEvent]:
+        """Stream LLM response, yielding events in real time.
+
+        Stores the :class:`StreamHandler` as ``self._stream_handler`` so
+        the caller can retrieve the assembled message, stop reason, and
+        token usage after the iteration completes.
+        """
+        stream_iter = await self._llm.generate(
+            messages,
+            tools,
+            max_tokens=self._settings.max_tokens_per_response,
+            temperature=self._settings.temperature,
+            stream=True,
+        )
+
+        # Lazy import to avoid circular dependency:
+        #   agent.events → agent.__init__ → agent.loop → streaming.handler
+        from toddler.streaming.handler import StreamHandler
+
+        self._stream_handler = StreamHandler()
+        try:
+            async for event in self._stream_handler.process(stream_iter):
+                yield event
+        except Exception as exc:
+            logger.exception("Streaming iteration failed")
+            yield AgentError(message=str(exc), recoverable=False)
+
+    async def _call_llm_non_streaming(
+        self, messages: list[Message], tools: list[dict],
+    ) -> tuple[Message, str, TokenUsage]:
+        """Call LLM in non-streaming mode and return the assembled state.
+
+        Returns ``(assistant_msg, stop_reason, usage)``.  The caller is
+        responsible for yielding :class:`TextDelta` for any text content
+        and for handling exceptions.
+        """
+        response = await self._llm.generate(
+            messages,
+            tools,
+            max_tokens=self._settings.max_tokens_per_response,
+            temperature=self._settings.temperature,
+            stream=False,
+        )
+
+        assistant_msg = (
+            response.messages[0]
+            if response.messages
+            else Message.assistant()
+        )
+
+        return assistant_msg, response.stop_reason, response.usage
 
     # ==================================================================
     # Internal helpers

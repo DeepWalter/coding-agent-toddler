@@ -18,6 +18,7 @@ from toddler.agent.events import (
     AgentPaused,
     PlanProposed,
     TextDelta,
+    ToolCallDelta,
     ToolCallEnd,
     ToolCallStart,
 )
@@ -26,6 +27,7 @@ from toddler.cli.input_handler import InputHandler
 from toddler.cli.renderer import Renderer
 from toddler.config.settings import Settings
 from toddler.llm.provider import OpenAICompatibleProvider
+from toddler.streaming.display import StreamDisplay
 from toddler.tools import create_default_registry
 from toddler.tools.executor import ToolExecutor
 
@@ -204,19 +206,117 @@ class CLIApp:
         self,
         user_input: str,
         *,
-        force_plan: bool = False  # noqa: ARG002
+        force_plan: bool = False,  # noqa: ARG002
     ) -> None:
         """Run one complete agent turn — user input through to finish."""
-        # The agent is run with streaming disabled in Phase 5; Phase 6 enables
-        # streaming mode in the provider.
         stream = self._settings.streaming_enabled
-        if not stream:
-            # Non-streaming: await full response, then render events.
+        if stream:
+            await self._run_streaming_turn(user_input)
+        else:
             gen = self._agent.run(
                 user_input,
                 max_iterations=self._settings.max_iterations,
+                stream=False,
             )
             await self._process_events(gen)
+
+    # ==================================================================
+    # Streaming turn (Phase 6)
+    # ==================================================================
+
+    async def _run_streaming_turn(  # noqa: C901
+        self, user_input: str,
+    ) -> None:
+        """Run an agent turn with real-time Rich Live display."""
+        display = StreamDisplay(
+            self._renderer.console,
+            refresh_per_second=10,
+        )
+
+        gen = self._agent.run(
+            user_input,
+            max_iterations=self._settings.max_iterations,
+            stream=True,
+        )
+
+        display.start()
+        try:
+            async for event in gen:
+                match event:
+                    case TextDelta(text=text):
+                        display.append_text(text)
+
+                    case ToolCallStart():
+                        display.tool_started(
+                            event.tool_id,
+                            event.tool_name,
+                            summary=_format_tool_summary(
+                                event.tool_name,
+                                event.partial_input or {},
+                            ),
+                        )
+
+                    case ToolCallDelta():
+                        # Update the tool display with partial input.
+                        display.tool_started(
+                            event.tool_id,
+                            "",  # name already known
+                            summary=_format_tool_summary(
+                                "", event.input_delta,
+                            ),
+                        )
+
+                    case ToolCallEnd():
+                        result = event.result
+                        success = result.success if result else False
+                        summary = (
+                            _truncate_result(result)
+                            if result else ""
+                        )
+                        display.tool_completed(
+                            event.tool_id,
+                            success=success,
+                            summary=summary,
+                        )
+
+                    case AgentPaused():
+                        # Stop live display to show confirmation prompt,
+                        # then restart after user responds.
+                        display.stop()
+                        self._renderer.agent_paused(event)
+                        approved = await self._confirm(event)
+                        if approved:
+                            await self._agent.approve_tool_call()
+                        else:
+                            await self._agent.deny_tool_call()
+                        display.start()
+
+                    case AgentFinished():
+                        display.stop()
+                        self._renderer.agent_finished(event)
+                        return
+
+                    case AgentError():
+                        display.stop()
+                        self._renderer.agent_error(event)
+                        if not event.recoverable:
+                            return
+                        display.start()
+
+                    case PlanProposed():
+                        # Briefly stop to show the plan, then resume.
+                        display.stop()
+                        self._renderer.info(
+                            f"Plan proposed: {event.plan.title}"
+                        )
+                        self._renderer.markdown(event.plan.summary)
+                        display.start()
+
+                    case _:
+                        pass
+        except Exception:
+            display.stop()
+            raise
 
     # ==================================================================
     # Event processing
@@ -386,6 +486,40 @@ class CLIApp:
 # ---------------------------------------------------------------------------
 # Standalone helpers
 # ---------------------------------------------------------------------------
+
+
+def _format_tool_summary(name: str, params: dict) -> str:
+    """Format a tool name + key parameters for compact display.
+
+    Used by the streaming display's lower panel to show what each tool
+    call is doing.
+    """
+    if not params and not name:
+        return "…"
+
+    parts: list[str] = []
+    for k, v in params.items():
+        s = str(v)
+        if len(s) > 40:
+            s = s[:37] + "..."
+        parts.append(f"{k}={s}")
+
+    label = name if name else ""
+    args = ", ".join(parts[:2])  # at most 2 key-value pairs
+    if args:
+        return f"{label}({args})" if label else args
+    return label
+
+
+def _truncate_result(result) -> str:
+    """Return a short preview of a tool result for the status table."""
+    if result is None:
+        return ""
+    text = result.output if result.success else (result.error or "Error")
+    text = text.replace("\n", " ").strip()
+    if len(text) > 60:
+        text = text[:57] + "..."
+    return text
 
 
 def setup_logging(verbose: bool = False) -> None:
