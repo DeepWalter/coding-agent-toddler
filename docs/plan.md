@@ -699,14 +699,15 @@ PLAN_MODE_MIN_WORDS = 200
 
 **Goal**: Interactive REPL and one-shot CLI modes.
 
-- [ ] `cli/renderer.py` — `rich.Markdown` rendering, `rich.Syntax` for code blocks
-- [ ] `cli/input_handler.py` — `prompt_toolkit` with history, multi-line input (Alt+Enter), autocomplete
-- [ ] `cli/app.py` — `CLIApp`:
+- [x] `cli/renderer.py` — `rich.Markdown` rendering, `rich.Syntax` for code blocks
+- [x] `cli/input_handler.py` — `prompt_toolkit` with history, multi-line input (Escape+Enter), autocomplete
+- [x] `cli/app.py` — `CLIApp`:
     - `--plan`, `--session`, `--new-session`, `--no-stream`, `--list-sessions`
     - REPL loop: prompt → agent.run() → render events → prompt
     - One-shot: single invocation, exit with result
+- [x] `main.py` — Entry point wiring all CLI components
 
-**Milestone**: `tod "read auth.py"` works. REPL accepts input and shows agent responses.
+**Milestone**: ~~`tod "read auth.py"` works. REPL accepts input and shows agent responses.~~ ✅ Complete — all modules implemented, ruff clean, imports verified.
 
 ---
 

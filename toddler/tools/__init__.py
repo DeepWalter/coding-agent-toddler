@@ -39,4 +39,28 @@ __all__ = [
     "GitLog",
     "GitCommit",
     "GitBranch",
+    # Factory
+    "create_default_registry",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Factory
+# ---------------------------------------------------------------------------
+
+
+def create_default_registry() -> ToolRegistry:
+    """Return a :class:`ToolRegistry` pre-populated with all built-in tools.
+
+    When adding a new tool, update this function so the registry stays
+    in sync with the imports above.
+    """
+    registry = ToolRegistry()
+    for tool_cls in (
+        ReadFile, WriteFile, EditFile,
+        Shell,
+        Grep, Glob,
+        GitDiff, GitLog, GitStatus, GitCommit, GitBranch,
+    ):
+        registry.register(tool_cls())
+    return registry
