@@ -34,9 +34,11 @@ toddler/
 ├── cli/
 │   ├── app.py                  # REPL + one-shot CLI
 │   ├── commands.py             # Slash commands (/plan, /rollback, /checkpoint, /session)
+│   ├── display.py              # Rich Live dual-panel streaming display
 │   ├── renderer.py             # Rich markdown/syntax rendering
 │   └── input_handler.py        # prompt_toolkit input with history/autocomplete
 ├── agent/
+│   ├── handler.py              # StreamHandler — streaming event aggregation
 │   ├── loop.py                 # Core agent loop (async generator)
 │   ├── state_machine.py        # Plan/Execute mode state machine
 │   ├── stop_conditions.py      # Max iter, token budget, end_turn detection
@@ -67,9 +69,6 @@ toddler/
 │   ├── models.py               # Checkpoint, AgentStateSnapshot, RollbackResult
 │   ├── snapshot.py             # GitSnapshotter + FileSnapshotter fallback
 │   └── manager.py              # CheckpointManager (create, rollback, list, prune)
-├── streaming/
-│   ├── handler.py              # StreamHandler (SSE → AgentEvent aggregation)
-│   └── display.py              # StreamDisplay (Rich Live/Layout panels)
 └── config/
     ├── settings.py             # Env vars, CLI args, config file loader
     └── defaults.py             # All default constants
@@ -715,17 +714,17 @@ PLAN_MODE_MIN_WORDS = 200
 
 **Goal**: Real-time token-by-token output with Rich Live display.
 
-- [ ] `streaming/handler.py` — `StreamHandler`:
+- [x] `agent/handler.py` — `StreamHandler`:
     - Consumes SSE chunks from OpenAI-compatible streaming endpoint
     - Normalizes OpenAI-specific delta chunks (`content`, `tool_calls[].function.arguments`) → internal `StreamEvent`
     - Incremental JSON parser for streaming tool call arguments
     - Aggregates deltas into coherent messages
-- [ ] `streaming/display.py` — `StreamDisplay`:
+- [x] `cli/display.py` — `StreamDisplay`:
     - Rich `Live` + `Layout` with dual panels
     - Upper: streaming markdown + partial tool call display
     - Lower: tool execution status table
 
-**Milestone**: Full streaming experience — text appears token-by-token, tool calls build incrementally.
+**Milestone**: ~~Full streaming experience — text appears token-by-token, tool calls build incrementally.~~ ✅ Complete.
 
 ---
 
