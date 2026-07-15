@@ -23,11 +23,11 @@ from toddler.agent.events import (
     ToolCallStart,
 )
 from toddler.agent.loop import AgentLoop
+from toddler.cli.display import StreamDisplay
 from toddler.cli.input_handler import InputHandler
 from toddler.cli.renderer import Renderer
 from toddler.config.settings import Settings
 from toddler.llm.provider import OpenAICompatibleProvider
-from toddler.streaming.display import StreamDisplay
 from toddler.tools import create_default_registry
 from toddler.tools.executor import ToolExecutor
 

@@ -2,7 +2,7 @@
 
 Phase 4 implemented the basic non-streaming loop.  Phase 6 adds streaming
 support: the agent now calls the LLM with ``stream=True`` by default and
-uses :class:`~toddler.streaming.handler.StreamHandler` to process the
+uses :class:`~toddler.agent.handler.StreamHandler` to process the
 real-time token stream, yielding :class:`AgentEvent` objects as they arrive.
 """
 
@@ -22,6 +22,7 @@ from toddler.agent.events import (
     ToolCallEnd,
     ToolCallStart,
 )
+from toddler.agent.handler import StreamHandler
 from toddler.agent.stop_conditions import StopConditionChecker
 from toddler.llm.types import ContentBlock, Message, TokenUsage
 from toddler.tools.base import Permission, ToolCall, ToolResult
@@ -339,10 +340,6 @@ class AgentLoop:
             temperature=self._settings.temperature,
             stream=True,
         )
-
-        # Lazy import to avoid circular dependency:
-        #   agent.events → agent.__init__ → agent.loop → streaming.handler
-        from toddler.streaming.handler import StreamHandler
 
         self._stream_handler = StreamHandler()
         try:
