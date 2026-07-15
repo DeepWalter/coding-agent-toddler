@@ -202,7 +202,7 @@ class StreamDisplay:
             Layout(
                 self._build_lower_panel(),
                 name="lower",
-                size=min(len(self._tools) + 3, 12) if self._tools else 3,
+                size=min(len(self._tools) + 3, 12),
             ),
         )
         return layout

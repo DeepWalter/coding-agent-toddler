@@ -10,10 +10,10 @@ arguments so the display can show partial JSON as it builds up.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import Any
 
 from toddler.agent.events import (
@@ -64,8 +64,13 @@ class IncrementalJSONParser:
             callers can safely mutate it.
         """
         self._buffer += chunk
-        with contextlib.suppress(json.JSONDecodeError):
+        # Plain try/except rather than contextlib.suppress — this is the
+        # hot path (called once per streaming chunk) and try/except avoids
+        # the context-manager __enter__/__exit__ overhead on every call.
+        try:  # noqa: SIM105
             self._parsed = json.loads(self._buffer)
+        except json.JSONDecodeError:
+            pass  # Keep previous successfully-parsed state
         return dict(self._parsed)
 
     def finalize(self) -> dict[str, Any]:
@@ -94,20 +99,13 @@ class IncrementalJSONParser:
 # =============================================================================
 
 
+@dataclass(slots=True)
 class _PartialTool:
     """Bookkeeping for one streaming tool call."""
 
-    __slots__ = ("tool_id", "tool_name", "parser")
-
-    def __init__(
-        self,
-        tool_id: str,
-        tool_name: str,
-        parser: IncrementalJSONParser,
-    ) -> None:
-        self.tool_id = tool_id
-        self.tool_name = tool_name
-        self.parser = parser
+    tool_id: str
+    tool_name: str
+    parser: IncrementalJSONParser
 
 
 # =============================================================================
@@ -139,7 +137,7 @@ class StreamHandler:
     def __init__(self) -> None:
         self._text_buf = ""
         self._tools: dict[str, _PartialTool] = {}  # tool_id → state
-        self._tool_order: list[str] = []            # insertion order of tool_ids
+        self._tool_order: list[str] = []  # insertion order of tool_ids
 
         # Set by message_stop / error events during processing.
         self.stop_reason: str | None = None
@@ -181,7 +179,8 @@ class StreamHandler:
                     yield TextDelta(text=text)
 
                 case "tool_use_start":
-                    for evt in self._on_tool_start(event.data):
+                    evt = self._on_tool_start(event.data)
+                    if evt is not None:
                         yield evt
 
                 case "tool_use_delta":
@@ -191,7 +190,7 @@ class StreamHandler:
 
                 case "tool_use_done":
                     # The provider sends tool_use_done when a tool call's
-                    # input JSON is complete.  Finalise the incremental
+                    # input JSON is complete.  Finalize the incremental
                     # parser and update our state — but we do NOT yield
                     # ToolCallEnd here.  Execution happens in the agent
                     # loop, which is responsible for yielding ToolCallEnd
@@ -217,9 +216,7 @@ class StreamHandler:
                     pass  # Internal — already have all text in _text_buf.
 
                 case _:
-                    logger.debug(
-                        "Unhandled StreamEvent type: %s", event.type
-                    )
+                    logger.debug(f"Unhandled StreamEvent type: {event.type}")
 
     # ------------------------------------------------------------------
     # Assembled output
@@ -230,7 +227,7 @@ class StreamHandler:
 
         Returns a message with text content (if any) and tool-use blocks
         (if any), suitable for appending to the conversation history.
-        """
+        """  # noqa: E501
         blocks: list[ContentBlock] = []
 
         if self._text_buf:
@@ -253,39 +250,39 @@ class StreamHandler:
     # Tool-call tracking helpers
     # ------------------------------------------------------------------
 
-    def _on_tool_start(self, data: dict) -> list[AgentEvent]:
+    def _on_tool_start(self, data: dict) -> ToolCallStart | None:
         """Handle a ``tool_use_start`` StreamEvent.
 
-        Creates a new :class:`_PartialTool` entry and yields a
+        Creates a new :class:`_PartialTool` entry and returns a
         :class:`ToolCallStart` event for the display.
         """
         tool_id = data.get("tool_id", "")
         tool_name = data.get("tool_name", "")
 
         if not tool_id:
-            # Edge case: provider hasn't yet received the tool ID.
-            # We'll create a placeholder — the ID should arrive in the
-            # next tool_use_delta chunk.
-            tool_id = f"_pending_{len(self._tool_order)}"
+            # The OpenAI streaming protocol always sends tc.id in the
+            # first chunk for a tool call — if it's missing the stream
+            # is malformed; skip to avoid state corruption.
+            logger.warning(
+                "tool_use_start without tool_id for %s — skipping",
+                tool_name or "<unknown>",
+            )
+            return None
 
-        # Create parser and start with whatever partial input we have.
+        # The provider's tool_use_start only carries tool_id + tool_name;
+        # actual arguments arrive in subsequent tool_use_delta chunks.
         parser = IncrementalJSONParser()
-        partial_input = data.get("input") or data.get("partial_input") or {}
-        if partial_input:
-            # We have some pre-parsed input — seed the parser.
-            raw = json.dumps(partial_input, ensure_ascii=False)
-            parser.feed(raw)
 
         self._tools[tool_id] = _PartialTool(
             tool_id=tool_id, tool_name=tool_name, parser=parser,
         )
         self._tool_order.append(tool_id)
 
-        return [ToolCallStart(
+        return ToolCallStart(
             tool_id=tool_id,
             tool_name=tool_name,
-            partial_input=partial_input or None,
-        )]
+            partial_input=None,
+        )
 
     def _on_tool_delta(self, data: dict) -> AgentEvent | None:
         """Handle a ``tool_use_delta`` StreamEvent.
@@ -296,7 +293,6 @@ class StreamHandler:
         tool_id = data.get("tool_id", "")
         input_delta = data.get("input_delta", {})
 
-        # Resolve tool — may be under a temporary _pending_ key.
         pt = self._resolve_tool(tool_id)
         if pt is None:
             return None
@@ -311,57 +307,24 @@ class StreamHandler:
     def _on_tool_done(self, data: dict) -> None:
         """Handle a ``tool_use_done`` StreamEvent.
 
-        Finalises the tool's parser and updates the tool ID mapping in
-        case a temporary key was used.
+        Seeds the parser with the provider's fully-parsed input so
+        :meth:`assemble_message` gets the complete data.
         """
         final_tool_id = data.get("tool_id", "")
         final_input = data.get("input", {})
 
-        if not final_tool_id:
-            return
-
-        # If the tool was tracked under a different (temporary) key,
-        # migrate it.
         pt = self._resolve_tool(final_tool_id)
-        if pt is None:
-            # Tool was tracked under a temp key — find and rename.
-            for old_id, old_pt in list(self._tools.items()):
-                if old_id.startswith("_pending_") and old_pt.tool_name == data.get("tool_name", ""):  # noqa: E501
-                    del self._tools[old_id]
-                    self._tools[final_tool_id] = old_pt
-                    old_pt.tool_id = final_tool_id
-                    # Fix up the order list too.
-                    if old_id in self._tool_order:
-                        idx = self._tool_order.index(old_id)
-                        self._tool_order[idx] = final_tool_id
-                    pt = old_pt
-                    break
-
         if pt is not None and final_input:
             # Seed the parser with the final parsed input so
             # assemble_message() gets the complete data.
             raw = json.dumps(final_input, ensure_ascii=False)
             pt.parser._buffer = raw  # noqa: SLF001
-            with contextlib.suppress(Exception):
-                pt.parser._parsed = final_input  # noqa: SLF001
+            pt.parser._parsed = final_input  # noqa: SLF001
 
     # ------------------------------------------------------------------
     # Tool resolution
     # ------------------------------------------------------------------
 
     def _resolve_tool(self, tool_id: str) -> _PartialTool | None:
-        """Find a :class:`_PartialTool` by its ``tool_id``.
-
-        Falls back to matching a ``_pending_*`` key when the definitive
-        ``tool_id`` hasn't been associated yet.
-        """
-        if tool_id in self._tools:
-            return self._tools[tool_id]
-
-        # Search pending entries — the tool_id may not have been set
-        # in the start event yet.
-        for pt in self._tools.values():
-            if pt.tool_id == tool_id:
-                return pt
-
-        return None
+        """Find a :class:`_PartialTool` by its ``tool_id``."""
+        return self._tools.get(tool_id)
