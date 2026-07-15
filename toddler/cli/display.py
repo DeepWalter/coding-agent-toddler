@@ -13,7 +13,7 @@ Layout::
     │ Status  Tool          Summary        │  ← lower panel (fixed height)
     │ [▶]     read_file    auth.py         │
     │ [✓]     grep         Found 3 matches │
-    │ [ ]     write_file   Pending …       │
+    │ [✗]     shell        Permission …    │
     └──────────────────────────────────────┘
 """
 
@@ -39,7 +39,7 @@ class _ToolRow:
     """Display state for one tool call in the lower panel."""
 
     name: str
-    status: str   # "▶" running, "✓" success, "✗" error, " " pending
+    status: str   # "running", "success", or "error"
     summary: str  # short description / result preview
 
 
@@ -50,14 +50,12 @@ class _ToolRow:
 _ICON_RUNNING = Text("▶", style="bold yellow")
 _ICON_SUCCESS = Text("✓", style="bold green")
 _ICON_ERROR = Text("✗", style="bold red")
-_ICON_PENDING = Text(" ", style="dim")
 
 
 _STATUS_STYLES = {
     "running": _ICON_RUNNING,
     "success": _ICON_SUCCESS,
     "error": _ICON_ERROR,
-    "pending": _ICON_PENDING,
 }
 
 
@@ -235,7 +233,7 @@ class StreamDisplay:
                 row = self._tools.get(tool_id)
                 if row is None:
                     continue
-                icon = _STATUS_STYLES.get(row.status, _ICON_PENDING)
+                icon = _STATUS_STYLES[row.status]
                 table.add_row(icon, row.name, row.summary)
 
         return Panel(
