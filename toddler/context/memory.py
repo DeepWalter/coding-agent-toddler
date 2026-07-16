@@ -138,7 +138,7 @@ class PersistentMemory:
         lines: list[str] = [
             "## Persistent Memory",
             "",
-            "The following preferences and notes have been saved across sessions:",
+            "The following preferences and notes have been saved across sessions:",  # noqa: E501
             "",
         ]
 
@@ -179,10 +179,12 @@ class PersistentMemory:
             elif isinstance(value, str):
                 lines.append(f"- **{key}**: {value[:117]}...")
             elif isinstance(value, dict):
+                items = list(value.items())
                 preview = ", ".join(
-                    f"{k}={str(v)[:40]}" for k, v in list(value.items())[:3]
+                    f"{k}={str(v)[:40]}" for k, v in items[:3]
                 )
-                lines.append(f"- **{key}**: {{{preview}}}")
+                suffix = ", ..." if len(items) > 3 else ""
+                lines.append(f"- **{key}**: {{{preview}{suffix}}}")
             else:
                 lines.append(f"- **{key}**: (set)")
 
