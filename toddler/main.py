@@ -15,6 +15,7 @@ import asyncio
 
 from toddler.cli.app import CLIApp, build_argparser, setup_logging
 from toddler.config.settings import Settings
+from toddler.llm.provider import OpenAICompatibleProvider
 from toddler.session.manager import SessionManager
 from toddler.session.store import SQLiteStore
 
@@ -33,11 +34,14 @@ def main() -> None:
 
     setup_logging(verbose=args.verbose, log_dir=settings.session_dir)
 
+    # --- Shared LLM provider ---
+    llm = OpenAICompatibleProvider(settings)
+
     # --- Session persistence ---
     db_path = settings.session_dir / "sessions.db"
     store = SQLiteStore(db_path)
     store.open()
-    session_mgr = SessionManager(store)
+    session_mgr = SessionManager(store, llm_provider=llm)
 
     # --- Session listing ---
     if args.list_sessions:
@@ -45,7 +49,7 @@ def main() -> None:
         return
 
     # --- Build app ---
-    app = CLIApp(settings, session_manager=session_mgr)
+    app = CLIApp(settings, session_manager=session_mgr, llm=llm)
 
     # --- Resolve session for --session flag ---
     session_id = args.session

@@ -29,6 +29,7 @@ from toddler.cli.display import StreamDisplay
 from toddler.cli.input_handler import InputHandler
 from toddler.cli.renderer import Renderer
 from toddler.config.settings import Settings
+from toddler.llm.base import BaseLLMProvider
 from toddler.llm.provider import OpenAICompatibleProvider
 from toddler.llm.types import Message, TokenUsage
 from toddler.session.manager import SessionManager
@@ -133,6 +134,10 @@ class CLIApp:
     session_manager:
         Manager for persistent sessions.  When *None* (e.g. for tests), session
         persistence is disabled.
+    llm:
+        LLM provider shared with the session manager (for auto-titling) and
+        agent loop.  When *None*, a default ``OpenAICompatibleProvider`` is
+        created from *settings*.
     """
 
     def __init__(
@@ -140,6 +145,7 @@ class CLIApp:
         settings: Settings,
         *,
         session_manager: SessionManager | None = None,
+        llm: BaseLLMProvider | None = None,
     ) -> None:
         self._settings = settings
         self._session_mgr = session_manager
@@ -154,8 +160,8 @@ class CLIApp:
             self._settings,
         )
 
-        # --- Build LLM provider ---
-        self._llm = OpenAICompatibleProvider(self._settings)
+        # --- Build LLM provider (or reuse the shared one) ---
+        self._llm = llm or OpenAICompatibleProvider(self._settings)
 
         # --- Current session (set on run) ---
         self._session: Session | None = None
