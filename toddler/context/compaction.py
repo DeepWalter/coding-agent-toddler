@@ -7,6 +7,7 @@ file modifications) while freeing up tokens for the active conversation.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import TYPE_CHECKING
 
@@ -53,7 +54,7 @@ Format: use markdown bullet points.  Keep the summary under 500 words.
 {conversation}
 ---
 
-Summary:"""
+Summary:"""  # noqa: E501
 
 
 # ======================================================================
@@ -152,11 +153,13 @@ class ConversationCompactor:
         try:
             summary = await self._llm.generate_compact(prompt)
         except Exception:
-            logger.exception("Compaction LLM call failed — keeping original messages.")
+            logger.exception("Compaction LLM call failed — "
+                             "keeping original messages.")
             return messages
 
         if not summary.strip():
-            logger.warning("Compaction produced empty summary — keeping original messages.")
+            logger.warning("Compaction produced empty summary — "
+                           "keeping original messages.")
             return messages
 
         # Build the compacted message list.
@@ -220,8 +223,11 @@ class ConversationCompactor:
                     lines.append(f"[{role}]: {block.text}")
                 elif block.type == "tool_use":
                     tool_name = block.tool_name or "unknown"
+                    input_str = json.dumps(block.tool_input or {})
+                    if len(input_str) > 200:
+                        input_str = input_str[:197] + "..."
                     lines.append(
-                        f"[{role} → tool_call]: {tool_name}(...)"
+                        f"[{role} → tool_call]: {tool_name}({input_str})"
                     )
                 elif block.type == "tool_result":
                     text = block.tool_result_content or ""
