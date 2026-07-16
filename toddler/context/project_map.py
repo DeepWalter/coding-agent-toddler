@@ -16,7 +16,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Recognised config / project-definition files
+# Recognized config / project-definition files
 # ---------------------------------------------------------------------------
 
 _KNOWN_CONFIG_FILES: set[str] = {
@@ -181,7 +181,9 @@ class GitignoreMatcher:
 
         # A pattern without a slash matches the basename at any depth.
         if "/" not in pattern:
-            basename = path_str.rsplit("/", 1)[-1] if "/" in path_str else path_str
+            basename = (
+                path_str.rsplit("/", 1)[-1] if "/" in path_str else path_str
+            )
             if is_dir:
                 return fnmatch.fnmatch(basename, pattern) or fnmatch.fnmatch(
                     path_str, pattern
@@ -197,7 +199,7 @@ class GitignoreMatcher:
 
     @staticmethod
     def _match_globstar(
-        pattern: str, path_str: str, *, is_dir: bool
+        pattern: str, path_str: str, *, is_dir: bool  # noqa: ARG004
     ) -> bool:
         """Handle ``**`` in patterns by matching against every suffix."""
         parts = path_str.split("/")
@@ -234,17 +236,19 @@ class _ImportVisitor(ast.NodeVisitor):
         self.imports: list[str] = []
         self.from_imports: list[tuple[str, list[str]]] = []
 
-    def visit_Import(self, node: ast.Import) -> None:  # noqa: N802
+    def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
             self.imports.append(alias.name)
 
-    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:  # noqa: N802
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         module = node.module or ""
         names = [alias.name for alias in node.names]
         self.from_imports.append((module, names))
 
 
-def _extract_imports(file_path: Path) -> tuple[list[str], list[tuple[str, list[str]]]]:
+def _extract_imports(
+    file_path: Path,
+) -> tuple[list[str], list[tuple[str, list[str]]]]:
     """Parse a Python file and return (direct_imports, from_imports)."""
     try:
         source = file_path.read_text(encoding="utf-8")
@@ -293,22 +297,23 @@ class ProjectMapper:
 
         The result is suitable for injection into the system prompt.
         """
+        dir_children, py_files, config_files, pruned_dirs = self._collect_all()
+
         sections: list[str] = []
 
         # 1. Directory tree.
-        tree = self._build_tree()
+        tree = self._render_tree(dir_children, pruned_dirs)
         sections.append("## Project Structure\n\n```\n" + tree + "\n```")
 
         # 2. Config files.
-        configs = self._find_config_files()
-        if configs:
+        if config_files:
             lines = ["## Configuration Files"]
-            for cf in sorted(configs):
+            for cf in sorted(config_files):
                 lines.append(f"- `{cf}`")
             sections.append("\n".join(lines))
 
         # 3. Import graph.
-        imports_section = self._build_import_graph()
+        imports_section = self._build_import_graph(py_files)
         if imports_section:
             sections.append(imports_section)
 
@@ -320,124 +325,163 @@ class ProjectMapper:
         Useful for injecting into every turn without consuming too many
         tokens — includes only config files and the import graph.
         """
+        _, py_files, config_files, _ = self._collect_all()
+
         sections: list[str] = []
 
-        configs = self._find_config_files()
-        if configs:
+        if config_files:
             lines = ["## Project Configuration"]
-            for cf in sorted(configs):
+            for cf in sorted(config_files):
                 lines.append(f"- `{cf}`")
             sections.append("\n".join(lines))
 
-        imports_section = self._build_import_graph()
+        imports_section = self._build_import_graph(py_files)
         if imports_section:
             sections.append(imports_section)
 
         return "\n\n".join(sections) if sections else ""
 
     # ------------------------------------------------------------------
-    # Directory tree
+    # Single-pass filesystem walk
     # ------------------------------------------------------------------
 
-    def _build_tree(self) -> str:
-        """Walk the project root and render an indented tree."""
-        parts: list[str] = [self._root.name + "/"]
+    def _collect_all(
+        self,
+    ) -> tuple[
+        dict[Path, list[tuple[str, bool]]],
+        list[Path],
+        list[str],
+        set[Path],
+    ]:
+        """Walk the project root once and collect everything.
 
-        try:
-            entries = sorted(
-                self._root.iterdir(),
-                key=lambda p: (not p.is_dir(), p.name.lower()),
-            )
-        except PermissionError:
-            return self._root.name + "/  [permission denied]"
+        Uses :meth:`Path.walk` with in-place ``dirnames`` mutation to
+        prune excluded directories.
 
-        for entry in entries:
-            if self._should_exclude(entry):
-                continue
-            subtree = self._render_entry(entry, depth=1)
-            if subtree:
-                parts.append(subtree)
-
-        return "\n".join(parts)
-
-    def _render_entry(
-        self, path: Path, *, depth: int
-    ) -> str | None:
-        """Render a single filesystem entry and its children.
-
-        Returns ``None`` when *path* is fully excluded.
+        Returns
+        -------
+        dir_children:
+            Map from directory path → list of ``(name, is_dir)`` for
+            visible children (dirs first, then files, each sorted).
+        py_files:
+            ``.py`` files found (for the import graph).
+        config_files:
+            Relative paths to recognized config files (root + depth 1).
+        pruned_dirs:
+            Set of directories at or beyond ``_MAX_TREE_DEPTH`` —
+            rendered as ``…`` instead of recursing further.
         """
-        if depth > _MAX_TREE_DEPTH:
-            return f"{'    ' * depth}…"
+        dir_children: dict[Path, list[tuple[str, bool]]] = {}
+        py_files: list[Path] = []
+        config_files: list[str] = []
+        pruned_dirs: set[Path] = set()
 
-        prefix = "    " * depth
-        if path.is_symlink():
-            return f"{prefix}{path.name} → {path.readlink()}"
-
-        if path.is_dir():
-            return self._render_directory(path, depth=depth, prefix=prefix)
-
-        # Regular file.
-        return f"{prefix}{path.name}"
-
-    def _render_directory(
-        self, path: Path, *, depth: int, prefix: str
-    ) -> str | None:
-        """Render a directory entry with its children."""
-        try:
-            entries = sorted(
-                path.iterdir(),
-                key=lambda p: (not p.is_dir(), p.name.lower()),
+        for dirpath, dirnames, filenames in self._root.walk():
+            # --- prune excluded directories in-place ---
+            visible_dirs = sorted(
+                d for d in dirnames
+                if not self._should_exclude(dirpath / d)
             )
-        except PermissionError:
-            return f"{prefix}{path.name}/  [permission denied]"
+            dirnames[:] = visible_dirs
 
-        visible: list[str] = []
-        for entry in entries:
-            if self._should_exclude(entry):
-                continue
-            rendered = self._render_entry(entry, depth=depth + 1)
-            if rendered:
-                visible.append(rendered)
+            # --- sort visible files ---
+            visible_files = sorted(
+                f for f in filenames
+                if not self._should_exclude(dirpath / f)
+            )
 
-        if not visible:
-            return f"{prefix}{path.name}/" if depth <= 2 else ""
+            # --- compute depth ---
+            depth = len(dirpath.relative_to(self._root).parts)
 
-        header = f"{prefix}{path.name}/"
-        if len(visible) > _MAX_FILES_PER_DIR:
-            visible = visible[:_MAX_FILES_PER_DIR]
-            visible.append(f"{'    ' * (depth + 1)}… ({len(entries)} entries)")
+            # --- config files (root + depth 1 only) ---
+            if depth <= 1:
+                for fname in sorted(
+                    f for f in filenames if f in _KNOWN_CONFIG_FILES
+                ):
+                    if depth == 0:
+                        config_files.append(fname)
+                    else:
+                        rel = str(
+                            (dirpath / fname).relative_to(self._root)
+                        )
+                        config_files.append(rel)
 
-        return header + "\n" + "\n".join(visible)
+            # --- tree entries ---
+            children = (
+                [(d, True) for d in visible_dirs]
+                + [(f, False) for f in visible_files]
+            )
+            dir_children[dirpath] = children
+
+            if depth >= _MAX_TREE_DEPTH:
+                pruned_dirs.add(dirpath)
+
+            # --- Python files ---
+            for fname in visible_files:
+                if fname.endswith(".py"):
+                    py_files.append(dirpath / fname)
+
+        return dir_children, py_files, config_files, pruned_dirs
 
     # ------------------------------------------------------------------
-    # Config file detection
+    # Tree rendering
     # ------------------------------------------------------------------
 
-    def _find_config_files(self) -> list[str]:
-        """Return relative paths to recognised config files at the root."""
-        found: list[str] = []
-        for name in sorted(_KNOWN_CONFIG_FILES):
-            candidate = self._root / name
-            if candidate.is_file():
-                found.append(name)
-        # Also look one level deep for nested configs (e.g., .github/).
-        for child in sorted(self._root.iterdir()):
-            if child.is_dir() and not child.name.startswith("."):
-                for name in sorted(_KNOWN_CONFIG_FILES):
-                    candidate = child / name
-                    if candidate.is_file():
-                        found.append(str(candidate.relative_to(self._root)))
-        return found
+    def _render_tree(
+        self,
+        dir_children: dict[Path, list[tuple[str, bool]]],
+        pruned_dirs: set[Path],
+    ) -> str:
+        """Render an indented directory tree from pre-collected entries."""
+        lines: list[str] = [self._root.name + "/"]
+        self._render_children(
+            self._root, dir_children, pruned_dirs,
+            depth=1, lines=lines,
+        )
+        return "\n".join(lines)
+
+    def _render_children(
+        self,
+        dirpath: Path,
+        dir_children: dict[Path, list[tuple[str, bool]]],
+        pruned_dirs: set[Path],
+        *,
+        depth: int,
+        lines: list[str],
+    ) -> None:
+        """Render visible children of *dirpath* at the given *depth*."""
+        if depth > _MAX_TREE_DEPTH:
+            return
+
+        children = dir_children.get(dirpath, [])
+        prefix = "    " * depth
+
+        shown = children[:_MAX_FILES_PER_DIR]
+        hidden = len(children) - len(shown)
+
+        for name, is_dir in shown:
+            child_path = dirpath / name
+            if is_dir:
+                lines.append(f"{prefix}{name}/")
+                if child_path in pruned_dirs:
+                    lines.append(f"{prefix}    …")
+                else:
+                    self._render_children(
+                        child_path, dir_children, pruned_dirs,
+                        depth=depth + 1, lines=lines,
+                    )
+            else:
+                lines.append(f"{prefix}{name}")
+
+        if hidden > 0:
+            lines.append(f"{prefix}… ({len(children)} entries)")
 
     # ------------------------------------------------------------------
     # Import graph
     # ------------------------------------------------------------------
 
-    def _build_import_graph(self) -> str:
-        """Build a textual summary of Python module imports."""
-        # Collect all Python files (filtered by gitignore).
-        py_files = self._collect_python_files()
+    def _build_import_graph(self, py_files: list[Path]) -> str:  # noqa: C901
+        """Build a textual summary of Python module imports from *py_files*."""
 
         # Build internal module index.
         internal_modules: set[str] = set()
@@ -447,14 +491,10 @@ class ProjectMapper:
         # Extract imports and build adjacency.
         internal_refs: dict[str, set[str]] = defaultdict(set)
         external_refs: set[str] = set()
-        module_counts: dict[str, int] = defaultdict(int)
 
         for pf in py_files:
             mod = self._module_name(pf)
             direct, from_imports = _extract_imports(pf)
-
-            # Count import statements as a rough "complexity" proxy.
-            module_counts[mod] = len(direct) + len(from_imports)
 
             # Direct imports: "import foo.bar"
             for imp in direct:
@@ -478,12 +518,20 @@ class ProjectMapper:
                 else:
                     external_refs.add(top)
 
-        # Render.
-        lines: list[str] = []
+        # Nothing to show (no internal refs + no external refs).
+        if not internal_refs and not external_refs:
+            return ""
+
+        # Render in output order: header → count → internal → external.
+        lines: list[str] = ["## Module Import Graph", ""]
+
+        lines.append(
+            f"_{len(py_files)} Python modules, "
+            f"{len(internal_refs)} with internal dependencies_"
+        )
+        lines.append("")
 
         if internal_refs:
-            lines.append("## Module Import Graph")
-            lines.append("")
             lines.append("**Internal dependencies:**")
             lines.append("")
             # Sort by most-referenced first.
@@ -512,62 +560,7 @@ class ProjectMapper:
                 ", ".join(f"`{r}`" for r in sorted(external_refs)[:30])
             )
 
-        if not lines:
-            return ""
-
-        # Add module count overview.
-        if py_files:
-            lines.insert(
-                2,
-                f"_{len(py_files)} Python modules, "
-                f"{len(internal_refs)} with internal dependencies_\n",
-            )
-
         return "\n".join(lines)
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
-    def _collect_python_files(self) -> list[Path]:
-        """Walk the project collecting ``.py`` files, respecting ignores."""
-        py_files: list[Path] = []
-        for dirpath, _dirnames, filenames in self._walk():
-            for fname in filenames:
-                if fname.endswith(".py"):
-                    py_files.append(dirpath / fname)
-        return py_files
-
-    def _walk(self) -> list[tuple[Path, list[str], list[str]]]:
-        """Walk the project root, skipping ignored/excluded entries."""
-        result: list[tuple[Path, list[str], list[str]]] = []
-
-        def _recurse(dirpath: Path) -> None:
-            try:
-                entries = sorted(dirpath.iterdir())
-            except PermissionError:
-                return
-
-            dirnames: list[str] = []
-            filenames: list[str] = []
-            subdirs: list[Path] = []
-
-            for entry in entries:
-                if self._should_exclude(entry):
-                    continue
-                if entry.is_dir():
-                    dirnames.append(entry.name)
-                    subdirs.append(entry)
-                else:
-                    filenames.append(entry.name)
-
-            result.append((dirpath, dirnames, filenames))
-
-            for sub in subdirs:
-                _recurse(sub)
-
-        _recurse(self._root)
-        return result
 
     def _should_exclude(self, path: Path) -> bool:
         """Check whether *path* should be excluded from the tree."""
