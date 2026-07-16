@@ -2,8 +2,9 @@
 
 Two strategies are provided:
 
-* :class:`GitSnapshotter` — uses ``git stash create`` (dangling commit,
-  does **not** touch the stash stack) for zero-cost deduplicated snapshots.
+* :class:`GitSnapshotter` — uses ``git commit-tree`` to build a
+  dangling commit that captures both the worktree **and** the staging
+  area.  The stash stack is never touched.
 * :class:`FileSnapshotter` — copies tracked files into a checkpoint
   directory with SHA-256 manifests.  Slower and uses disk space, but works
   without git.
@@ -36,14 +37,14 @@ _HASH_CHUNK = 64 * 1024  # 64 KiB
 
 
 class GitSnapshotter:
-    """Snapshot strategy that uses ``git stash create`` for fast, cheap
-    pre-mutation checkpoints.
+    """Snapshot strategy that builds a dangling commit from the current
+    worktree + index for fast, cheap pre-mutation checkpoints.
 
-    ``git stash create`` builds a dangling commit object from the current
-    index + worktree and returns its hash — **without** pushing anything
-    onto the stash stack.  This gives us the same content-addressed
-    deduplication that git already provides, at near-zero cost for
-    unchanged files.
+    The commit is constructed with :program:`git commit-tree` so its tree
+    is the complete worktree and its second parent (``ref^2``) holds the
+    original staging area.  This gives us content-addressed deduplication
+    at near-zero cost for unchanged files, plus the ability to do a full
+    restore including the index.
 
     Parameters
     ----------
@@ -68,60 +69,159 @@ class GitSnapshotter:
         return self._available
 
     async def create(self) -> str | None:
-        """Stage all changes and create a dangling stash commit.
+        """Create a full snapshot of the working tree and staging area.
+
+        Returns a commit hash whose tree is the complete worktree state
+        and whose second parent (``ref^2``) holds the original staging
+        area.  ``restore()`` uses both to reconstruct the full state.
 
         Returns
         -------
         str | None
-            The commit hash (40-char hex), or *None* if git is unavailable
-            or the working tree has no changes to snapshot.
+            The commit hash (40-char hex), or *None* if the snapshot
+            could not be created (git unavailable or command failure).
         """
         if not self.available:
             return None
 
+        # 1. Save the original index as a tree object.
         try:
-            # Stage everything so the stash commit captures the full state.
-            await _run(["git", "add", "-A"], cwd=self._root)
-
-            # Create a dangling commit — does NOT touch the stash stack.
             proc = await _run(
-                ["git", "stash", "create"],
+                ["git", "write-tree"],
                 cwd=self._root,
                 capture=True,
             )
-            ref = proc.stdout.strip()
-            if ref:
-                logger.debug(f"Git stash commit created: {ref[:12]}")
-                return ref
-            else:
-                logger.debug("git stash create returned empty — no changes.")
-                return None
+            orig_index_tree = proc.stdout.strip()
         except Exception:
-            logger.exception("Git stash create failed — falling back.")
+            logger.exception("Failed to save original index.")
+            return None
+
+        # 2. Stage everything (including untracked files) for the worktree
+        #    snapshot, then capture the worktree tree.
+        try:
+            await _run(["git", "add", "-A"], cwd=self._root)
+
+            proc = await _run(
+                ["git", "write-tree"],
+                cwd=self._root,
+                capture=True,
+            )
+            worktree_tree = proc.stdout.strip()
+        except Exception:
+            logger.exception("Failed to stage and capture worktree.")
+            return None
+        finally:
+            # Restore the original index regardless of success/failure.
+            await _restore_tree_safe(self._root, orig_index_tree)
+
+        # 3. Build the stash commit manually so the second parent holds
+        #    the *original* index (not the polluted one from step 2).
+        #    Always build the commit — even when the tree is clean — so
+        #    the caller always has a usable ref for rollback.
+        try:
+            # Create an index commit from the original index tree.
+            index_commit = (
+                await _run(
+                    [
+                        "git",
+                        "commit-tree",
+                        orig_index_tree,
+                        "-p",
+                        "HEAD",
+                        "-m",
+                        "snapshot index",
+                    ],
+                    cwd=self._root,
+                    capture=True,
+                )
+            ).stdout.strip()
+
+            # Create the stash commit with the full worktree tree.
+            stash_ref = (
+                await _run(
+                    [
+                        "git",
+                        "commit-tree",
+                        worktree_tree,
+                        "-p",
+                        "HEAD",
+                        "-p",
+                        index_commit,
+                        "-m",
+                        "snapshot worktree",
+                    ],
+                    cwd=self._root,
+                    capture=True,
+                )
+            ).stdout.strip()
+
+            logger.debug(f"Git snapshot created: {stash_ref[:12]}")
+            return stash_ref
+        except Exception:
+            logger.exception("Failed to build stash commit.")
             return None
 
     async def restore(self, ref: str) -> list[str]:
-        """Restore the working tree to the state captured in *ref*.
+        """Restore the working tree **and** staging area to the state
+        captured in *ref*.
 
-        Returns the list of file paths that were restored.
+        *ref* must be a commit created by :meth:`create` — its tree is the
+        full worktree and its second parent (``ref^2``) holds the original
+        index.
+
+        Returns the list of file paths that were touched.
         """
         if not self.available:
             raise RuntimeError("Git is not available — cannot restore.")
 
-        # Collect which files changed between the checkpoint and HEAD.
         before = await _list_tracked_files(self._root)
 
-        # Checkout the checkpoint tree into the working directory.
+        # Restore worktree from the stash commit.
         await _run(
             ["git", "checkout", ref, "--", "."],
             cwd=self._root,
         )
 
-        # Remove untracked files that appeared after the checkpoint.
+        # Restore the index from the second parent (original staging area).
+        await _run(
+            ["git", "restore", "--staged", "--source", f"{ref}^2", "."],
+            cwd=self._root,
+        )
+
+        # Remove untracked files that were not in the snapshot.
         await _run(["git", "clean", "-fd"], cwd=self._root)
 
-        # Unstage everything (we only care about worktree state).
-        await _run(["git", "restore", "--staged", "."], cwd=self._root)
+        # git clean -fd also removed files that were untracked at
+        # snapshot time (in ref's worktree but not in ref^2's index).
+        # Restore them and unstage — they were untracked, not staged.
+        try:
+            proc = await _run(
+                [
+                    "git", "diff", "--diff-filter=A", "--name-only",
+                    f"{ref}^2", ref,
+                ],
+                cwd=self._root,
+                capture=True,
+            )
+            originally_untracked = [
+                f for f in proc.stdout.splitlines() if f.strip()
+            ]
+            if originally_untracked:
+                await _run(
+                    ["git", "checkout", ref, "--", *originally_untracked],
+                    cwd=self._root,
+                )
+                await _run(
+                    [
+                        "git", "restore", "--staged", "--",
+                        *originally_untracked,
+                    ],
+                    cwd=self._root,
+                )
+        except Exception:
+            logger.exception(
+                "Failed to restore untracked files from snapshot."
+            )
 
         after = await _list_tracked_files(self._root)
 
@@ -130,12 +230,26 @@ class GitSnapshotter:
     async def restore_to(
         self, ref: str, paths: list[str],
     ) -> list[str]:
-        """Restore specific *paths* from *ref* into the working tree."""
+        """Restore specific *paths* from *ref* into the working tree
+        **and** staging area.
+
+        *ref* must be a commit created by :meth:`create`.
+        """
         if not paths:
             return []
 
+        # Restore worktree for the specified paths.
         await _run(
             ["git", "checkout", ref, "--", *paths],
+            cwd=self._root,
+        )
+
+        # Restore index for the specified paths from the original index.
+        await _run(
+            [
+                "git", "restore", "--staged", "--source",
+                f"{ref}^2", "--", *paths,
+            ],
             cwd=self._root,
         )
         return list(paths)
@@ -307,6 +421,26 @@ class FileSnapshotter:
 # ======================================================================
 # Internal helpers
 # ======================================================================
+
+
+async def _restore_tree_safe(root: Path, tree: str) -> None:
+    """Restore the git index to *tree*, logging but never raising."""
+    import asyncio
+
+    try:
+        await asyncio.to_thread(
+            subprocess.run,
+            ["git", "read-tree", tree],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to restore index tree %s — staging area may be incorrect.",
+            tree[:12],
+        )
 
 
 async def _run(
