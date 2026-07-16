@@ -38,8 +38,8 @@ class ContextWindowManager:
         The LLM backend — used for token counting and to learn the
         context-window size.
     compaction_threshold:
-        Fraction of the context window (0.0–1.0) at which compaction is
-        triggered.  The default (0.8) means compaction starts when tokens
+        Fraction of the context window (0.0-1.0) at which compaction is
+        triggered. The default (0.8) means compaction starts when tokens
         exceed 80 % of the context window.
     output_headroom:
         Tokens reserved for the model's next response.  The effective
@@ -127,8 +127,8 @@ class ContextWindowManager:
     def truncate(self, messages: list[Message]) -> list[Message]:
         """Drop the oldest messages until the count fits.
 
-        The system message (index 0) is always preserved.  After that,
-        messages are dropped from the oldest end (index 1) until the token
+        All leading system messages are always preserved.  After those,
+        messages are dropped from the oldest end until the token
         count falls below *effective_limit* or only ``_MIN_KEEP_MESSAGES``
         remain.
 
@@ -140,21 +140,29 @@ class ContextWindowManager:
         if not messages:
             return messages
 
-        # Always preserve the system message.
-        system = messages[0:1] if messages[0].role == "system" else []
+        # Collect all leading system messages (may be more than one).
+        system: list[Message] = []
+        body_start = 0
+        for i, msg in enumerate(messages):
+            if msg.role == "system":
+                system.append(msg)
+                body_start = i + 1
+            else:
+                break
 
         # Remaining candidates for truncation.
-        body = messages[1:] if system else messages
+        body = messages[body_start:]
 
         # Drop from the oldest end.
         keep_count = len(body)
         while keep_count >= _MIN_KEEP_MESSAGES:
             candidate = system + body[-keep_count:]
-            if self.count_tokens(candidate) <= self.effective_limit:
+            candidate_tokens = self.count_tokens(candidate)
+            if candidate_tokens <= self.effective_limit:
                 logger.warning(
                     f"Truncation: dropped {len(body) - keep_count} "
                     f"messages ({self.count_tokens(messages)} → "
-                    f"{self.count_tokens(candidate)} tokens)."
+                    f"{candidate_tokens} tokens)."
                 )
                 return candidate
             keep_count -= 1
