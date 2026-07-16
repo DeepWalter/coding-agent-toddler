@@ -219,6 +219,9 @@ class CLIApp:
             # --- Run the agent ---
             await self._run_agent_turn(user_input)
 
+        # --- Clean up empty session on exit ---
+        await self._prune_empty_session()
+
     async def run_one_shot(
         self,
         query: str,
@@ -652,6 +655,20 @@ class CLIApp:
             f"Switched to session {session.id[:12]}... "
             f"({session.message_count} messages)"
         )
+
+    async def _prune_empty_session(self) -> None:
+        """Delete the current session if no messages were added.
+
+        Called on REPL exit to avoid leaving ghost sessions when the user
+        enters and quits without sending any real messages.
+        """
+        if self._session is None or self._session_mgr is None:
+            return
+
+        # Re-fetch to get the authoritative message count.
+        session = await self._session_mgr.get(self._session.id)
+        if session is not None and session.message_count == 0:
+            await self._session_mgr.delete(self._session.id)
 
     # ==================================================================
     # Display helpers

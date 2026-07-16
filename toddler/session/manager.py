@@ -163,7 +163,7 @@ class SessionManager:
         """Serialise *message* and persist it as the next message in *session_id*.
 
         Returns the new ``sequence_num``.
-        """
+        """  # noqa: E501
         current_count = self._store.get_message_count(session_id)
         stored = StoredMessage(
             session_id=session_id,
@@ -211,15 +211,18 @@ class SessionManager:
         Used by the compactor (Phase 7) to swap original messages with
         summary versions.
         """
-        stored = [_message_to_stored(session_id, i, m) for i, m in enumerate(messages)]  # noqa: E501
+        to_persist = [
+            _message_to_stored(session_id, i, m)
+            for i, m in enumerate(messages)
+        ]
         self._store.replace_messages(
-            session_id, stored, mark_compacted=mark_compacted,
+            session_id, to_persist, mark_compacted=mark_compacted,
         )
 
         # Update message_count to match.
         session = self._store.get_session(session_id)
         if session:
-            session.message_count = len(stored)
+            session.message_count = len(to_persist)
             session.updated_at = datetime.now(UTC)
             self._store.update_session(session)
 
@@ -286,7 +289,7 @@ class SessionManager:
             session.title = title if title else None
             session.updated_at = datetime.now(UTC)
             self._store.update_session(session)
-            logger.info(f"Auto-titled session {session_id}: {title}")
+            logger.warning(f"Auto-titled session {session_id}: {title}")
         except Exception:
             logger.exception(
                 f"Auto-title failed for session {session_id} — ignoring."
