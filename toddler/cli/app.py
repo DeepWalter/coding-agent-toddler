@@ -11,6 +11,7 @@ import argparse
 import logging
 import sys
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 from toddler.agent.events import (
     AgentError,
@@ -797,14 +798,50 @@ def _merge_text_blocks(
     return merged
 
 
-def setup_logging(verbose: bool = False) -> None:
-    """Configure the logging level for the Toddler package."""
+def setup_logging(
+    verbose: bool = False,
+    *,
+    log_dir: str | Path | None = None,
+) -> None:
+    """Configure logging for the Toddler package.
+
+    Logs go to stderr at DEBUG (``--verbose``) or WARNING (default) level.
+    When *log_dir* is provided, INFO-and-above messages are also written to
+    ``<log_dir>/toddler.log`` so session lifecycle and errors are always
+    captured on disk.
+    """
+    from pathlib import Path
+
     level = logging.DEBUG if verbose else logging.WARNING
-    logging.basicConfig(
-        level=level,
-        format="%(levelname)s [%(name)s] %(message)s",
-        stream=sys.stderr,
+
+    # Root logger captures everything; handlers control routing.
+    root = logging.getLogger()
+    root.setLevel(logging.DEBUG)
+
+    # --- stderr handler (level varies with --verbose) ---
+    stderr_handler = logging.StreamHandler(sys.stderr)
+    stderr_handler.setLevel(level)
+    stderr_handler.setFormatter(
+        logging.Formatter("%(levelname)s [%(name)s] %(message)s")
     )
+    root.addHandler(stderr_handler)
+
+    # --- file handler (always INFO, so key events are persisted) ---
+    if log_dir is not None:
+        log_path = Path(log_dir).expanduser()
+        log_path.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.FileHandler(
+            str(log_path / "toddler.log"), encoding="utf-8",
+        )
+        file_handler.setLevel(logging.INFO)
+        file_handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s %(levelname)s [%(name)s] %(message)s",
+                datefmt="%Y-%m-%dT%H:%M:%S",
+            )
+        )
+        root.addHandler(file_handler)
+
     # Suppress noisy openai/httpx logs unless --verbose is set.
     if not verbose:
         for noisy in ("openai", "httpx", "httpcore"):

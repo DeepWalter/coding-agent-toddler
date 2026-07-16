@@ -24,14 +24,14 @@ def main() -> None:
     parser = build_argparser()
     args = parser.parse_args()
 
-    setup_logging(verbose=args.verbose)
-
     # --- Build settings from env + CLI args ---
     cli_ns = args
     if cli_ns.no_stream:
         cli_ns.streaming_enabled = False
 
     settings = Settings.from_cli(cli_ns)
+
+    setup_logging(verbose=args.verbose, log_dir=settings.session_dir)
 
     # --- Session persistence ---
     db_path = settings.session_dir / "sessions.db"
