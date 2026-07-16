@@ -14,8 +14,8 @@ from toddler.config import defaults
 
 # ruff: noqa: E501
 
-# Load .env from cwd (and parent dirs) before reading env vars
-load_dotenv()
+# Load .env from ~/.toddler before reading env vars
+load_dotenv(dotenv_path=Path.home() / ".toddler" / ".env")
 
 
 def _env(key: str, default: str | None = None) -> str | None:
