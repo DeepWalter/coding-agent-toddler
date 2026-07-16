@@ -732,22 +732,22 @@ PLAN_MODE_MIN_WORDS = 200
 
 **Goal**: Smart context window management and persistent user memory.
 
-- [ ] `context/project_map.py` — `ProjectMapper`:
+- [x] `context/project_map.py` — `ProjectMapper`:
     - Directory tree (gitignore-filtered)
     - Key module import graph summary
     - Config file detection
-- [ ] `context/window.py` — `ContextWindowManager`:
+- [x] `context/window.py` — `ContextWindowManager`:
     - Token tracking against context limit
     - Compaction trigger at 80% threshold
     - Truncation as last resort
-- [ ] `context/compaction.py` — `ConversationCompactor`:
+- [x] `context/compaction.py` — `ConversationCompactor`:
     - Summarize old turns via separate LLM call
     - Replace original messages with summary
-- [ ] `context/memory.py` — `PersistentMemory`:
+- [x] `context/memory.py` — `PersistentMemory`:
     - `~/.toddler/memory.json` key-value store
     - Injected into system prompt
 
-**Milestone**: Agent handles long conversations. User preferences persist across sessions.
+**Milestone**: ~~Agent handles long conversations. User preferences persist across sessions.~~ ✅ Complete.
 
 ---
 
