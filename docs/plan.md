@@ -755,17 +755,20 @@ PLAN_MODE_MIN_WORDS = 200
 
 **Goal**: Full session persistence — resume conversations across restarts.
 
-- [ ] `session/models.py` — `Session`, `SessionSummary`, `StoredMessage` dataclasses
-- [ ] `session/store.py` — `SQLiteStore`:
+- [x] `session/models.py` — `Session`, `SessionSummary`, `StoredMessage` dataclasses
+- [x] `session/store.py` — `SQLiteStore`:
     - Schema creation + migrations
     - Full CRUD for sessions, messages, checkpoints
-- [ ] `session/manager.py` — `SessionManager`:
+- [x] `session/manager.py` — `SessionManager`:
     - Session lifecycle (create/get/list/delete/update)
     - Message persistence (append/retrieve/replace/compact)
     - Auto-title generation (async, non-blocking)
     - Token usage accumulation
+- [x] `main.py` — Wire SessionManager + `--list-sessions` real implementation
+- [x] `cli/app.py` — `/session info|list|switch` commands, empty-session pruning
+- [x] File-based logging to `~/.toddler/toddler.log`
 
-**Milestone**: `tod --session abc123` resumes previous conversation. Sessions list works.
+**Milestone**: ~~`tod --session abc123` resumes previous conversation. Sessions list works.~~ ✅ Complete.
 
 ---
 
