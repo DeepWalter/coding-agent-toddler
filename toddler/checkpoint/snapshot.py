@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import shutil
 import subprocess
 import uuid
@@ -87,7 +88,7 @@ class GitSnapshotter:
 
         # 1. Save the original index as a tree object.
         try:
-            proc = await _run(
+            proc = _run(
                 ["git", "write-tree"],
                 cwd=self._root,
                 capture=True,
@@ -111,13 +112,13 @@ class GitSnapshotter:
             )
             git_env = {"GIT_INDEX_FILE": str(temp_index)}
 
-            await _run(
+            _run(
                 ["git", "add", "-A"],
                 cwd=self._root,
                 env=git_env,
             )
 
-            proc = await _run(
+            proc = _run(
                 ["git", "write-tree"],
                 cwd=self._root,
                 capture=True,
@@ -138,7 +139,7 @@ class GitSnapshotter:
         try:
             # Create an index commit from the original index tree.
             index_commit = (
-                await _run(
+                _run(
                     [
                         "git",
                         "commit-tree",
@@ -155,7 +156,7 @@ class GitSnapshotter:
 
             # Create the stash commit with the full worktree tree.
             stash_ref = (
-                await _run(
+                _run(
                     [
                         "git",
                         "commit-tree",
@@ -201,7 +202,7 @@ class GitSnapshotter:
         # Pre-restore safety snapshot — if the restore is interrupted the
         # user can recover manually via this dangling commit hash.
         try:
-            proc = await _run(
+            proc = _run(
                 ["git", "stash", "create"],
                 cwd=self._root,
                 capture=True,
@@ -214,15 +215,13 @@ class GitSnapshotter:
         except Exception:
             logger.debug("Could not create pre-restore safety snapshot.")
 
-        before = await _list_tracked_files(self._root)
+        before = _list_tracked_files(self._root)
         await self._restore_paths(ref, ["."])
-        after = await _list_tracked_files(self._root)
+        after = _list_tracked_files(self._root)
 
         return sorted(set(before) | set(after))
 
-    async def restore_to(
-        self, ref: str, paths: list[str],
-    ) -> list[str]:
+    async def restore_to(self, ref: str, paths: list[str]) -> list[str]:
         """Restore specific *paths* from *ref* into the working tree
         **and** staging area.
 
@@ -253,11 +252,11 @@ class GitSnapshotter:
            (``git checkout`` won't touch paths missing from ``ref``'s tree).
         """
         # Phase 1: restore worktree + index.
-        await _run(
+        _run(
             ["git", "checkout", ref, "--", *paths],
             cwd=self._root,
         )
-        await _run(
+        _run(
             [
                 "git", "restore", "--staged", "--source",
                 f"{ref}^2", "--", *paths,
@@ -266,7 +265,7 @@ class GitSnapshotter:
         )
 
         # Phase 2: remove post-snapshot cruft.
-        await _run(
+        _run(
             ["git", "clean", "-fd", "--", *paths],
             cwd=self._root,
         )
@@ -274,7 +273,7 @@ class GitSnapshotter:
         # Phase 3: recover untracked-at-snapshot files that ``git clean``
         # removed but that *are* part of the snapshot's worktree.
         try:
-            proc = await _run(
+            proc = _run(
                 [
                     "git", "diff", "--diff-filter=A", "--name-only",
                     f"{ref}^2", ref, "--", *paths,
@@ -286,14 +285,14 @@ class GitSnapshotter:
                 f for f in proc.stdout.splitlines() if f.strip()
             ]
             if originally_untracked:
-                await _run(
+                _run(
                     [
                         "git", "checkout", ref, "--",
                         *originally_untracked,
                     ],
                     cwd=self._root,
                 )
-                await _run(
+                _run(
                     [
                         "git", "restore", "--staged", "--",
                         *originally_untracked,
@@ -310,7 +309,7 @@ class GitSnapshotter:
         # tree, and ``git clean`` won't touch them because they are back
         # in the index after phase 1.
         try:
-            proc = await _run(
+            proc = _run(
                 [
                     "git", "diff", "--diff-filter=D", "--name-only",
                     f"{ref}^2", ref, "--", *paths,
@@ -347,7 +346,7 @@ class GitSnapshotter:
             logger.debug(f"Git detected at {self._root}.")
             return True
         except Exception:
-            logger.debug("Git not available — snapshots will use file-copy fallback.")
+            logger.debug("Git not available — snapshots will use file-copy fallback.")  # noqa: E501
             return False
 
 
@@ -365,7 +364,7 @@ class FileSnapshotter:
     Parameters
     ----------
     base_dir:
-        Root directory for checkpoint storage.  Per-session directories are
+        Root directory for checkpoint storage. Per-session directories are
         created underneath (``{base_dir}/{session_id}/{checkpoint_id}/``).
     """
 
@@ -413,7 +412,7 @@ class FileSnapshotter:
             if not src.is_file():
                 continue
 
-            sha = await _sha256_file(src)
+            sha = _sha256_file(src)
             size = src.stat().st_size
 
             # Preserve relative path structure inside the checkpoint dir.
@@ -456,7 +455,11 @@ class FileSnapshotter:
 
         for entry in manifest:
             src_path = Path(str(entry.path))
-            rel = src_path.resolve().relative_to(Path.cwd()) if src_path.is_absolute() else src_path
+            rel = (
+                src_path.resolve().relative_to(Path.cwd())
+                if src_path.is_absolute()
+                else src_path
+            )
             safe_name = str(rel).replace("/", "_").replace("\\", "_")
             snapshot_file = src_dir / safe_name
 
@@ -465,7 +468,7 @@ class FileSnapshotter:
                 continue
 
             # Verify integrity.
-            actual_sha = await _sha256_file(snapshot_file)
+            actual_sha = _sha256_file(snapshot_file)
             if actual_sha != entry.sha256:
                 logger.warning(
                     f"Checksum mismatch for {entry.path} — skipping restore."
@@ -499,17 +502,14 @@ class FileSnapshotter:
 # ======================================================================
 
 
-async def _run(
+def _run(
     args: list[str],
     *,
     cwd: Path,
     capture: bool = False,
     env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    """Run a subprocess asynchronously via``asyncio.to_thread``."""
-    import asyncio
-    import os
-
+    """Run a subprocess and return the completed process."""
     kwargs: dict = {
         "args": args,
         "cwd": str(cwd),
@@ -519,13 +519,13 @@ async def _run(
     }
     if env is not None:
         kwargs["env"] = {**os.environ, **env}
-    return await asyncio.to_thread(subprocess.run, **kwargs)
+    return subprocess.run(**kwargs)
 
 
-async def _list_tracked_files(root: Path) -> list[str]:
+def _list_tracked_files(root: Path) -> list[str]:
     """Return a list of paths tracked by git in *root*."""
     try:
-        proc = await _run(
+        proc = _run(
             ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
             cwd=root,
             capture=True,
@@ -535,18 +535,13 @@ async def _list_tracked_files(root: Path) -> list[str]:
         return []
 
 
-async def _sha256_file(path: Path) -> str:
+def _sha256_file(path: Path) -> str:
     """Compute the SHA-256 hex digest of *path*."""
-    import asyncio
-
-    def _compute() -> str:
-        h = hashlib.sha256()
-        with open(path, "rb") as fh:
-            while True:
-                chunk = fh.read(_HASH_CHUNK)
-                if not chunk:
-                    break
-                h.update(chunk)
-        return h.hexdigest()
-
-    return await asyncio.to_thread(_compute)
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        while True:
+            chunk = fh.read(_HASH_CHUNK)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
