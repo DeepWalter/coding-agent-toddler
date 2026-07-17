@@ -42,6 +42,7 @@ toddler/
 │   ├── loop.py                 # Core agent loop (async generator)
 │   ├── state_machine.py        # Plan/Execute mode state machine
 │   ├── stop_conditions.py      # Max iter, token budget, end_turn detection
+│   ├── system_prompt.py        # SystemPromptBuilder — layered prompt assembly
 │   └── events.py               # AgentEvent types
 ├── tools/
 │   ├── base.py                 # BaseTool ABC, ToolResult, Permission enum
@@ -753,7 +754,7 @@ PLAN_MODE_MIN_WORDS = 200
 
 ### Step 7.2 — System Prompt Assembly
 
-- [ ] New helper `agent/system_prompt.py` — `SystemPromptBuilder`:
+- [x] New helper `agent/system_prompt.py` — `SystemPromptBuilder`:
     - Layers: base persona → project map → persistent memory → mode-specific instructions
     - `build(mode="execute")` returns the assembled system prompt string
     - Project map built once and cached (costly filesystem walk)
@@ -763,32 +764,32 @@ PLAN_MODE_MIN_WORDS = 200
 
 ### Step 7.3 — Wire ContextWindowManager into AgentLoop
 
-- [ ] Update `AgentLoop.__init__` to accept `ContextWindowManager` (or create internally)
-- [ ] Before each LLM call: call `window_mgr.count_tokens(messages)` and log usage ratio
-- [ ] When `window_mgr.should_compact(messages)` returns `True`:
+- [x] Update `AgentLoop.__init__` to accept `ContextWindowManager` (or create internally)
+- [x] Before each LLM call: call `window_mgr.count_tokens(messages)` and log usage ratio
+- [x] When `window_mgr.should_compact(messages)` returns `True`:
     - Trigger `ConversationCompactor.compact(messages)`
     - Replace `messages` list with compacted version
     - Persist compaction via `SessionManager.compact_messages()` (if session manager available)
     - Optionally switch to compact system prompt variants
-- [ ] When `window_mgr.should_truncate(messages)` returns `True` (emergency):
+- [x] When `window_mgr.should_truncate(messages)` returns `True` (emergency):
     - Call `window_mgr.truncate(messages)` — drops oldest non-system messages
     - Log a warning with the before/after token counts
 
 ### Step 7.4 — Wire SystemPromptBuilder into AgentLoop
 
-- [ ] Replace `_DEFAULT_SYSTEM_PROMPT` constant with `SystemPromptBuilder`
-- [ ] `AgentLoop.__init__` accepts `SystemPromptBuilder` (or creates internally)
-- [ ] On each `run()` call: build the system prompt from layers instead of using the flat string
-- [ ] Pass `mode` hint ("execute" / "plan") so mode-specific instructions are included
+- [x] Replace `_DEFAULT_SYSTEM_PROMPT` constant with `SystemPromptBuilder`
+- [x] `AgentLoop.__init__` accepts `SystemPromptBuilder` (or creates internally)
+- [x] On each `run()` call: build the system prompt from layers instead of using the flat string
+- [x] Pass `mode` hint ("execute" / "plan") so mode-specific instructions are included
 
 ### Step 7.5 — Wire in main.py / CLIApp
 
-- [ ] `main.py`: instantiate `ProjectMapper`, `PersistentMemory`, `ContextWindowManager`, `ConversationCompactor`
-- [ ] `main.py`: build `SystemPromptBuilder` with the above components
-- [ ] `CLIApp._agent`: pass context components to `AgentLoop` constructor
-- [ ] `CLIApp`: pass `SessionManager` reference so compaction results can be persisted
+- [x] `main.py`: instantiate `ProjectMapper`, `PersistentMemory`, `ContextWindowManager`, `ConversationCompactor`
+- [x] `main.py`: build `SystemPromptBuilder` with the above components
+- [x] `CLIApp._agent`: pass context components to `AgentLoop` constructor
+- [x] `CLIApp`: pass `SessionManager` reference so compaction results can be persisted
 
-**Milestone**: Agent checks token count before each LLM call, compacts old turns at 80% threshold, truncates as last resort. System prompt includes project structure and user preferences.
+**Milestone**: ~~Agent checks token count before each LLM call, compacts old turns at 80% threshold, truncates as last resort. System prompt includes project structure and user preferences.~~ ✅ Complete.
 
 ---
 
@@ -883,7 +884,7 @@ Phase 3  ███ Tool System            (all tools implemented)
 Phase 4  ███ Agent Loop             (core loop working)
 Phase 5  ███ CLI Layer              (REPL + one-shot)
 Phase 6  ██ Streaming               (real-time display)
-Phase 7  ███ Context Management     (modules done, integration pending)
+Phase 7  ███ Context Management     (system prompt, compaction, truncation)
 Phase 8  ███ Sessions               (SQLite persistence)
 Phase 9  ███ Checkpoints            (snapshots + rollback)
 Phase 10 ███ Plan Mode              (state machine + workflow)
