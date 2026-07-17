@@ -16,6 +16,7 @@ import hashlib
 import logging
 import shutil
 import subprocess
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -97,22 +98,38 @@ class GitSnapshotter:
             return None
 
         # 2. Stage everything (including untracked files) for the worktree
-        #    snapshot, then capture the worktree tree.
+        #    snapshot using a temporary index, then capture the worktree
+        #    tree.  The real index is never touched — we use GIT_INDEX_FILE
+        #    to redirect all staging to a copy.
+        temp_index = (
+            self._root / ".git"
+            / f"index.toddler-snapshot-{uuid.uuid4().hex[:8]}"
+        )
         try:
-            await _run(["git", "add", "-A"], cwd=self._root)
+            shutil.copy2(
+                self._root / ".git" / "index", temp_index,
+            )
+            git_env = {"GIT_INDEX_FILE": str(temp_index)}
+
+            await _run(
+                ["git", "add", "-A"],
+                cwd=self._root,
+                env=git_env,
+            )
 
             proc = await _run(
                 ["git", "write-tree"],
                 cwd=self._root,
                 capture=True,
+                env=git_env,
             )
             worktree_tree = proc.stdout.strip()
         except Exception:
             logger.exception("Failed to stage and capture worktree.")
             return None
         finally:
-            # Restore the original index regardless of success/failure.
-            await _restore_tree_safe(self._root, orig_index_tree)
+            if temp_index.exists():
+                temp_index.unlink()
 
         # 3. Build the stash commit manually so the second parent holds
         #    the *original* index (not the polluted one from step 2).
@@ -170,35 +187,97 @@ class GitSnapshotter:
         index.
 
         Returns the list of file paths that were touched.
+
+        .. warning::
+
+            This method performs a sequence of git mutations.  If the process
+            is killed mid-restore the repository may be left in an
+            intermediate state.  A safety snapshot is created before any
+            mutations begin so that manual recovery is possible.
         """
         if not self.available:
             raise RuntimeError("Git is not available — cannot restore.")
 
+        # Pre-restore safety snapshot — if the restore is interrupted the
+        # user can recover manually via this dangling commit hash.
+        try:
+            proc = await _run(
+                ["git", "stash", "create"],
+                cwd=self._root,
+                capture=True,
+            )
+            safety_ref = proc.stdout.strip() or None
+            if safety_ref:
+                logger.info(
+                    "Pre-restore safety snapshot: %s", safety_ref[:12]
+                )
+        except Exception:
+            logger.debug("Could not create pre-restore safety snapshot.")
+
         before = await _list_tracked_files(self._root)
+        await self._restore_paths(ref, ["."])
+        after = await _list_tracked_files(self._root)
 
-        # Restore worktree from the stash commit.
+        return sorted(set(before) | set(after))
+
+    async def restore_to(
+        self, ref: str, paths: list[str],
+    ) -> list[str]:
+        """Restore specific *paths* from *ref* into the working tree
+        **and** staging area.
+
+        *ref* must be a commit created by :meth:`create`.
+
+        Delegates to :meth:`_restore_paths` with the caller-supplied
+        *paths*, then returns them unchanged.
+        """
+        if not paths:
+            return []
+        await self._restore_paths(ref, list(paths))
+        return list(paths)
+
+    # ------------------------------------------------------------------
+    # Internal
+    # ------------------------------------------------------------------
+
+    async def _restore_paths(self, ref: str, paths: list[str]) -> None:
+        """Restore *paths* from snapshot *ref* — the shared restore engine.
+
+        Four-phase pipeline used by both :meth:`restore` (paths=``["."]``)
+        and :meth:`restore_to` (caller-supplied paths):
+
+        1. Restore worktree from ``ref``'s tree, then index from ``ref^2``.
+        2. ``git clean -fd`` to remove post-snapshot cruft.
+        3. Recover untracked-at-snapshot files that ``git clean`` removed.
+        4. Remove recreated files that were deleted at snapshot time
+           (``git checkout`` won't touch paths missing from ``ref``'s tree).
+        """
+        # Phase 1: restore worktree + index.
         await _run(
-            ["git", "checkout", ref, "--", "."],
+            ["git", "checkout", ref, "--", *paths],
+            cwd=self._root,
+        )
+        await _run(
+            [
+                "git", "restore", "--staged", "--source",
+                f"{ref}^2", "--", *paths,
+            ],
             cwd=self._root,
         )
 
-        # Restore the index from the second parent (original staging area).
+        # Phase 2: remove post-snapshot cruft.
         await _run(
-            ["git", "restore", "--staged", "--source", f"{ref}^2", "."],
+            ["git", "clean", "-fd", "--", *paths],
             cwd=self._root,
         )
 
-        # Remove untracked files that were not in the snapshot.
-        await _run(["git", "clean", "-fd"], cwd=self._root)
-
-        # git clean -fd also removed files that were untracked at
-        # snapshot time (in ref's worktree but not in ref^2's index).
-        # Restore them and unstage — they were untracked, not staged.
+        # Phase 3: recover untracked-at-snapshot files that ``git clean``
+        # removed but that *are* part of the snapshot's worktree.
         try:
             proc = await _run(
                 [
                     "git", "diff", "--diff-filter=A", "--name-only",
-                    f"{ref}^2", ref,
+                    f"{ref}^2", ref, "--", *paths,
                 ],
                 cwd=self._root,
                 capture=True,
@@ -208,7 +287,10 @@ class GitSnapshotter:
             ]
             if originally_untracked:
                 await _run(
-                    ["git", "checkout", ref, "--", *originally_untracked],
+                    [
+                        "git", "checkout", ref, "--",
+                        *originally_untracked,
+                    ],
                     cwd=self._root,
                 )
                 await _run(
@@ -223,40 +305,34 @@ class GitSnapshotter:
                 "Failed to restore untracked files from snapshot."
             )
 
-        after = await _list_tracked_files(self._root)
-
-        return sorted(set(before) | set(after))
-
-    async def restore_to(
-        self, ref: str, paths: list[str],
-    ) -> list[str]:
-        """Restore specific *paths* from *ref* into the working tree
-        **and** staging area.
-
-        *ref* must be a commit created by :meth:`create`.
-        """
-        if not paths:
-            return []
-
-        # Restore worktree for the specified paths.
-        await _run(
-            ["git", "checkout", ref, "--", *paths],
-            cwd=self._root,
-        )
-
-        # Restore index for the specified paths from the original index.
-        await _run(
-            [
-                "git", "restore", "--staged", "--source",
-                f"{ref}^2", "--", *paths,
-            ],
-            cwd=self._root,
-        )
-        return list(paths)
-
-    # ------------------------------------------------------------------
-    # Internal
-    # ------------------------------------------------------------------
+        # Phase 4: remove recreated files that were deleted at snapshot
+        # time.  ``git checkout`` ignores paths missing from ``ref``'s
+        # tree, and ``git clean`` won't touch them because they are back
+        # in the index after phase 1.
+        try:
+            proc = await _run(
+                [
+                    "git", "diff", "--diff-filter=D", "--name-only",
+                    f"{ref}^2", ref, "--", *paths,
+                ],
+                cwd=self._root,
+                capture=True,
+            )
+            for line in proc.stdout.splitlines():
+                p = line.strip()
+                if not p:
+                    continue
+                target = self._root / p
+                if target.exists():
+                    target.unlink()
+                    logger.debug(
+                        "Removed file that was deleted at snapshot time: "
+                        f"{p}"
+                    )
+        except Exception:
+            logger.exception(
+                "Failed to clean up files deleted at snapshot time."
+            )
 
     def _probe(self) -> bool:
         """Check whether *repo_root* is inside a git working tree."""
@@ -423,43 +499,27 @@ class FileSnapshotter:
 # ======================================================================
 
 
-async def _restore_tree_safe(root: Path, tree: str) -> None:
-    """Restore the git index to *tree*, logging but never raising."""
-    import asyncio
-
-    try:
-        await asyncio.to_thread(
-            subprocess.run,
-            ["git", "read-tree", tree],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except Exception:
-        logger.exception(
-            "Failed to restore index tree %s — staging area may be incorrect.",
-            tree[:12],
-        )
-
-
 async def _run(
     args: list[str],
     *,
     cwd: Path,
     capture: bool = False,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run a subprocess asynchronously via``asyncio.to_thread``."""
     import asyncio
+    import os
 
-    return await asyncio.to_thread(
-        subprocess.run,
-        args,
-        cwd=str(cwd),
-        capture_output=capture,
-        text=True,
-        check=True,
-    )
+    kwargs: dict = {
+        "args": args,
+        "cwd": str(cwd),
+        "capture_output": capture,
+        "text": True,
+        "check": True,
+    }
+    if env is not None:
+        kwargs["env"] = {**os.environ, **env}
+    return await asyncio.to_thread(subprocess.run, **kwargs)
 
 
 async def _list_tracked_files(root: Path) -> list[str]:

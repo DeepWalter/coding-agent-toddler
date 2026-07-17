@@ -87,9 +87,10 @@ class CheckpointManager:
     ) -> Checkpoint:
         """Snapshot filesystem + agent state before a mutating tool executes.
 
-        The filesystem snapshot uses git when available (via ``git stash
-        create`` — a dangling commit that does **not** touch the stash
-        stack).  Falls back to a file-copy manifest when git is unavailable.
+        The filesystem snapshot uses git when available (via
+        ``git commit-tree`` — dangling commits that do **not** touch the
+        stash stack).  Falls back to a file-copy manifest when git is
+        unavailable.
 
         Parameters
         ----------
@@ -114,8 +115,8 @@ class CheckpointManager:
             git_ref = await self._git.create()
             if git_ref is None:
                 logger.warning(
-                    "git stash create returned empty — "
-                    "no changes to snapshot."
+                    "Git snapshot create returned empty — "
+                    "no changes captured."
                 )
         else:
             # File-copy fallback: snapshot all tracked files.
