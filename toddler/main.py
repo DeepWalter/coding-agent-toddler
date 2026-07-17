@@ -41,25 +41,25 @@ def main() -> None:
 
     setup_logging(verbose=args.verbose, log_dir=settings.session_dir)
 
-    # --- Shared LLM provider ---
-    llm = OpenAICompatibleProvider(settings)
-
-    # --- Session persistence ---
+    # --- Session persistence (no LLM needed) ---
     db_path = settings.session_dir / "sessions.db"
     store = SQLiteStore(db_path)
     store.open()
-    session_mgr = SessionManager(store, llm_provider=llm)
+    session_mgr = SessionManager(store)
+
+    # --- Session listing (no LLM needed — do it early) ---
+    if args.list_sessions:
+        asyncio.run(_list_sessions(session_mgr))
+        return
+
+    # --- Shared LLM provider ---
+    llm = OpenAICompatibleProvider(settings)
 
     # --- Context management (Phase 7.5) ---
     project_mapper = ProjectMapper()
     persistent_memory = PersistentMemory(settings.session_dir)
     context_window_mgr = ContextWindowManager(llm)
     conversation_compactor = ConversationCompactor(llm)
-
-    # --- Session listing ---
-    if args.list_sessions:
-        asyncio.run(_list_sessions(session_mgr))
-        return
 
     # --- State machine (Phase 10) ---
     state_machine = AgentStateMachine()

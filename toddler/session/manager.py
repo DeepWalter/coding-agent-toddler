@@ -1,39 +1,23 @@
 """SessionManager — high-level session lifecycle and message persistence.
 
 Sits between the CLI / agent loop and :class:`~toddler.session.store.SQLiteStore`.
-Handles ContentBlock serialization, auto-titling, token accumulation, and all
+Handles ContentBlock serialization, token accumulation, and all
 business logic that shouldn't live in the raw data layer.
 """  # noqa: E501
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import uuid
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from toddler.llm.types import ContentBlock, Message, TokenUsage
 from toddler.session.models import Session, SessionSummary, StoredMessage
 from toddler.session.store import SQLiteStore
 
-if TYPE_CHECKING:
-    from toddler.llm.base import BaseLLMProvider
-
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Defaults
-# ---------------------------------------------------------------------------
-
-_TITLE_PROMPT = (
-    "Generate a short title (3-6 words) for a conversation that starts "
-    "with this user message.  Return ONLY the title, no quotes, no "
-    "explanation, no punctuation at the end.\n\n"
-    "User message: {first_message}\n\n"
-    "Title:"
-)
 
 
 # ======================================================================
@@ -44,26 +28,17 @@ _TITLE_PROMPT = (
 class SessionManager:
     """High-level manager for session persistence.
 
-    Wraps :class:`SQLiteStore` with ContentBlock serialization, background
-    auto-titling, and token-usage bookkeeping.
+    Wraps :class:`SQLiteStore` with ContentBlock serialization
+    and token-usage bookkeeping.
 
     Parameters
     ----------
     store:
         The underlying SQLite store (already opened).
-    llm_provider:
-        Optional LLM provider used for auto-titling.  When *None*,
-        auto-titling is skipped.
     """
 
-    def __init__(
-        self,
-        store: SQLiteStore,
-        *,
-        llm_provider: BaseLLMProvider | None = None,
-    ) -> None:
+    def __init__(self, store: SQLiteStore) -> None:
         self._store = store
-        self._llm = llm_provider
 
     # ==================================================================
     # Session lifecycle
@@ -239,61 +214,6 @@ class SessionManager:
         await self.replace_messages(
             session_id, compacted_messages, mark_compacted=True,
         )
-
-    # ==================================================================
-    # Auto-titling
-    # ==================================================================
-
-    def auto_title_background(
-        self,
-        session_id: str,
-        first_user_message: str,
-    ) -> None:
-        """Launch a non-blocking background task to generate a session title.
-
-        Call this **after** the first user message has been appended.  The
-        title will be updated asynchronously — it's a best-effort convenience
-        feature; failures are silently swallowed.
-
-        Parameters
-        ----------
-        session_id:
-            The session to title.
-        first_user_message:
-            The text of the first user message, used as input to the LLM.
-        """
-        if self._llm is None:
-            logger.debug("No LLM provider available — skipping auto-title.")
-            return
-
-        asyncio.create_task(
-            self._auto_title(session_id, first_user_message)
-        )
-
-    async def _auto_title(
-        self, session_id: str, first_user_message: str,
-    ) -> None:
-        """Generate a title by calling the LLM, then persist it."""
-        try:
-            prompt = _TITLE_PROMPT.format(first_message=first_user_message)
-            title = await self._llm.generate_compact(prompt)
-            title = title.strip().strip('"').strip("'")
-            # Enforce a reasonable max length.
-            if len(title) > 100:
-                title = title[:97] + "..."
-
-            session = self._store.get_session(session_id)
-            if session is None:
-                return
-
-            session.title = title if title else None
-            session.updated_at = datetime.now(UTC)
-            self._store.update_session(session)
-            logger.warning(f"Auto-titled session {session_id}: {title}")
-        except Exception:
-            logger.exception(
-                f"Auto-title failed for session {session_id} — ignoring."
-            )
 
     # ==================================================================
     # Checkpoint delegates  (Phase 9 will build on these)

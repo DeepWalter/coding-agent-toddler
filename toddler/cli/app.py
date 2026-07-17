@@ -8,9 +8,11 @@ single-invocation mode.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 import sys
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -53,6 +55,20 @@ if TYPE_CHECKING:
     from toddler.context.memory import PersistentMemory
     from toddler.context.project_map import ProjectMapper
     from toddler.context.window import ContextWindowManager
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Auto-titling prompt
+# ---------------------------------------------------------------------------
+
+_TITLE_PROMPT = (
+    "Generate a short title (3-6 words) for a conversation that starts "
+    "with this user message.  Return ONLY the title, no quotes, no "
+    "explanation, no punctuation at the end.\n\n"
+    "User message: {first_message}\n\n"
+    "Title:"
+)
 
 logger = logging.getLogger(__name__)
 
@@ -354,7 +370,7 @@ class CLIApp:
             # Auto-title after first user message (non-blocking).
             if self._session.id not in self._session_titles_scheduled:
                 self._session_titles_scheduled.add(self._session.id)
-                self._session_mgr.auto_title_background(
+                self._auto_title_background(
                     self._session.id, user_input,
                 )
 
@@ -739,6 +755,53 @@ class CLIApp:
         session = await self._session_mgr.get(self._session.id)
         if session is not None and session.message_count == 0:
             await self._session_mgr.delete(self._session.id)
+
+    # ==================================================================
+    # Auto-titling
+    # ==================================================================
+
+    def _auto_title_background(
+        self,
+        session_id: str,
+        first_user_message: str,
+    ) -> None:
+        """Launch a non-blocking background task to generate a session title.
+
+        Call this **after** the first user message has been appended.  The
+        title will be updated asynchronously — it's a best-effort convenience
+        feature; failures are silently swallowed.
+        """
+        if self._llm is None:
+            return
+
+        asyncio.create_task(
+            self._auto_title(session_id, first_user_message)
+        )
+
+    async def _auto_title(
+        self, session_id: str, first_user_message: str,
+    ) -> None:
+        """Generate a title by calling the LLM, then persist it."""
+        try:
+            prompt = _TITLE_PROMPT.format(first_message=first_user_message)
+            title = await self._llm.generate_compact(prompt)
+            title = title.strip().strip('"').strip("'")
+            # Enforce a reasonable max length.
+            if len(title) > 100:
+                title = title[:97] + "..."
+
+            session = await self._session_mgr.get(session_id)
+            if session is None:
+                return
+
+            session.title = title if title else None
+            session.updated_at = datetime.now(UTC)
+            await self._session_mgr.update(session)
+            logger.info(f"Auto-titled session {session_id}: {title}")
+        except Exception:
+            logger.exception(
+                f"Auto-title failed for session {session_id} — ignoring."
+            )
 
     # ==================================================================
     # Display helpers
