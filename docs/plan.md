@@ -732,6 +732,8 @@ PLAN_MODE_MIN_WORDS = 200
 
 **Goal**: Smart context window management and persistent user memory.
 
+### Step 7.1 — Context Modules (done)
+
 - [x] `context/project_map.py` — `ProjectMapper`:
     - Directory tree (gitignore-filtered)
     - Key module import graph summary
@@ -747,7 +749,46 @@ PLAN_MODE_MIN_WORDS = 200
     - `~/.toddler/memory.json` key-value store
     - Injected into system prompt
 
-**Milestone**: ~~Agent handles long conversations. User preferences persist across sessions.~~ ✅ Complete.
+**Milestone**: ~~All four context modules implemented and verified importable.~~ ✅ Complete.
+
+### Step 7.2 — System Prompt Assembly
+
+- [ ] New helper `agent/system_prompt.py` — `SystemPromptBuilder`:
+    - Layers: base persona → project map → persistent memory → mode-specific instructions
+    - `build(mode="execute")` returns the assembled system prompt string
+    - Project map built once and cached (costly filesystem walk)
+    - Persistent memory loaded once and cached
+    - Mode-specific instructions: `EXECUTING` vs `PLAN_EXPLORING` vs `PLAN_EXECUTING`
+    - Compact variants for when the conversation is long (use `build_compact_map()`, `compact_prompt_section()`)
+
+### Step 7.3 — Wire ContextWindowManager into AgentLoop
+
+- [ ] Update `AgentLoop.__init__` to accept `ContextWindowManager` (or create internally)
+- [ ] Before each LLM call: call `window_mgr.count_tokens(messages)` and log usage ratio
+- [ ] When `window_mgr.should_compact(messages)` returns `True`:
+    - Trigger `ConversationCompactor.compact(messages)`
+    - Replace `messages` list with compacted version
+    - Persist compaction via `SessionManager.compact_messages()` (if session manager available)
+    - Optionally switch to compact system prompt variants
+- [ ] When `window_mgr.should_truncate(messages)` returns `True` (emergency):
+    - Call `window_mgr.truncate(messages)` — drops oldest non-system messages
+    - Log a warning with the before/after token counts
+
+### Step 7.4 — Wire SystemPromptBuilder into AgentLoop
+
+- [ ] Replace `_DEFAULT_SYSTEM_PROMPT` constant with `SystemPromptBuilder`
+- [ ] `AgentLoop.__init__` accepts `SystemPromptBuilder` (or creates internally)
+- [ ] On each `run()` call: build the system prompt from layers instead of using the flat string
+- [ ] Pass `mode` hint ("execute" / "plan") so mode-specific instructions are included
+
+### Step 7.5 — Wire in main.py / CLIApp
+
+- [ ] `main.py`: instantiate `ProjectMapper`, `PersistentMemory`, `ContextWindowManager`, `ConversationCompactor`
+- [ ] `main.py`: build `SystemPromptBuilder` with the above components
+- [ ] `CLIApp._agent`: pass context components to `AgentLoop` constructor
+- [ ] `CLIApp`: pass `SessionManager` reference so compaction results can be persisted
+
+**Milestone**: Agent checks token count before each LLM call, compacts old turns at 80% threshold, truncates as last resort. System prompt includes project structure and user preferences.
 
 ---
 
@@ -836,7 +877,7 @@ Phase 3  ███ Tool System            (all tools implemented)
 Phase 4  ███ Agent Loop             (core loop working)
 Phase 5  ███ CLI Layer              (REPL + one-shot)
 Phase 6  ██ Streaming               (real-time display)
-Phase 7  ███ Context Management     (window, compaction, memory)
+Phase 7  ███ Context Management     (modules done, integration pending)
 Phase 8  ███ Sessions               (SQLite persistence)
 Phase 9  ███ Checkpoints            (snapshots + rollback)
 Phase 10 ███ Plan Mode              (state machine + workflow)
