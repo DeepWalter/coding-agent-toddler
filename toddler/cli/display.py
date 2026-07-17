@@ -1,28 +1,16 @@
-"""StreamDisplay — Rich Live dual-panel display for streaming agent output.
+"""StreamDisplay — Rich Live display for streaming agent output.
 
 Renders streaming LLM responses and tool execution status in real time
-using :mod:`rich`'s ``Live`` + ``Layout`` system.
-
-Layout::
-
-    ┌─ Output ─────────────────────────────┐
-    │ Streaming markdown + partial tool    │  ← upper panel (auto-expand)
-    │ calls appear here token-by-token …   │
-    └──────────────────────────────────────┘
-    ┌─ Tools ──────────────────────────────┐
-    │ Status  Tool          Summary        │  ← lower panel (fixed height)
-    │ [▶]     read_file    auth.py         │
-    │ [✓]     grep         Found 3 matches │
-    │ [✗]     shell        Permission …    │
-    └──────────────────────────────────────┘
+using :mod:`rich`'s ``Live``.  Content sizes to its natural height so
+short answers don't get lost inside a full-height panel.
 """
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 
-from rich.console import Console
-from rich.layout import Layout
+from rich.console import Console, Group
 from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -99,11 +87,12 @@ class StreamDisplay:
         self._text = ""
         self._tools: dict[str, _ToolRow] = {}
         self._tool_order: list[str] = []
+        self._min_interval = 1.0 / refresh_per_second
+        self._last_update = 0.0
         self._live = Live(
-            self._build_layout(),
+            self._build_renderable(),
             console=console,
             refresh_per_second=refresh_per_second,
-            vertical_overflow="visible",
         )
 
     # ------------------------------------------------------------------
@@ -117,9 +106,10 @@ class StreamDisplay:
     def stop(self) -> None:
         """Exit the live display context (stops auto-refreshing).
 
-        After stopping, the final rendered output remains visible on the
-        console.
+        Flushes the latest renderable before stopping so no text deltas
+        are left unrendered after throttling.
         """
+        self._live.update(self._build_renderable())
         self._live.stop()
 
     def __enter__(self) -> StreamDisplay:
@@ -186,59 +176,57 @@ class StreamDisplay:
     # ------------------------------------------------------------------
 
     def _refresh(self) -> None:
-        """Rebuild the layout and push it to the Live display."""
-        self._live.update(self._build_layout())
+        """Rebuild and push the renderable, throttled to *refresh_per_second*.
 
-    def _build_layout(self) -> Layout:
-        """Build the dual-panel Rich Layout."""
-        layout = Layout()
-        layout.split_column(
-            Layout(
-                self._build_upper_panel(),
-                name="upper",
-            ),
-            Layout(
-                self._build_lower_panel(),
-                name="lower",
-                size=min(len(self._tools) + 3, 12),
-            ),
-        )
-        return layout
+        During streaming, text deltas arrive far more frequently than the
+        display's target refresh rate.  Throttling avoids redundant re-renders
+        that cause visible flicker.
+        """
+        now = time.monotonic()
+        if now - self._last_update < self._min_interval:
+            return
+        self._last_update = now
+        self._live.update(self._build_renderable())
 
-    def _build_upper_panel(self) -> Panel:
-        """Build the upper panel — streaming markdown text."""
+    def _build_renderable(self) -> Group:
+        """Build the output as a natural-height group of panels.
+
+        Uses :class:`Group` so content sizes to its natural height instead
+        of being stretched to fill the terminal.  Short answers stay visible
+        without forcing the user to scroll.
+        """
         md = (
             Markdown(self._text)
             if self._text
             else Markdown("*Waiting for response…*")
         )
-        return Panel(
+        output_panel = Panel(
             md,
             title="Output",
             title_align="left",
             border_style="blue",
         )
 
-    def _build_lower_panel(self) -> Panel:
-        """Build the lower panel — tool execution status table."""
+        if not self._tools:
+            return Group(output_panel)
+
+        # Tools table in a separate panel below the output.
         table = Table(show_header=True, box=None, padding=(0, 1))
         table.add_column("St", width=2, justify="center")
         table.add_column("Tool", style="bold cyan")
         table.add_column("Summary", style="dim", max_width=60)
 
-        if not self._tools:
-            table.add_row("", "*No tools executed yet*", "")
-        else:
-            for tool_id in self._tool_order:
-                row = self._tools.get(tool_id)
-                if row is None:
-                    continue
-                icon = _STATUS_STYLES[row.status]
-                table.add_row(icon, row.name, row.summary)
+        for tool_id in self._tool_order:
+            row = self._tools.get(tool_id)
+            if row is None:
+                continue
+            icon = _STATUS_STYLES[row.status]
+            table.add_row(icon, row.name, row.summary)
 
-        return Panel(
+        tools_panel = Panel(
             table,
             title="Tools",
             title_align="left",
             border_style="dim",
         )
+        return Group(output_panel, tools_panel)

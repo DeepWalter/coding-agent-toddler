@@ -32,7 +32,6 @@ from toddler.agent.state_machine import (
     AgentMode,
     AgentStateMachine,
 )
-from toddler.context.system_prompt import SystemPromptBuilder
 from toddler.cli.commands import (
     HELP_TEXT,
     CheckpointManagerProvider,
@@ -42,6 +41,7 @@ from toddler.cli.display import StreamDisplay
 from toddler.cli.input_handler import InputHandler
 from toddler.cli.renderer import Renderer
 from toddler.config.settings import Settings
+from toddler.context.system_prompt import SystemPromptBuilder
 from toddler.llm.base import BaseLLMProvider
 from toddler.llm.provider import OpenAICompatibleProvider
 from toddler.llm.types import Message, TokenUsage
