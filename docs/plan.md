@@ -776,15 +776,15 @@ PLAN_MODE_MIN_WORDS = 200
 
 **Goal**: Pre-mutation snapshots with rollback capability.
 
-- [ ] `checkpoint/models.py` — `Checkpoint`, `AgentStateSnapshot`, `FileManifestEntry`, `RollbackResult`
-- [ ] `checkpoint/snapshot.py` — `GitSnapshotter` + `FileSnapshotter`
-- [ ] `checkpoint/manager.py` — `CheckpointManager`:
+- [x] `checkpoint/models.py` — `Checkpoint`, `AgentStateSnapshot`, `FileManifestEntry`, `RollbackResult`
+- [x] `checkpoint/snapshot.py` — `GitSnapshotter` + `FileSnapshotter`
+- [x] `checkpoint/manager.py` — `CheckpointManager`:
     - `create()` — snapshot before mutating tool
     - `rollback_to()` — restore files + truncate conversation
     - `list_for_session()`, `get()`, `prune()`
-- [ ] Wire into `ToolExecutor.execute()`
+- [x] Wire into `ToolExecutor.execute()` via `executor_callback()`
 
-**Milestone**: `/rollback <checkpoint_id>` restores files and conversation state.
+**Milestone**: ~~`/rollback <checkpoint_id>` restores files and conversation state.~~ ✅ Complete.
 
 ---
 
@@ -817,6 +817,11 @@ PLAN_MODE_MIN_WORDS = 200
 - [ ] Error handling hardening: graceful degradation for all failure modes
 - [ ] Performance profiling: identify slow paths
 - [ ] `README.md` — Usage guide, examples, configuration reference
+- [ ] **Extract shared store** — Move `SQLiteStore` from `session/store.py` to a neutral
+      top-level `toddler/store.py`. Both `session/` and `checkpoint/` depend on it,
+      but the store currently lives under `session/` (a Phase 8 artifact). Extracting
+      it removes the awkward ownership of the `checkpoints` table by the session
+      package and clarifies that the database layer is shared infrastructure.
 
 **Milestone**: `tod "fix the bug in auth.py"` works end-to-end with real DeepSeek API (or any OpenAI-compatible endpoint).
 
