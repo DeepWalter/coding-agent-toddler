@@ -26,7 +26,16 @@ from toddler.agent.events import (
     ToolCallStart,
 )
 from toddler.agent.loop import AgentLoop
+from toddler.agent.state_machine import (
+    AgentMode,
+    AgentStateMachine,
+)
 from toddler.agent.system_prompt import SystemPromptBuilder
+from toddler.cli.commands import (
+    HELP_TEXT,
+    CheckpointManagerProvider,
+    SlashCommandDispatcher,
+)
 from toddler.cli.display import StreamDisplay
 from toddler.cli.input_handler import InputHandler
 from toddler.cli.renderer import Renderer
@@ -158,6 +167,13 @@ class CLIApp:
     conversation_compactor:
         Optional :class:`ConversationCompactor` for LLM summarisation
         of old conversation turns (Phase 7).
+    state_machine:
+        Optional :class:`AgentStateMachine` for plan-mode workflow
+        (Phase 10).  When *None*, a default instance is created.
+    checkpoint_manager_factory:
+        Optional async factory that returns a :class:`CheckpointManager`
+        for the current session.  Used by the slash-command dispatcher
+        for ``/rollback`` and ``/checkpoints`` (Phase 10).
     """
 
     def __init__(
@@ -170,6 +186,10 @@ class CLIApp:
         persistent_memory: PersistentMemory | None = None,
         context_window_mgr: ContextWindowManager | None = None,
         conversation_compactor: ConversationCompactor | None = None,
+        state_machine: AgentStateMachine | None = None,
+        checkpoint_manager_factory: (
+            CheckpointManagerProvider | None
+        ) = None,
     ) -> None:
         self._settings = settings
         self._session_mgr = session_manager
@@ -197,6 +217,15 @@ class CLIApp:
         self._prompt_builder = SystemPromptBuilder(
             project_mapper=project_mapper,
             persistent_memory=persistent_memory,
+        )
+
+        # --- Phase 10: state machine + command dispatcher ---
+        self._sm = state_machine or AgentStateMachine()
+
+        self._cmd_dispatcher = SlashCommandDispatcher(
+            state_machine=self._sm,
+            session_manager=session_manager,
+            checkpoint_manager_provider=checkpoint_manager_factory,
         )
 
         # --- Current session (set on run) ---
@@ -295,9 +324,27 @@ class CLIApp:
         self,
         user_input: str,
         *,
-        force_plan: bool = False,  # noqa: ARG002
+        force_plan: bool = False,
     ) -> None:
-        """Run one complete agent turn — user input through to finish."""
+        """Run one complete agent turn — user input through to finish.
+
+        Uses the :class:`AgentStateMachine` to classify complexity and
+        trigger plan mode automatically when appropriate (Phase 10).
+        """
+        # --- Classify and transition (Phase 10) ---
+        self._sm.reset()
+        mode = self._sm.classify_and_transition(
+            user_input,
+            force_plan=force_plan,
+        )
+        if mode != AgentMode.EXECUTING:
+            trigger = (
+                "/plan"
+                if (force_plan or self._sm.plan_pending)
+                else "auto-detected complexity"
+            )
+            self._renderer.info(f"Plan mode triggered ({trigger}).")
+
         # --- Persist the user message ---
         user_msg = Message.user(user_input)
         if self._session is not None and self._session_mgr is not None:
@@ -312,16 +359,22 @@ class CLIApp:
                 )
 
         session_id = self._session.id if self._session else None
+        mode_hint = self._sm.get_mode_hint()
 
         stream = self._settings.streaming_enabled
         if stream:
-            await self._run_streaming_turn(user_input, session_id=session_id)
+            await self._run_streaming_turn(
+                user_input,
+                session_id=session_id,
+                mode_hint=mode_hint,
+            )
         else:
             gen = self._agent.run(
                 user_input,
                 max_iterations=self._settings.max_iterations,
                 stream=False,
                 session_id=session_id,
+                mode=mode_hint,
             )
             await self._process_events(gen)
 
@@ -330,7 +383,11 @@ class CLIApp:
     # ==================================================================
 
     async def _run_streaming_turn(  # noqa: C901
-        self, user_input: str, *, session_id: str | None = None,
+        self,
+        user_input: str,
+        *,
+        session_id: str | None = None,
+        mode_hint: str = "execute",
     ) -> None:
         """Run an agent turn with real-time Rich Live display."""
         display = StreamDisplay(
@@ -343,6 +400,7 @@ class CLIApp:
             max_iterations=self._settings.max_iterations,
             stream=True,
             session_id=session_id,
+            mode=mode_hint,
         )
 
         # Collect assistant response for session persistence.
@@ -579,68 +637,33 @@ class CLIApp:
     async def _handle_slash_command(self, text: str) -> bool:
         """Handle a slash command entered at the REPL.
 
-        Returns ``True`` to continue the REPL, ``False`` to exit.
+        Delegates to :class:`SlashCommandDispatcher` for parsing and
+        execution.  Returns ``True`` to continue the REPL, ``False`` to exit.
         """
-        parts = text.strip().split(maxsplit=1)
-        cmd = parts[0].lower()
-        args = parts[1] if len(parts) > 1 else ""
+        result = await self._cmd_dispatcher.dispatch(text)
 
-        if cmd in ("/quit", "/exit", "/q"):
-            self._renderer.info("Goodbye.")
-            return False
-
-        if cmd == "/clear":
+        # --- Handle sentinel messages ---
+        if result.message == "__CLEAR__":
             self._renderer.console.clear()
             return True
-
-        if cmd == "/help":
+        if result.message == "__HELP__":
             self._print_help()
             return True
-
-        if cmd == "/plan":
-            self._renderer.info(
-                "Plan mode will be triggered on your next message "
-                "(use --plan for one-shot mode)."
-            )
-            return True
-
-        if cmd == "/rollback":
-            self._renderer.warning(
-                "Rollback is not yet implemented (Phase 9 — Checkpoints)."
-            )
-            return True
-
-        if cmd == "/checkpoints":
-            self._renderer.warning(
-                "Checkpoints are not yet implemented (Phase 9)."
-            )
-            return True
-
-        if cmd == "/session":
-            await self._handle_session_command(args)
-            return True
-
-        self._renderer.error(
-            f"Unknown command: {cmd}.  Type /help for available commands."
-        )
-        return True
-
-    async def _handle_session_command(self, args: str) -> None:
-        """Handle ``/session <subcommand>``."""
-        sub = args.strip().lower()
-
-        if sub == "info" or not sub:
+        if result.message == "__SESSION_INFO__":
             await self._show_session_info()
-        elif sub == "list":
-            await self._show_session_list()
-        elif sub.startswith("switch "):
-            target = args.strip()[7:].strip()
-            await self._switch_session(target)
-        else:
-            self._renderer.error(
-                f"Unknown /session subcommand: '{sub}'. "
-                f"Available: info, list, switch <id>."
-            )
+            return True
+        if result.message and result.message.startswith(
+            "__SESSION_SWITCH__:"
+        ):
+            target_id = result.message.split(":", 1)[1]
+            await self._switch_session(target_id)
+            return True
+
+        # --- Display message if not already rendered ---
+        if result.message and not result.rendered:
+            self._renderer.info(result.message)
+
+        return result.continue_repl
 
     async def _show_session_info(self) -> None:
         """Display info about the current session."""
@@ -733,27 +756,13 @@ class CLIApp:
     def _print_help(self) -> None:
         """Print slash-command help."""
         self._renderer.console.print()
-        self._renderer.markdown("""\
-### Slash Commands
-
-| Command | Description |
-|---------|-------------|
-| `/plan` | Force plan mode on the next message |
-| `/rollback <id>` | Rollback to a checkpoint (Phase 9) |
-| `/checkpoints` | List checkpoints (Phase 9) |
-| `/session info` | Show current session info |
-| `/session list` | List all saved sessions |
-| `/session switch <id>` | Switch to another session |
-| `/help` | Show this help |
-| `/clear` | Clear the screen |
-| `/quit`, `/exit` | Exit the REPL |
-""")
+        self._renderer.markdown(HELP_TEXT)
 
     def _repl_toolbar(self) -> str:
         """Build the bottom toolbar string."""
         return (
             " Alt+Enter: newline │ Ctrl+D: exit │ "
-            "/plan /session /help /quit "
+            "/plan /rollback /checkpoints /session /help /quit "
         )
 
     # ==================================================================
