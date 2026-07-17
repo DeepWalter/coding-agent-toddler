@@ -9,7 +9,7 @@ Phase 7 adds context management: the loop now tracks token usage via
 :class:`~toddler.context.window.ContextWindowManager`, triggers compaction
 via :class:`~toddler.context.compaction.ConversationCompactor` when the
 conversation grows too large, and uses
-:class:`~toddler.agent.system_prompt.SystemPromptBuilder` to assemble a
+:class:`~toddler.context.system_prompt.SystemPromptBuilder` to assemble a
 layered system prompt from persona, project map, persistent memory, and
 mode-specific instructions.
 """
@@ -32,7 +32,7 @@ from toddler.agent.events import (
 )
 from toddler.agent.handler import StreamHandler
 from toddler.agent.stop_conditions import StopConditionChecker
-from toddler.agent.system_prompt import SystemPromptBuilder
+from toddler.context.system_prompt import SystemPromptBuilder
 from toddler.llm.types import ContentBlock, Message, TokenUsage
 from toddler.tools.base import Permission, ToolCall, ToolResult
 

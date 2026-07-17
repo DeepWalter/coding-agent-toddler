@@ -42,7 +42,6 @@ toddler/
 │   ├── loop.py                 # Core agent loop (async generator)
 │   ├── state_machine.py        # Plan/Execute mode state machine
 │   ├── stop_conditions.py      # Max iter, token budget, end_turn detection
-│   ├── system_prompt.py        # SystemPromptBuilder — layered prompt assembly
 │   └── events.py               # AgentEvent types
 ├── tools/
 │   ├── base.py                 # BaseTool ABC, ToolResult, Permission enum
@@ -61,7 +60,8 @@ toddler/
 │   ├── window.py               # ContextWindowManager (truncation, compaction trigger)
 │   ├── compaction.py           # ConversationCompactor (LLM summarization)
 │   ├── project_map.py          # ProjectMapper (structural overview)
-│   └── memory.py               # PersistentMemory (user prefs across sessions)
+│   ├── memory.py               # PersistentMemory (user prefs across sessions)
+│   └── system_prompt.py        # SystemPromptBuilder — layered prompt assembly
 ├── session/
 │   ├── models.py               # Session, SessionSummary, StoredMessage
 │   ├── store.py                # SQLiteStore
@@ -754,7 +754,7 @@ PLAN_MODE_MIN_WORDS = 200
 
 ### Step 7.2 — System Prompt Assembly
 
-- [x] New helper `agent/system_prompt.py` — `SystemPromptBuilder`:
+- [x] New helper `context/system_prompt.py` — `SystemPromptBuilder`:
     - Layers: base persona → project map → persistent memory → mode-specific instructions
     - `build(mode="execute")` returns the assembled system prompt string
     - Project map built once and cached (costly filesystem walk)

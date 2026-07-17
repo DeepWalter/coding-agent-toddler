@@ -32,7 +32,7 @@ from toddler.agent.state_machine import (
     AgentMode,
     AgentStateMachine,
 )
-from toddler.agent.system_prompt import SystemPromptBuilder
+from toddler.context.system_prompt import SystemPromptBuilder
 from toddler.cli.commands import (
     HELP_TEXT,
     CheckpointManagerProvider,
