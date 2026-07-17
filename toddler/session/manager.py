@@ -226,7 +226,7 @@ class SessionManager:
             session.updated_at = datetime.now(UTC)
             self._store.update_session(session)
 
-    async def compact_messages(
+    async def save_compacted_messages(
         self,
         session_id: str,
         compacted_messages: list[Message],

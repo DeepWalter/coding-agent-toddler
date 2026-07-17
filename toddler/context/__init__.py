@@ -6,4 +6,14 @@ Phase 7: Context Management
 
 from __future__ import annotations
 
-__all__: list[str] = []
+from toddler.context.compaction import ConversationCompactor
+from toddler.context.memory import PersistentMemory
+from toddler.context.project_map import ProjectMapper
+from toddler.context.window import ContextWindowManager
+
+__all__ = [
+    "ContextWindowManager",
+    "ConversationCompactor",
+    "PersistentMemory",
+    "ProjectMapper",
+]

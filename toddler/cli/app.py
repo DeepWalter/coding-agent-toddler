@@ -12,6 +12,7 @@ import logging
 import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from toddler.agent.events import (
     AgentError,
@@ -25,6 +26,7 @@ from toddler.agent.events import (
     ToolCallStart,
 )
 from toddler.agent.loop import AgentLoop
+from toddler.agent.system_prompt import SystemPromptBuilder
 from toddler.cli.display import StreamDisplay
 from toddler.cli.input_handler import InputHandler
 from toddler.cli.renderer import Renderer
@@ -36,6 +38,12 @@ from toddler.session.manager import SessionManager
 from toddler.session.models import Session
 from toddler.tools import create_default_registry
 from toddler.tools.executor import ToolExecutor
+
+if TYPE_CHECKING:
+    from toddler.context.compaction import ConversationCompactor
+    from toddler.context.memory import PersistentMemory
+    from toddler.context.project_map import ProjectMapper
+    from toddler.context.window import ContextWindowManager
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +146,18 @@ class CLIApp:
         LLM provider shared with the session manager (for auto-titling) and
         agent loop.  When *None*, a default ``OpenAICompatibleProvider`` is
         created from *settings*.
+    project_mapper:
+        Optional :class:`ProjectMapper` for structural codebase overview
+        in the system prompt (Phase 7).
+    persistent_memory:
+        Optional :class:`PersistentMemory` for user preferences that
+        survive across sessions (Phase 7).
+    context_window_mgr:
+        Optional :class:`ContextWindowManager` for token tracking and
+        compaction/truncation triggers (Phase 7).
+    conversation_compactor:
+        Optional :class:`ConversationCompactor` for LLM summarisation
+        of old conversation turns (Phase 7).
     """
 
     def __init__(
@@ -146,6 +166,10 @@ class CLIApp:
         *,
         session_manager: SessionManager | None = None,
         llm: BaseLLMProvider | None = None,
+        project_mapper: ProjectMapper | None = None,
+        persistent_memory: PersistentMemory | None = None,
+        context_window_mgr: ContextWindowManager | None = None,
+        conversation_compactor: ConversationCompactor | None = None,
     ) -> None:
         self._settings = settings
         self._session_mgr = session_manager
@@ -162,6 +186,18 @@ class CLIApp:
 
         # --- Build LLM provider (or reuse the shared one) ---
         self._llm = llm or OpenAICompatibleProvider(self._settings)
+
+        # --- Context management components (Phase 7.5) ---
+        self._project_mapper = project_mapper
+        self._persistent_memory = persistent_memory
+        self._context_window_mgr = context_window_mgr
+        self._conversation_compactor = conversation_compactor
+
+        # --- Pre-build SystemPromptBuilder from context components ---
+        self._prompt_builder = SystemPromptBuilder(
+            project_mapper=project_mapper,
+            persistent_memory=persistent_memory,
+        )
 
         # --- Current session (set on run) ---
         self._session: Session | None = None
@@ -275,14 +311,17 @@ class CLIApp:
                     self._session.id, user_input,
                 )
 
+        session_id = self._session.id if self._session else None
+
         stream = self._settings.streaming_enabled
         if stream:
-            await self._run_streaming_turn(user_input)
+            await self._run_streaming_turn(user_input, session_id=session_id)
         else:
             gen = self._agent.run(
                 user_input,
                 max_iterations=self._settings.max_iterations,
                 stream=False,
+                session_id=session_id,
             )
             await self._process_events(gen)
 
@@ -291,7 +330,7 @@ class CLIApp:
     # ==================================================================
 
     async def _run_streaming_turn(  # noqa: C901
-        self, user_input: str,
+        self, user_input: str, *, session_id: str | None = None,
     ) -> None:
         """Run an agent turn with real-time Rich Live display."""
         display = StreamDisplay(
@@ -303,6 +342,7 @@ class CLIApp:
             user_input,
             max_iterations=self._settings.max_iterations,
             stream=True,
+            session_id=session_id,
         )
 
         # Collect assistant response for session persistence.
@@ -729,6 +769,10 @@ class CLIApp:
                 tool_registry=self._registry,
                 tool_executor=self._executor,
                 settings=self._settings,
+                system_prompt_builder=self._prompt_builder,
+                context_window_mgr=self._context_window_mgr,
+                conversation_compactor=self._conversation_compactor,
+                session_manager=self._session_mgr,
             )
         return self._agent_impl
 

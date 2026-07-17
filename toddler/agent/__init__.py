@@ -14,6 +14,7 @@ from toddler.agent.events import (
 from toddler.agent.handler import IncrementalJSONParser, StreamHandler
 from toddler.agent.loop import AgentLoop
 from toddler.agent.stop_conditions import StopConditionChecker, StopReason
+from toddler.agent.system_prompt import SystemPromptBuilder
 
 __all__ = [
     "AgentError",
@@ -26,6 +27,7 @@ __all__ = [
     "StopConditionChecker",
     "StopReason",
     "StreamHandler",
+    "SystemPromptBuilder",
     "TextDelta",
     "ToolCallDelta",
     "ToolCallEnd",

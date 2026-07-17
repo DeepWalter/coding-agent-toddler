@@ -863,6 +863,12 @@ PLAN_MODE_MIN_WORDS = 200
       but the store currently lives under `session/` (a Phase 8 artifact). Extracting
       it removes the awkward ownership of the `checkpoints` table by the session
       package and clarifies that the database layer is shared infrastructure.
+- [ ] **Project-level persistent memory** — `PersistentMemory` currently stores a single
+      `~/.toddler/memory.json` shared across all projects (user-level). Add project-scoped
+      memory (e.g., `.toddler/memory.json` inside the project root or
+      `~/.toddler/projects/<hash>/memory.json`) so preferences like indentation style,
+      file conventions, or "don't touch `vendor/`" are scoped to the right repo. The
+      system prompt should merge both layers: user-level first, then project-level on top.
 
 **Milestone**: `tod "fix the bug in auth.py"` works end-to-end with real DeepSeek API (or any OpenAI-compatible endpoint).
 

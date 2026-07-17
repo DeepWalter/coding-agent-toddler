@@ -15,6 +15,10 @@ import asyncio
 
 from toddler.cli.app import CLIApp, build_argparser, setup_logging
 from toddler.config.settings import Settings
+from toddler.context.compaction import ConversationCompactor
+from toddler.context.memory import PersistentMemory
+from toddler.context.project_map import ProjectMapper
+from toddler.context.window import ContextWindowManager
 from toddler.llm.provider import OpenAICompatibleProvider
 from toddler.session.manager import SessionManager
 from toddler.session.store import SQLiteStore
@@ -43,13 +47,27 @@ def main() -> None:
     store.open()
     session_mgr = SessionManager(store, llm_provider=llm)
 
+    # --- Context management (Phase 7.5) ---
+    project_mapper = ProjectMapper()
+    persistent_memory = PersistentMemory(settings.session_dir)
+    context_window_mgr = ContextWindowManager(llm)
+    conversation_compactor = ConversationCompactor(llm)
+
     # --- Session listing ---
     if args.list_sessions:
         asyncio.run(_list_sessions(session_mgr))
         return
 
     # --- Build app ---
-    app = CLIApp(settings, session_manager=session_mgr, llm=llm)
+    app = CLIApp(
+        settings,
+        session_manager=session_mgr,
+        llm=llm,
+        project_mapper=project_mapper,
+        persistent_memory=persistent_memory,
+        context_window_mgr=context_window_mgr,
+        conversation_compactor=conversation_compactor,
+    )
 
     # --- Resolve session for --session flag ---
     session_id = args.session
