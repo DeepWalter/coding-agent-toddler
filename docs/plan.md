@@ -65,7 +65,7 @@ toddler/
 ├── session/
 │   ├── models.py               # Session, SessionSummary, StoredMessage
 │   ├── store.py                # SQLiteStore
-│   └── manager.py              # SessionManager (CRUD, auto-title, token tracking)
+│   └── manager.py              # SessionManager (CRUD, token tracking)
 ├── checkpoint/
 │   ├── models.py               # Checkpoint, AgentStateSnapshot, RollbackResult
 │   ├── snapshot.py             # GitSnapshotter + FileSnapshotter fallback
@@ -419,7 +419,7 @@ CREATE INDEX idx_checkpoints_session ON checkpoints(session_id, sequence_num);
 
 ### Key Operations
 
-- **Auto-title**: Cheap LLM call after first user message (non-blocking)
+- **Auto-title**: Cheap LLM call after first user message (non-blocking, lives in `CLIApp` to keep `SessionManager` decoupled from the LLM provider)
 - **Compaction**: Mark old messages `is_compacted=true`, insert summary message
 - **Resume**: `tod --session <id>` reconstructs full conversation from DB
 - **Pruning**: Configurable retention for old checkpoints (default: keep latest 50)
@@ -804,7 +804,6 @@ PLAN_MODE_MIN_WORDS = 200
 - [x] `session/manager.py` — `SessionManager`:
     - Session lifecycle (create/get/list/delete/update)
     - Message persistence (append/retrieve/replace/compact)
-    - Auto-title generation (async, non-blocking)
     - Token usage accumulation
 - [x] `main.py` — Wire SessionManager + `--list-sessions` real implementation
 - [x] `cli/app.py` — `/session info|list|switch` commands, empty-session pruning
