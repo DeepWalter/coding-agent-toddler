@@ -118,6 +118,18 @@ class SlashCommandDispatcher:
     # Public API
     # ------------------------------------------------------------------
 
+    def set_checkpoint_manager_provider(
+        self,
+        provider: CheckpointManagerProvider | None,
+    ) -> None:
+        """Set (or clear) the checkpoint manager provider.
+
+        Useful when the checkpoint manager cannot be created until after
+        a session has been resolved (i.e. after
+        :class:`SlashCommandDispatcher` construction).
+        """
+        self._ckpt_provider = provider
+
     async def dispatch(self, text: str) -> CommandResult:
         """Parse and execute a single slash-command string.
 
@@ -215,7 +227,7 @@ class SlashCommandDispatcher:
             )
 
         try:
-            ckpt_mgr = await self._ckpt_provider()
+            ckpt_mgr = self._ckpt_provider()
         except Exception as exc:
             return CommandResult(
                 continue_repl=True,
@@ -276,7 +288,7 @@ class SlashCommandDispatcher:
             )
 
         try:
-            ckpt_mgr = await self._ckpt_provider()
+            ckpt_mgr = self._ckpt_provider()
         except Exception as exc:
             return CommandResult(
                 continue_repl=True,

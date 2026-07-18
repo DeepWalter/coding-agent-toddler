@@ -18,7 +18,6 @@ import sys
 from pathlib import Path
 
 from toddler.agent.state_machine import AgentStateMachine
-from toddler.checkpoint.manager import CheckpointManager
 from toddler.cli.app import CLIApp
 from toddler.config.settings import Settings
 from toddler.context.compaction import ConversationCompactor
@@ -185,41 +184,19 @@ def main() -> None:
     # --- State machine (Phase 10) ---
     state_machine = AgentStateMachine()
 
-    # --- Checkpoint manager factory (Phase 9 + 10) ---
-    # The checkpoint manager is session-scoped, so we use a factory that
-    # captures the store, repo root, and session manager, and resolves
-    # the current session at call time.  A list is used as a mutable
-    # container so the closure can access ``app`` after it is created.
-    repo_root = Path.cwd()
-    _app_ref: list[CLIApp] = []
-
-    async def _ckpt_factory() -> CheckpointManager | None:
-        """Create a CheckpointManager for the current session."""
-        if not _app_ref:
-            return None
-        app_ref = _app_ref[0]
-        if app_ref._session is None:  # noqa: SLF001
-            return None
-        return CheckpointManager(
-            store=store,
-            session_id=app_ref._session.id,  # noqa: SLF001
-            repo_root=repo_root,
-            session_manager=session_mgr,
-        )
-
     # --- Build app ---
     app = CLIApp(
         settings,
         session_manager=session_mgr,
         llm=llm,
+        store=store,
+        repo_root=Path.cwd(),
         project_mapper=project_mapper,
         persistent_memory=persistent_memory,
         context_window_mgr=context_window_mgr,
         conversation_compactor=conversation_compactor,
         state_machine=state_machine,
-        checkpoint_manager_factory=_ckpt_factory,
     )
-    _app_ref.append(app)
 
     # --- Resolve session for --session flag ---
     session_id = args.session

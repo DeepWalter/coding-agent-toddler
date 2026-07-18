@@ -19,7 +19,8 @@ All commits follow `.github/COMMIT_STYLE_GUIDE.md`.
 
 - Format: `<type>[(scope)][!]: <subject>`
 - Subject: ≤60 chars, lowercase, no period, imperative mood ("add", not "added")
-- Body: blank line after subject, wrap at 80 chars, explain what/why (not how)
+- Body: blank line after subject, wrap at 80 chars, explain what/why (not how).
+  Use bullet points when listing multiple changes makes the message clearer.
 - Footer: `BREAKING CHANGE:` or issue refs (e.g., `Closes #123`)
 - Sign-off: `Co-Authored-By: Claude <noreply@anthropic.com>`
 

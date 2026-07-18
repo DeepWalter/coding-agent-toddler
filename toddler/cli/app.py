@@ -11,6 +11,7 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from toddler.agent.events import (
@@ -29,10 +30,8 @@ from toddler.agent.state_machine import (
     AgentMode,
     AgentStateMachine,
 )
-from toddler.checkpoint import (
-    CheckpointManagerProvider,
-    create_checkpoint_callback,
-)
+from toddler.checkpoint import create_checkpoint_callback
+from toddler.checkpoint.manager import CheckpointManager
 from toddler.cli.commands import (
     HELP_TEXT,
     SlashCommandDispatcher,
@@ -55,6 +54,7 @@ if TYPE_CHECKING:
     from toddler.context.memory import PersistentMemory
     from toddler.context.project_map import ProjectMapper
     from toddler.context.window import ContextWindowManager
+    from toddler.session.store import SQLiteStore
 
 logger = logging.getLogger(__name__)
 
@@ -82,17 +82,28 @@ class CLIApp:
     renderer, input handler, session manager), then runs either the
     interactive REPL or a one-shot query.
 
+    Checkpointing is wired **after** session resolution (in :meth:`run_repl`
+    and :meth:`run_one_shot`) because a :class:`CheckpointManager` is
+    session-scoped — it needs a ``session_id`` that doesn't exist until
+    runtime.
+
     Parameters
     ----------
     settings:
         Resolved settings from env vars + CLI args.
     session_manager:
-        Manager for persistent sessions.  When *None* (e.g. for tests), session
-        persistence is disabled.
+        Manager for persistent sessions.  When *None* (e.g. for tests),
+        session persistence is disabled.
     llm:
         LLM provider shared with the session manager (for auto-titling) and
         agent loop.  When *None*, a default ``OpenAICompatibleProvider`` is
         created from *settings*.
+    store:
+        SQLite store (already opened) used to persist checkpoints.  When
+        *None* (e.g. for tests), checkpointing is disabled.
+    repo_root:
+        Absolute path to the working directory (used for git-based
+        snapshots).
     project_mapper:
         Optional :class:`ProjectMapper` for structural codebase overview
         in the system prompt (Phase 7).
@@ -108,10 +119,6 @@ class CLIApp:
     state_machine:
         Optional :class:`AgentStateMachine` for plan-mode workflow
         (Phase 10).  When *None*, a default instance is created.
-    checkpoint_manager_factory:
-        Optional async factory that returns a :class:`CheckpointManager`
-        for the current session.  Used by the slash-command dispatcher
-        for ``/rollback`` and ``/checkpoints`` (Phase 10).
     """
 
     def __init__(
@@ -120,30 +127,31 @@ class CLIApp:
         *,
         session_manager: SessionManager | None = None,
         llm: BaseLLMProvider | None = None,
+        store: SQLiteStore | None = None,
+        repo_root: Path | None = None,
         project_mapper: ProjectMapper | None = None,
         persistent_memory: PersistentMemory | None = None,
         context_window_mgr: ContextWindowManager | None = None,
         conversation_compactor: ConversationCompactor | None = None,
         state_machine: AgentStateMachine | None = None,
-        checkpoint_manager_factory: (
-            CheckpointManagerProvider | None
-        ) = None,
     ) -> None:
         self._settings = settings
         self._session_mgr = session_manager
+        self._store = store
+        self._repo_root = repo_root
         self._renderer = Renderer()
         self._input = InputHandler()
 
         # --- Build tool system ---
         self._registry = create_default_registry()
 
+        # Checkpoint callback is wired later via _wire_checkpointing(),
+        # after session resolution — the CheckpointManager needs a
+        # session_id.
         self._executor = ToolExecutor(
             self._registry,
             self._settings,
             confirm_cb=always_approve,
-            checkpoint_cb=create_checkpoint_callback(
-                ckpt_provider=checkpoint_manager_factory,
-            ),
         )
 
         # --- Build LLM provider (or reuse the shared one) ---
@@ -164,10 +172,11 @@ class CLIApp:
         # --- Phase 10: state machine + command dispatcher ---
         self._sm = state_machine or AgentStateMachine()
 
+        # Checkpoint manager provider is wired later via
+        # _wire_checkpointing(), after session resolution.
         self._cmd_dispatcher = SlashCommandDispatcher(
             state_machine=self._sm,
             session_manager=session_manager,
-            checkpoint_manager_provider=checkpoint_manager_factory,
         )
 
         # --- Current session (set on run) ---
@@ -197,6 +206,8 @@ class CLIApp:
             )
         else:
             self._session = None
+
+        self._wire_checkpointing()
 
         self._print_banner()
         self._renderer.info(
@@ -256,7 +267,39 @@ class CLIApp:
         else:
             self._session = None
 
+        self._wire_checkpointing()
+
         await self._run_agent_turn(query, force_plan=force_plan)
+
+    # ==================================================================
+    # Checkpoint wiring (deferred until session resolution)
+    # ==================================================================
+
+    def _wire_checkpointing(self) -> None:
+        """Create the session-scoped :class:`CheckpointManager` and wire it
+        into the :class:`ToolExecutor` and :class:`SlashCommandDispatcher`.
+
+        Must be called after ``self._session`` has been set.  When there is
+        no active session or the store wasn't provided, checkpointing is
+        silently disabled.
+        """
+        if self._session is None or self._store is None:
+            return
+
+        ckpt_mgr = CheckpointManager(
+            store=self._store,
+            session_id=self._session.id,
+            repo_root=self._repo_root or Path.cwd(),
+            session_manager=self._session_mgr,
+        )
+
+        def _provider() -> CheckpointManager | None:
+            return ckpt_mgr
+
+        self._executor.set_checkpoint_cb(
+            create_checkpoint_callback(ckpt_provider=_provider),
+        )
+        self._cmd_dispatcher.set_checkpoint_manager_provider(_provider)
 
     # ==================================================================
     # Agent turn

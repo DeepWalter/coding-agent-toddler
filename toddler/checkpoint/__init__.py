@@ -9,7 +9,7 @@ Public API
 - :class:`CheckpointManager` — create, rollback, list, prune
 - :class:`GitSnapshotter` — git-based snapshot strategy (preferred)
 - :class:`FileSnapshotter` — file-copy snapshot fallback
-- :class:`CheckpointManagerProvider` — async factory type for lazy
+- :class:`CheckpointManagerProvider` — factory type for lazy
   session-scoped :class:`CheckpointManager` creation
 - :func:`create_checkpoint_callback` — factory that builds a
   :class:`~toddler.tools.executor.CheckpointCallback` for
@@ -19,7 +19,7 @@ Public API
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from toddler.checkpoint.manager import CheckpointManager
@@ -54,9 +54,9 @@ logger = logging.getLogger(__name__)
 
 CheckpointManagerProvider = Callable[
     [],
-    Awaitable[CheckpointManager | None],
+    CheckpointManager | None,
 ]
-"""Async factory that returns a :class:`CheckpointManager` for the current
+"""Factory that returns a :class:`CheckpointManager` for the current
 session, or ``None`` when there is no active session.
 
 Used by :class:`~toddler.cli.commands.SlashCommandDispatcher` to lazily create
@@ -96,7 +96,7 @@ def create_checkpoint_callback(
         if ckpt_provider is None:
             return None
         try:
-            ckpt_mgr = await ckpt_provider()
+            ckpt_mgr = ckpt_provider()
         except Exception:
             logger.debug("Checkpoint provider failed — skipping checkpoint.")
             return None
