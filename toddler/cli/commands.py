@@ -198,7 +198,7 @@ class SlashCommandDispatcher:
         if self._ckpt_provider is None:
             return CommandResult(
                 continue_repl=True,
-                message="Checkpoints are not available (no checkpoint manager configured).",
+                message="Checkpoints are not available (no checkpoint manager configured).",  # noqa: E501
             )
 
         checkpoint_id = args.strip()
@@ -249,7 +249,7 @@ class SlashCommandDispatcher:
             )
             return CommandResult(
                 continue_repl=True,
-                message=f"✅ Rolled back to checkpoint `{checkpoint_id[:12]}...`.\n{files}{warnings}",
+                message=f"✅ Rolled back to checkpoint `{checkpoint_id[:12]}...`.\n{files}{warnings}",  # noqa: E501
             )
         return CommandResult(
             continue_repl=True,
@@ -266,7 +266,7 @@ class SlashCommandDispatcher:
         if self._ckpt_provider is None:
             return CommandResult(
                 continue_repl=True,
-                message="Checkpoints are not available (no checkpoint manager configured).",
+                message="Checkpoints are not available (no checkpoint manager configured).",  # noqa: E501
             )
 
         try:
@@ -299,7 +299,7 @@ class SlashCommandDispatcher:
             )
 
         lines: list[str] = [
-            f"{'#':>4}  {'ID':<14}  {'Created':<20}  {'Tool':<20}  {'Description'}",
+            f"{'#':>4}  {'ID':<14}  {'Created':<20}  {'Tool':<20}  {'Description'}",  # noqa: E501
             f"{'─'*4}  {'─'*14}  {'─'*20}  {'─'*20}  {'─'*40}",
         ]
         for ck in checkpoints:
@@ -308,7 +308,7 @@ class SlashCommandDispatcher:
             tool = (ck.tool_name or "")[:19]
             desc = (ck.description or "")[:40]
             lines.append(
-                f"{ck.sequence_num:>4}  {cid:<14}  {ts:<20}  {tool:<20}  {desc}"
+                f"{ck.sequence_num:>4}  {cid:<14}  {ts:<20}  {tool:<20}  {desc}"  # noqa: E501
             )
 
         return CommandResult(
@@ -475,7 +475,7 @@ HELP_TEXT = """\
 | `/help` | Show this help text |
 | `/clear` | Clear the screen |
 | `/quit`, `/exit` | Exit the REPL |
-"""
+"""  # noqa: E501
 
 
 # ============================================================================
