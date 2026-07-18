@@ -833,19 +833,30 @@ PLAN_MODE_MIN_WORDS = 200
 
 **Goal**: Full explore → propose → approve → execute workflow.
 
-- [ ] `agent/state_machine.py` — Full `AgentStateMachine`:
-    - All 5 states + valid transitions
-    - `get_system_prompt_extension()` for mode-specific instructions
-    - `should_auto_approve_tool()` for plan execution
-    - Plan dataclasses (`Plan`, `PlanStep`)
-- [ ] `cli/commands.py` — Slash command parser:
-    - `/plan` — enter plan mode
-    - `/rollback <id>` — rollback to checkpoint
-    - `/checkpoints` — list checkpoints
-    - `/session info|list|switch` — session management
-    - `/help` — available commands
+- [x] `agent/state_machine.py` — Full `AgentStateMachine`:
+    - All 5 states (IDLE, EXECUTING, PLAN_EXPLORING, PLAN_PROPOSING, PLAN_WAITING,
+      PLAN_EXECUTING, FINISHED) + valid transitions
+    - Complexity heuristic (`classify_complexity`) — keyword, length, and
+      multi-file triggers
+    - `get_system_prompt_extension()` / `get_mode_hint()` for mode-specific instructions
+    - `should_auto_approve_tool()` — blocks mutating tools in PLAN_EXPLORING,
+      still confirms SHELL_DANGEROUS in PLAN_EXECUTING
+    - Plan dataclasses (`Plan`, `PlanStep`) with JSON serialization, display
+      formatting, progress tracking, and prompt rendering
+    - `plan_proposal_prompt()` — structured JSON prompt for the LLM
+    - `approve_plan()` / `reject_plan()` with feedback loop support
+- [x] `cli/commands.py` — `SlashCommandDispatcher`:
+    - `/plan` — flags plan-pending on the state machine
+    - `/rollback <id>` — rollback to checkpoint via `CheckpointManager`
+    - `/checkpoints` — list checkpoints for the current session
+    - `/session info|list|switch <id>` — session management
+    - `/help`, `/clear`, `/quit`, `/exit` — REPL utilities
+- [x] Wired into `CLIApp._run_agent_turn()` — classifies complexity, auto-triggers
+      plan mode, passes mode hint to `AgentLoop`
+- [x] Wired into `main.py` — `AgentStateMachine` instantiated and passed to `CLIApp`
 
-**Milestone**: Complex requests auto-trigger plan mode. Agent explores, proposes plan, user approves, agent executes.
+**Milestone**: ~~Complex requests auto-trigger plan mode. Agent explores, proposes
+plan, user approves, agent executes.~~ ✅ Complete.
 
 ---
 
@@ -853,11 +864,15 @@ PLAN_MODE_MIN_WORDS = 200
 
 **Goal**: Wired together, tested, production-ready.
 
-- [ ] `main.py` — CLI entry point with full argparse, wiring all components
+- [x] `main.py` — CLI entry point with full argparse (model, base-url, api-key,
+      max-iterations, verbose, plan, session, new-session, no-stream, list-sessions),
+      wiring all components (LLM provider, session manager, state machine, context
+      management, checkpointing)
+- [x] `README.md` — Basic project description exists; needs expansion with usage
+      guide, examples, and configuration reference
 - [ ] End-to-end tests: mock LLM + real tools + temp directories
 - [ ] Error handling hardening: graceful degradation for all failure modes
 - [ ] Performance profiling: identify slow paths
-- [ ] `README.md` — Usage guide, examples, configuration reference
 - [ ] **Extract shared store** — Move `SQLiteStore` from `session/store.py` to a neutral
       top-level `toddler/store.py`. Both `session/` and `checkpoint/` depend on it,
       but the store currently lives under `session/` (a Phase 8 artifact). Extracting
@@ -869,6 +884,9 @@ PLAN_MODE_MIN_WORDS = 200
       `~/.toddler/projects/<hash>/memory.json`) so preferences like indentation style,
       file conventions, or "don't touch `vendor/`" are scoped to the right repo. The
       system prompt should merge both layers: user-level first, then project-level on top.
+- [ ] **Expand README.md** — Usage guide with examples (`tod "fix auth.py"`,
+      `tod --plan "refactor X"`, `tod --session <id>`), configuration reference,
+      environment variables, slash commands documentation
 
 **Milestone**: `tod "fix the bug in auth.py"` works end-to-end with real DeepSeek API (or any OpenAI-compatible endpoint).
 
@@ -877,17 +895,17 @@ PLAN_MODE_MIN_WORDS = 200
 ## Phase Timeline Summary
 
 ```
-Phase 1  ██ Foundation              (config, types, tool base)
-Phase 2  ██ LLM Provider            (OpenAI-compatible integration)
-Phase 3  ███ Tool System            (all tools implemented)
-Phase 4  ███ Agent Loop             (core loop working)
-Phase 5  ███ CLI Layer              (REPL + one-shot)
-Phase 6  ██ Streaming               (real-time display)
-Phase 7  ███ Context Management     (system prompt, compaction, truncation)
-Phase 8  ███ Sessions               (SQLite persistence)
-Phase 9  ███ Checkpoints            (snapshots + rollback)
-Phase 10 ███ Plan Mode              (state machine + workflow)
-Phase 11 ███ Integration            (wiring, tests, polish)
+Phase 1  ██ Foundation              (config, types, tool base)           ✅
+Phase 2  ██ LLM Provider            (OpenAI-compatible integration)     ✅
+Phase 3  ███ Tool System            (all tools implemented)             ✅
+Phase 4  ███ Agent Loop             (core loop working)                 ✅
+Phase 5  ███ CLI Layer              (REPL + one-shot)                   ✅
+Phase 6  ██ Streaming               (real-time display)                 ✅
+Phase 7  ███ Context Management     (system prompt, compaction, trunc)  ✅
+Phase 8  ███ Sessions               (SQLite persistence)                ✅
+Phase 9  ███ Checkpoints            (snapshots + rollback)              ✅
+Phase 10 ███ Plan Mode              (state machine + workflow)          ✅
+Phase 11 █░░ Integration            (wiring done, tests/store/mem todo) ◐
 ```
 
 ### Dependency Graph
