@@ -227,6 +227,26 @@ class SessionManager:
 
 
 # ---------------------------------------------------------------------------
+# CLI display helper
+# ---------------------------------------------------------------------------
+
+
+async def print_sessions(mgr: SessionManager) -> None:
+    """Print a formatted table of all saved sessions to stdout."""
+    sessions = await mgr.list_all()
+    if not sessions:
+        print("No saved sessions.")
+        return
+
+    print(f"{'ID':<34} {'Title':<40} {'Msgs':>5}  {'Age'}")
+    print("-" * 100)
+    for s in sessions:
+        sid = s.id[:32]
+        title = (s.display_title or "—")[:39]
+        print(f"{sid:<34} {title:<40} {s.message_count:>5}  {s.age}")
+
+
+# ---------------------------------------------------------------------------
 # Serialization helpers
 # ---------------------------------------------------------------------------
 

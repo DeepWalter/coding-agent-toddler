@@ -25,6 +25,7 @@ from toddler.context.memory import PersistentMemory
 from toddler.context.project_map import ProjectMapper
 from toddler.context.window import ContextWindowManager
 from toddler.llm.provider import OpenAICompatibleProvider
+from toddler.session import print_sessions
 from toddler.session.manager import SessionManager
 from toddler.session.store import SQLiteStore
 
@@ -169,7 +170,7 @@ def main() -> None:
 
     # --- Session listing (no LLM needed — do it early) ---
     if args.list_sessions:
-        asyncio.run(_list_sessions(session_mgr))
+        asyncio.run(print_sessions(session_mgr))
         return
 
     # --- Shared LLM provider ---
@@ -216,26 +217,6 @@ def main() -> None:
     else:
         # REPL mode
         asyncio.run(app.run_repl(session_id=session_id))
-
-
-# ---------------------------------------------------------------------------
-# Session listing
-# ---------------------------------------------------------------------------
-
-
-async def _list_sessions(mgr: SessionManager) -> None:
-    """Print a formatted list of all saved sessions."""
-    sessions = await mgr.list_all()
-    if not sessions:
-        print("No saved sessions.")
-        return
-
-    print(f"{'ID':<34} {'Title':<40} {'Msgs':>5}  {'Age'}")
-    print("-" * 100)
-    for s in sessions:
-        sid = s.id[:32]
-        title = (s.display_title or "—")[:39]
-        print(f"{sid:<34} {title:<40} {s.message_count:>5}  {s.age}")
 
 
 if __name__ == "__main__":
