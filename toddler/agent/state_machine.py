@@ -33,10 +33,16 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from toddler.tools.base import Permission
+from toddler.tools.base import Permission
+
+__all__ = [
+    "AgentMode",
+    "AgentStateMachine",
+    "Plan",
+    "PlanStep",
+    "classify_complexity",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +170,7 @@ class Plan:
     title:
         Short title, e.g. ``"Fix authentication bug in auth.py"``.
     summary:
-        2–3 sentence overview of what the plan aims to achieve.
+        2-3 sentence overview of what the plan aims to achieve.
     steps:
         Ordered list of :class:`PlanStep` objects.
     rationale:
@@ -331,10 +337,10 @@ class Plan:
     @property
     def is_complete(self) -> bool:
         """Return ``True`` when all steps are completed."""
-        return all(s.status == "completed" for s in self.steps) if self.steps else True
+        return all(s.status == "completed" for s in self.steps)
 
     def mark_step(self, step_id: str, status: str) -> bool:
-        """Update a step's status.  Returns ``False`` if the step is unknown."""
+        """Update a step's status.  Returns ``False`` if the step is unknown."""  # noqa: E501
         for s in self.steps:
             if s.id == step_id:
                 s.status = status
@@ -367,7 +373,8 @@ _MULTI_FILE_INDICATORS: list[str] = [
     "and also",
 ]
 
-# Word-count threshold above which a request is automatically considered complex.
+# Word-count threshold above which a request is automatically considered
+# complex.
 _COMPLEXITY_MIN_WORDS: int = 200
 
 
@@ -430,7 +437,7 @@ class AgentStateMachine:
     Parameters
     ----------
     initial_mode:
-        The starting mode.  Defaults to ``AgentMode.IDLE``.
+        The starting mode.  Defaults to :attr:`AgentMode.IDLE`.
 
     Usage
     -----
@@ -706,8 +713,6 @@ class AgentStateMachine:
         # In PLAN_EXPLORING mode, never auto-approve mutating tools —
         # the agent is supposed to be READ-ONLY.
         if mode == AgentMode.PLAN_EXPLORING:
-            from toddler.tools.base import Permission
-
             # Only auto-approve READ and SHELL_SAFE.
             return permission not in (
                 Permission.WRITE, Permission.SHELL_DANGEROUS,
@@ -716,8 +721,6 @@ class AgentStateMachine:
         # In PLAN_EXECUTING mode, the user already approved the plan.
         # Auto-approve READ / SHELL_SAFE; still confirm dangerous operations.
         if mode == AgentMode.PLAN_EXECUTING:
-            from toddler.tools.base import Permission
-
             # Still confirm dangerous shell commands.
             return permission != Permission.SHELL_DANGEROUS
 
@@ -790,14 +793,3 @@ Guidelines:
 Return ONLY the JSON object, no other text."""
 
 
-# ============================================================================
-# Re-export for convenience
-# ============================================================================
-
-__all__ = [
-    "AgentMode",
-    "AgentStateMachine",
-    "Plan",
-    "PlanStep",
-    "classify_complexity",
-]
