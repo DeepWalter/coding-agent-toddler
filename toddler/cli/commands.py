@@ -22,9 +22,15 @@ from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from toddler.agent.state_machine import AgentStateMachine
-    from toddler.checkpoint.manager import CheckpointManager
+    from toddler.checkpoint import CheckpointManagerProvider
     from toddler.session.manager import SessionManager
     from toddler.session.models import Session
+
+__all__ = [
+    "CommandResult",
+    "HELP_TEXT",
+    "SlashCommandDispatcher",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -420,22 +426,6 @@ class SlashCommandDispatcher:
 
 
 # ============================================================================
-# CheckpointManager provider type
-# ============================================================================
-
-CheckpointManagerProvider = Callable[
-    [],
-    Awaitable["CheckpointManager | None"],
-]
-"""Async factory that returns a :class:`CheckpointManager` for the current
-session, or ``None`` when there is no active session.
-
-Used by :class:`SlashCommandDispatcher` to lazily create a checkpoint manager
-on demand (since the session ID is only known at runtime).
-"""
-
-
-# ============================================================================
 # Command handler table
 # ============================================================================
 
@@ -476,14 +466,3 @@ HELP_TEXT = """\
 | `/clear` | Clear the screen |
 | `/quit`, `/exit` | Exit the REPL |
 """  # noqa: E501
-
-
-# ============================================================================
-# Re-export
-# ============================================================================
-
-__all__ = [
-    "CommandResult",
-    "HELP_TEXT",
-    "SlashCommandDispatcher",
-]

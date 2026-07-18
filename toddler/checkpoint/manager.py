@@ -30,8 +30,6 @@ from toddler.config.defaults import CHECKPOINT_KEEP_LATEST
 if TYPE_CHECKING:
     from toddler.session.manager import SessionManager
     from toddler.session.store import SQLiteStore
-    from toddler.tools.executor import CheckpointCallback
-
 logger = logging.getLogger(__name__)
 
 
@@ -137,7 +135,7 @@ class CheckpointManager:
             description=description,
             tool_name=tool_name,
             git_ref=git_ref,
-            file_manifest_json=_serialize_manifest(manifest) if manifest else None,
+            file_manifest_json=_serialize_manifest(manifest) if manifest else None,  # noqa: E501
             agent_state_json=_serialize_agent_state(agent_state),
             message_index=message_index,
         )
@@ -162,57 +160,6 @@ class CheckpointManager:
         )
         return checkpoint
 
-    def executor_callback(
-        self,
-        agent_state: AgentStateSnapshot,
-        message_index: int,
-    ) -> CheckpointCallback:
-        """Return a callback suitable for :class:`ToolExecutor`'s
-        ``checkpoint_cb`` parameter.
-
-        The returned callable captures *agent_state* and *message_index*
-        and creates a checkpoint via :meth:`create` before every mutating
-        tool invocation.
-
-        Parameters
-        ----------
-        agent_state:
-            Snapshot of the current agent loop state (mode, iteration).
-        message_index:
-            The index of the last persisted message before tool execution
-            begins.  On rollback the conversation is truncated here.
-
-        Returns
-        -------
-        CheckpointCallback
-            An async callable matching the
-            ``Callable[[BaseTool, dict], Awaitable[str | None]]`` protocol.
-        """  # noqa: E501
-        from toddler.tools.base import BaseTool
-
-        async def _cb(
-            tool: BaseTool, params: dict,
-        ) -> str | None:
-            try:
-                checkpoint = await self.create(
-                    description=(
-                        f"Before {tool.name}: "
-                        f"{tool.summarize_call(**params)}"
-                    ),
-                    tool_name=tool.name,
-                    agent_state=agent_state,
-                    message_index=message_index,
-                )
-                return checkpoint.id
-            except Exception:
-                logger.exception(
-                    f"Checkpoint creation failed for {tool.name} — "
-                    f"tool will execute without a safety net."
-                )
-                return None
-
-        return _cb
-
     async def rollback_to(self, checkpoint_id: str) -> RollbackResult:
         """Restore filesystem state and truncate conversation to *checkpoint_id*.
 
@@ -224,7 +171,7 @@ class CheckpointManager:
         ------
         ValueError
             If *checkpoint_id* is not found.
-        """
+        """  # noqa: E501
         row = self._store.get_checkpoint(checkpoint_id)
         if row is None:
             raise ValueError(

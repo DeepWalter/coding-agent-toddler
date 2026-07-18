@@ -29,9 +29,12 @@ from toddler.agent.state_machine import (
     AgentMode,
     AgentStateMachine,
 )
+from toddler.checkpoint import (
+    CheckpointManagerProvider,
+    create_checkpoint_callback,
+)
 from toddler.cli.commands import (
     HELP_TEXT,
-    CheckpointManagerProvider,
     SlashCommandDispatcher,
 )
 from toddler.cli.display import StreamDisplay
@@ -45,7 +48,7 @@ from toddler.llm.types import Message, TokenUsage
 from toddler.session.manager import SessionManager
 from toddler.session.models import Session
 from toddler.tools import create_default_registry
-from toddler.tools.executor import ToolExecutor
+from toddler.tools.executor import ToolExecutor, always_approve
 
 if TYPE_CHECKING:
     from toddler.context.compaction import ConversationCompactor
@@ -137,6 +140,10 @@ class CLIApp:
         self._executor = ToolExecutor(
             self._registry,
             self._settings,
+            confirm_cb=always_approve,
+            checkpoint_cb=create_checkpoint_callback(
+                ckpt_provider=checkpoint_manager_factory,
+            ),
         )
 
         # --- Build LLM provider (or reuse the shared one) ---

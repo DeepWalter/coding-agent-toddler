@@ -24,3 +24,8 @@ All commits follow `.github/COMMIT_STYLE_GUIDE.md`.
 - Sign-off: `Co-Authored-By: Claude <noreply@anthropic.com>`
 
 Types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `chore`, `init`
+
+## Code Style
+
+Place `__all__` at the top of each module, immediately after all imports (before
+`logger` and other module-level code).

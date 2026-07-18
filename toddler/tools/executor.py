@@ -9,6 +9,13 @@ from toddler.config.settings import Settings
 from toddler.tools.base import BaseTool, Permission, ToolCall, ToolResult
 from toddler.tools.registry import ToolRegistry
 
+__all__ = [
+    "CheckpointCallback",
+    "ConfirmCallback",
+    "ToolExecutor",
+    "always_approve",
+]
+
 # ---------------------------------------------------------------------------
 # Type aliases for callbacks
 # ---------------------------------------------------------------------------
@@ -32,6 +39,23 @@ CheckpointCallback = Callable[
 Receives the tool and kwargs.  Returns a checkpoint id string, or ``None``
 if checkpointing was skipped / unavailable.
 """
+
+# ---------------------------------------------------------------------------
+# Trivial callbacks
+# ---------------------------------------------------------------------------
+
+
+async def always_approve(
+    tool: BaseTool, params: dict[str, Any], perm: Permission,  # noqa: ARG001
+) -> bool:
+    """Auto-approve every tool call unconditionally.
+
+    Suitable as :class:`ToolExecutor`\\'s *confirm_cb* when permission
+    gating is handled upstream (e.g. by :class:`~toddler.agent.loop.AgentLoop`
+    yielding :class:`~toddler.agent.events.AgentPaused` events before the
+    executor ever sees the call).
+    """
+    return True
 
 
 # ---------------------------------------------------------------------------
