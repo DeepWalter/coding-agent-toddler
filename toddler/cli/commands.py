@@ -23,8 +23,8 @@ from typing import TYPE_CHECKING, Protocol
 if TYPE_CHECKING:
     from toddler.agent.state_machine import AgentStateMachine
     from toddler.checkpoint import CheckpointManagerProvider
-    from toddler.session.manager import SessionManager
-    from toddler.session.models import Session
+    from toddler.storage.manager import StorageManager
+    from toddler.storage.models import Session
 
 __all__ = [
     "CommandResult",
@@ -105,7 +105,7 @@ class SlashCommandDispatcher:
         self,
         *,
         state_machine: AgentStateMachine | None = None,
-        session_manager: SessionManager | None = None,
+        session_manager: StorageManager | None = None,
         checkpoint_manager_provider: (
             CheckpointManagerProvider | None
         ) = None,

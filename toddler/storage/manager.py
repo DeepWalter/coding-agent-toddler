@@ -1,6 +1,6 @@
-"""SessionManager — high-level session lifecycle and message persistence.
+"""StorageManager — high-level storage lifecycle and message persistence.
 
-Sits between the CLI / agent loop and :class:`~toddler.session.store.SQLiteStore`.
+Sits between the CLI / agent loop and :class:`~toddler.storage.store.SQLiteStore`.
 Handles ContentBlock serialization, token accumulation, and all
 business logic that shouldn't live in the raw data layer.
 """  # noqa: E501
@@ -14,24 +14,24 @@ from datetime import UTC, datetime
 from typing import Any
 
 from toddler.llm.types import ContentBlock, Message, TokenUsage
-from toddler.session.models import (
+from toddler.storage.models import (
     Conversation,
     ConversationSummary,
     Session,
     SessionSummary,
     StoredMessage,
 )
-from toddler.session.store import SQLiteStore
+from toddler.storage.store import SQLiteStore
 
 logger = logging.getLogger(__name__)
 
 
 # ======================================================================
-# SessionManager
+# StorageManager
 # ======================================================================
 
 
-class SessionManager:
+class StorageManager:
     """High-level manager for session persistence.
 
     Wraps :class:`SQLiteStore` with ContentBlock serialization
@@ -312,7 +312,7 @@ class SessionManager:
 # ---------------------------------------------------------------------------
 
 
-async def print_sessions(mgr: SessionManager) -> None:
+async def print_sessions(mgr: StorageManager) -> None:
     """Print a formatted table of all saved sessions to stdout."""
     sessions = await mgr.list_all()
     if not sessions:

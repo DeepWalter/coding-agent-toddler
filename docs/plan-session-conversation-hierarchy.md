@@ -27,8 +27,8 @@ A clean boundary between two packages:
 
 | Concern | Package | Role |
 |---|---|---|
-| DB schema, migrations, raw CRUD | `toddler.session.store` | Data layer |
-| Serialization, business logic, lifecycle | `toddler.session.manager` | Persistence facade |
+| DB schema, migrations, raw CRUD | `toddler.storage.store` | Data layer |
+| Serialization, business logic, lifecycle | `toddler.storage.manager` | Persistence facade |
 | In-memory message buffer | `toddler.context.conversation_context` | Context management |
 | System prompt assembly | `toddler.context.system_prompt` | Context management |
 | Token tracking, thresholds | `toddler.context.window` | Context management |
@@ -46,8 +46,8 @@ directly — it goes through `ConversationContext`.
 
 | Piece | Location | Role |
 |---|---|---|
-| `Conversation` + `ConversationSummary` | `toddler.session.models` | DB entity dataclasses |
-| `SessionManager` conversation CRUD | `toddler.session.manager` | Persistence methods for conversations |
+| `Conversation` + `ConversationSummary` | `toddler.storage.models` | DB entity dataclasses |
+| `SessionManager` conversation CRUD | `toddler.storage.manager` | Persistence methods for conversations |
 | `ConversationContext` | `toddler.context.conversation_context` | In-memory buffer **and** orchestrator — wires prompt building, window tracking, compaction, and delegates persistence to `SessionManager` |
 
 ### `ConversationContext` — buffer + orchestrator
@@ -704,14 +704,14 @@ as an audit trail.
 | System prompt assembly | `ConversationContext._prompt_builder` | Called each turn |
 | Token tracking & thresholds | `ConversationContext._window_mgr` | Read each turn |
 | Cross-conversation summary | `conversations.title` + summary injection in system prompt | Once, when archived |
-| All DB I/O | `toddler.session.SessionManager` | Called by `ConversationContext` |
+| All DB I/O | `toddler.storage.SessionManager` | Called by `ConversationContext` |
 | Context orchestration | `toddler.context.ConversationContext` | N/A (the orchestrator) |
 
 ---
 
 ## Files to Modify (in order)
 
-### Step 1: `toddler/session/models.py` — new dataclasses
+### Step 1: `toddler/storage/models.py` — new dataclasses
 
 Add:
 ```python
@@ -744,7 +744,7 @@ class ConversationSummary:
 
 Add `conversation_id: str = ""` to `StoredMessage`.
 
-### Step 2: `toddler/session/store.py` — schema v2 + CRUD
+### Step 2: `toddler/storage/store.py` — schema v2 + CRUD
 
 - Bump `CURRENT_SCHEMA_VERSION` to 2
 - Add `_CREATE_CONVERSATIONS` DDL
@@ -758,7 +758,7 @@ Add `conversation_id: str = ""` to `StoredMessage`.
 - Add `_row_to_conversation` and `_row_to_conversation_summary` converters
 - Update `_row_to_message` to populate `conversation_id`
 
-### Step 3: `toddler/session/manager.py` — conversation lifecycle + simplified API
+### Step 3: `toddler/storage/manager.py` — conversation lifecycle + simplified API
 
 Add methods:
 - `create_conversation(session_id) → Conversation`
@@ -868,7 +868,7 @@ Remove entirely:
 - Add `prior_conversation_summaries: list[str] | None = None` to `build()` and `build_compact()`
 - When provided, inject a "Prior Work in This Session" section
 
-### Step 10: `toddler/session/__init__.py` — exports
+### Step 10: `toddler/storage/__init__.py` — exports
 
 - Export `Conversation`, `ConversationSummary`
 

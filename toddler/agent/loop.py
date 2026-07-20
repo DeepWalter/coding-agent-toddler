@@ -79,7 +79,7 @@ class AgentLoop:
         summarisation.  Required when *context_window_mgr* is provided and
         you want automatic compaction.
     session_manager:
-        Optional :class:`SessionManager` for persisting compaction results.
+        Optional :class:`StorageManager` for persisting compaction results.
         When provided, compacted messages are written back to the session
         store so the compaction survives restarts.
     """

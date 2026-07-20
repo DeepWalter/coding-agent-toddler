@@ -25,9 +25,9 @@ from toddler.context.memory import PersistentMemory
 from toddler.context.project_map import ProjectMapper
 from toddler.context.window import ContextWindowManager
 from toddler.llm.provider import OpenAICompatibleProvider
-from toddler.session import print_sessions
-from toddler.session.manager import SessionManager
-from toddler.session.store import SQLiteStore
+from toddler.storage import print_sessions
+from toddler.storage.manager import StorageManager
+from toddler.storage.store import SQLiteStore
 
 
 def build_argparser() -> argparse.ArgumentParser:
@@ -166,7 +166,7 @@ def main() -> None:
     db_path = settings.session_dir / "sessions.db"
     store = SQLiteStore(db_path)
     store.open()
-    session_mgr = SessionManager(store)
+    session_mgr = StorageManager(store)
 
     # --- Session listing (no LLM needed — do it early) ---
     if args.list_sessions:

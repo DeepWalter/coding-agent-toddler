@@ -3,7 +3,7 @@
 Wires together the three context-management components
 (:class:`SystemPromptBuilder`, :class:`ContextWindowManager`,
 :class:`ConversationCompactor`) and delegates persistence to
-:class:`SessionManager`.  A single instance lives for the lifetime of the
+:class:`StorageManager`.  A single instance lives for the lifetime of the
 REPL — it switches between conversations via :meth:`activate` while holding
 messages across turns so there is no DB reload per turn.
 """
@@ -19,8 +19,8 @@ if TYPE_CHECKING:
     from toddler.context.compaction import ConversationCompactor
     from toddler.context.system_prompt import SystemPromptBuilder
     from toddler.context.window import ContextWindowManager
-    from toddler.session.manager import SessionManager
-    from toddler.session.models import Conversation
+    from toddler.storage.manager import StorageManager
+    from toddler.storage.models import Conversation
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ class ConversationContext:
     """In-memory buffer and management orchestrator for a conversation.
 
     A single instance lives for the lifetime of the REPL.  It holds the
-    shared collaborators (SessionManager, SystemPromptBuilder,
+    shared collaborators (StorageManager, SystemPromptBuilder,
     ContextWindowManager, ConversationCompactor) and switches between
     conversations via :meth:`activate`.
 
@@ -42,7 +42,7 @@ class ConversationContext:
 
     def __init__(
         self,
-        session_mgr: SessionManager | None,
+        session_mgr: StorageManager | None,
         prompt_builder: SystemPromptBuilder,
         *,
         window_mgr: ContextWindowManager | None = None,

@@ -1,7 +1,7 @@
-"""Session data models — Session, SessionSummary, Conversation,
+"""Storage data models — Session, SessionSummary, Conversation,
 ConversationSummary, StoredMessage.
 
-These are the persistence-layer dataclasses for the SQLite-backed session
+These are the persistence-layer dataclasses for the SQLite-backed
 store.  They are deliberately separate from :mod:`toddler.llm.types` to keep
 the wire-format and storage concerns decoupled.
 """
@@ -75,7 +75,7 @@ class Session:
 
 @dataclass
 class SessionSummary:
-    """A lightweight row returned by :meth:`~toddler.session.manager.SessionManager.list_all` method for display purposes.
+    """A lightweight row returned by :meth:`~toddler.storage.manager.StorageManager.list_all` method for display purposes.
 
     Only the fields needed to render a session picker / list are included.
     """  # noqa: E501
@@ -223,7 +223,7 @@ class StoredMessage:
     """A single message row as stored in the ``messages`` table.
 
     The ``content_json`` field holds the serialised list[:class:`~toddler.llm.types.ContentBlock`] - use
-    :meth:`~toddler.session.manager._serialize_content` / :meth:`~toddler.session.manager._deserialize_content`
+    :meth:`~toddler.storage.manager._serialize_content` / :meth:`~toddler.storage.manager._deserialize_content`
     to go between Python objects and the database representation.
     """  # noqa: E501
 
