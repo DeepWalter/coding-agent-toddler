@@ -90,7 +90,7 @@ class SlashCommandDispatcher:
     ----------
     state_machine:
         Used by ``/plan`` to flag plan-pending.
-    session_manager:
+    storage_manager:
         Used by ``/session`` subcommands.  When *None*, session commands
         show a "persistence disabled" message.
     checkpoint_manager_provider:
@@ -105,13 +105,13 @@ class SlashCommandDispatcher:
         self,
         *,
         state_machine: AgentStateMachine | None = None,
-        session_manager: StorageManager | None = None,
+        storage_manager: StorageManager | None = None,
         checkpoint_manager_provider: (
             CheckpointManagerProvider | None
         ) = None,
     ) -> None:
         self._sm = state_machine
-        self._session_mgr = session_manager
+        self._storage_mgr = storage_manager
         self._ckpt_provider = checkpoint_manager_provider
 
     # ------------------------------------------------------------------
@@ -398,13 +398,13 @@ class SlashCommandDispatcher:
 
     async def _session_list(self) -> CommandResult:
         """Return session list as a pre-formatted message."""
-        if self._session_mgr is None:
+        if self._storage_mgr is None:
             return CommandResult(
                 continue_repl=True,
                 message="Session persistence is disabled.",
             )
         try:
-            sessions = await self._session_mgr.list_all()
+            sessions = await self._storage_mgr.list_all()
         except Exception as exc:
             logger.exception("Failed to list sessions.")
             return CommandResult(
@@ -436,13 +436,13 @@ class SlashCommandDispatcher:
 
     async def _session_switch(self, target_id: str) -> CommandResult:
         """Switch to a different session."""
-        if self._session_mgr is None:
+        if self._storage_mgr is None:
             return CommandResult(
                 continue_repl=True,
                 message="Session persistence is disabled.",
             )
         try:
-            session = await self._session_mgr.get(target_id)
+            session = await self._storage_mgr.get(target_id)
         except Exception as exc:
             logger.exception("Failed to switch session.")
             return CommandResult(

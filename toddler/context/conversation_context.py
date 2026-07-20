@@ -42,14 +42,14 @@ class ConversationContext:
 
     def __init__(
         self,
-        session_mgr: StorageManager | None,
+        storage_mgr: StorageManager | None,
         prompt_builder: SystemPromptBuilder,
         *,
         window_mgr: ContextWindowManager | None = None,
         compactor: ConversationCompactor | None = None,
     ) -> None:
         # Shared collaborators — never change across conversations.
-        self._mgr = session_mgr
+        self._mgr = storage_mgr
         self._prompt_builder = prompt_builder
         self._window_mgr = window_mgr
         self._compactor = compactor

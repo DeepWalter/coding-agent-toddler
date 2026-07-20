@@ -49,8 +49,8 @@ class CheckpointManager:
         The session that all checkpoint operations are scoped to.
     repo_root:
         Absolute path to the working directory (used for git operations).
-    session_manager:
-        Optional session manager reference — needed for
+    storage_manager:
+        Optional storage manager reference — needed for
         :meth:`rollback_to` to truncate conversation messages.  When
         *None*, rollback will only restore files.
     """
@@ -61,7 +61,7 @@ class CheckpointManager:
         session_id: str,
         repo_root: str | Path,
         *,
-        session_manager: StorageManager | None = None,
+        storage_manager: StorageManager | None = None,
     ) -> None:
         self._store = store
         self._session_id = session_id
@@ -69,7 +69,7 @@ class CheckpointManager:
 
         self._git = GitSnapshotter(self._repo_root)
         self._file = FileSnapshotter()
-        self._session_mgr = session_manager
+        self._storage_mgr = storage_manager
 
     # ==================================================================
     # Public API
@@ -217,9 +217,9 @@ class CheckpointManager:
 
         # --- truncate conversation ---
         restored_msg_index = checkpoint.message_index
-        if self._session_mgr is not None:
+        if self._storage_mgr is not None:
             try:
-                messages = await self._session_mgr.get_messages(
+                messages = await self._storage_mgr.get_messages(
                     self._session_id,
                 )
                 # Keep only messages up to and including message_index.
@@ -244,7 +244,7 @@ class CheckpointManager:
                 )
                 truncated.append(marker)
 
-                await self._session_mgr.replace_messages(
+                await self._storage_mgr.replace_messages(
                     self._session_id, truncated,
                 )
                 restored_msg_index = len(truncated) - 1

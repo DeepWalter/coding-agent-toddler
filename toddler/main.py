@@ -166,11 +166,11 @@ def main() -> None:
     db_path = settings.session_dir / "sessions.db"
     store = SQLiteStore(db_path)
     store.open()
-    session_mgr = StorageManager(store)
+    storage_mgr = StorageManager(store)
 
     # --- Session listing (no LLM needed — do it early) ---
     if args.list_sessions:
-        asyncio.run(print_sessions(session_mgr))
+        asyncio.run(print_sessions(storage_mgr))
         return
 
     # --- Shared LLM provider ---
@@ -188,7 +188,7 @@ def main() -> None:
     # --- Build app ---
     app = CLIApp(
         settings,
-        session_manager=session_mgr,
+        storage_manager=storage_mgr,
         llm=llm,
         store=store,
         repo_root=Path.cwd(),

@@ -92,7 +92,7 @@ class CLIApp:
     ----------
     settings:
         Resolved settings from env vars + CLI args.
-    session_manager:
+    storage_manager:
         Manager for persistent sessions.  When *None* (e.g. for tests),
         session persistence is disabled.
     llm:
@@ -126,7 +126,7 @@ class CLIApp:
         self,
         settings: Settings,
         *,
-        session_manager: StorageManager | None = None,
+        storage_manager: StorageManager | None = None,
         llm: BaseLLMProvider | None = None,
         store: SQLiteStore | None = None,
         repo_root: Path | None = None,
@@ -137,7 +137,7 @@ class CLIApp:
         state_machine: AgentStateMachine | None = None,
     ) -> None:
         self._settings = settings
-        self._session_mgr = session_manager
+        self._storage_mgr = storage_manager
         self._store = store
         self._repo_root = repo_root
         self._renderer = Renderer()
@@ -177,7 +177,7 @@ class CLIApp:
         # _wire_checkpointing(), after session resolution.
         self._cmd_dispatcher = SlashCommandDispatcher(
             state_machine=self._sm,
-            session_manager=session_manager,
+            storage_manager=storage_manager,
         )
 
         # --- Current session + conversation context (set on run) ---
@@ -199,8 +199,8 @@ class CLIApp:
             (and ``--new-session`` was not passed), a fresh session is created.
         """
         # --- Resolve or create session ---
-        if self._session_mgr is not None:
-            self._session = await self._session_mgr.get_or_create(
+        if self._storage_mgr is not None:
+            self._session = await self._storage_mgr.get_or_create(
                 session_id,
             )
             self._renderer.info(
@@ -209,11 +209,11 @@ class CLIApp:
 
             # Create the single ConversationContext for the REPL lifetime.
             self._ctx = ConversationContext(
-                self._session_mgr, self._prompt_builder,
+                self._storage_mgr, self._prompt_builder,
                 window_mgr=self._context_window_mgr,
                 compactor=self._conversation_compactor,
             )
-            conv = await self._session_mgr.get_or_create_active_conversation(
+            conv = await self._storage_mgr.get_or_create_active_conversation(
                 self._session.id,
             )
             await self._ctx.activate(conv)
@@ -221,7 +221,7 @@ class CLIApp:
             self._session = None
             # Create a bare context for tests / no-persistence mode.
             self._ctx = ConversationContext(
-                self._session_mgr,  # type: ignore[arg-type]
+                self._storage_mgr,  # type: ignore[arg-type]
                 self._prompt_builder,
                 window_mgr=self._context_window_mgr,
                 compactor=self._conversation_compactor,
@@ -280,16 +280,16 @@ class CLIApp:
         interaction can be resumed later via ``--session``.
         """
         # --- Resolve or create session + conversation context ---
-        if self._session_mgr is not None:
-            self._session = await self._session_mgr.get_or_create(
+        if self._storage_mgr is not None:
+            self._session = await self._storage_mgr.get_or_create(
                 session_id,
             )
             self._ctx = ConversationContext(
-                self._session_mgr, self._prompt_builder,
+                self._storage_mgr, self._prompt_builder,
                 window_mgr=self._context_window_mgr,
                 compactor=self._conversation_compactor,
             )
-            conv = await self._session_mgr.get_or_create_active_conversation(
+            conv = await self._storage_mgr.get_or_create_active_conversation(
                 self._session.id,
             )
             await self._ctx.activate(conv)
@@ -328,7 +328,7 @@ class CLIApp:
             store=self._store,
             session_id=self._session.id,
             repo_root=self._repo_root or Path.cwd(),
-            session_manager=self._session_mgr,
+            storage_manager=self._storage_mgr,
         )
 
         def _provider() -> CheckpointManager | None:
@@ -523,8 +523,8 @@ class CLIApp:
                 self._ctx.append(assistant_msg)
 
             # Accumulate token usage.
-            if usage is not None and self._session_mgr is not None:
-                await self._session_mgr.accumulate_tokens(
+            if usage is not None and self._storage_mgr is not None:
+                await self._storage_mgr.accumulate_tokens(
                     self._session.id, usage,
                 )
 
@@ -599,8 +599,8 @@ class CLIApp:
                 assistant_msg = Message.assistant(merged)
                 self._ctx.append(assistant_msg)
 
-            if usage is not None and self._session_mgr is not None:
-                await self._session_mgr.accumulate_tokens(
+            if usage is not None and self._storage_mgr is not None:
+                await self._storage_mgr.accumulate_tokens(
                     self._session.id, usage,
                 )
 
@@ -711,7 +711,7 @@ class CLIApp:
         If *title* is provided, it overrides the auto-title on the current
         conversation before archiving.
         """
-        if self._ctx is None or self._session_mgr is None:
+        if self._ctx is None or self._storage_mgr is None:
             self._renderer.info("Session persistence is disabled.")
             return
 
@@ -722,12 +722,12 @@ class CLIApp:
 
         # Archive the current conversation.
         if self._ctx.conversation is not None:
-            await self._session_mgr.archive_conversation(
+            await self._storage_mgr.archive_conversation(
                 self._ctx.conversation.id,
             )
 
         # Create a fresh active conversation.
-        conv = await self._session_mgr.get_or_create_active_conversation(
+        conv = await self._storage_mgr.get_or_create_active_conversation(
             self._session.id,
         )
         await self._ctx.activate(conv)
@@ -738,11 +738,11 @@ class CLIApp:
 
     async def _resume_conversation(self, conversation_id: str) -> None:
         """Switch to an existing (usually archived) conversation."""
-        if self._ctx is None or self._session_mgr is None:
+        if self._ctx is None or self._storage_mgr is None:
             self._renderer.warning("Session persistence is disabled.")
             return
 
-        old_conv = await self._session_mgr.get_conversation(conversation_id)
+        old_conv = await self._storage_mgr.get_conversation(conversation_id)
         if old_conv is None:
             self._renderer.error(
                 f"Conversation '{conversation_id[:16]}...' not found."
@@ -757,11 +757,11 @@ class CLIApp:
 
     async def _show_conversations(self) -> None:
         """List all conversations for the current session."""
-        if self._session_mgr is None or self._session is None:
+        if self._storage_mgr is None or self._session is None:
             self._renderer.warning("Session persistence is disabled.")
             return
 
-        convs = await self._session_mgr.list_conversations(self._session.id)
+        convs = await self._storage_mgr.list_conversations(self._session.id)
         if not convs:
             self._renderer.info("No conversations in this session.")
             return
@@ -789,10 +789,10 @@ class CLIApp:
 
     async def _show_session_list(self) -> None:
         """List all saved sessions."""
-        if self._session_mgr is None:
+        if self._storage_mgr is None:
             self._renderer.warning("Session persistence is disabled.")
             return
-        sessions = await self._session_mgr.list_all()
+        sessions = await self._storage_mgr.list_all()
         if not sessions:
             self._renderer.info("No saved sessions.")
             return
@@ -812,11 +812,11 @@ class CLIApp:
 
     async def _switch_session(self, target_id: str) -> None:
         """Switch to a different session by ID."""
-        if self._session_mgr is None:
+        if self._storage_mgr is None:
             self._renderer.warning("Session persistence is disabled.")
             return
 
-        session = await self._session_mgr.get(target_id)
+        session = await self._storage_mgr.get(target_id)
         if session is None:
             self._renderer.error(f"Session '{target_id[:16]}...' not found.")
             return
@@ -833,13 +833,13 @@ class CLIApp:
         Called on REPL exit to avoid leaving ghost sessions when the user
         enters and quits without sending any real messages.
         """
-        if self._session is None or self._session_mgr is None:
+        if self._session is None or self._storage_mgr is None:
             return
 
         # Re-fetch to get the authoritative message count.
-        session = await self._session_mgr.get(self._session.id)
+        session = await self._storage_mgr.get(self._session.id)
         if session is not None and session.message_count == 0:
-            await self._session_mgr.delete(self._session.id)
+            await self._storage_mgr.delete(self._session.id)
 
     # ==================================================================
     # Auto-titling
@@ -875,13 +875,13 @@ class CLIApp:
             if len(title) > 100:
                 title = title[:97] + "..."
 
-            session = await self._session_mgr.get(session_id)
+            session = await self._storage_mgr.get(session_id)
             if session is None:
                 return
 
             session.title = title if title else None
             session.updated_at = datetime.now(UTC)
-            await self._session_mgr.update(session)
+            await self._storage_mgr.update(session)
             logger.info(f"Auto-titled session {session_id}: {title}")
         except Exception:
             logger.exception(
