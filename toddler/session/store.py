@@ -1,4 +1,5 @@
-"""SQLiteStore — low-level database access for sessions, messages, checkpoints.
+"""SQLiteStore — low-level database access for sessions, messages, checkpoints,
+and conversations.
 
 Manages schema creation, migrations, and raw CRUD operations.  The store is
 intentionally "dumb" — it doesn't know about LLM types, content
@@ -10,11 +11,18 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from toddler.session.models import Session, SessionSummary, StoredMessage
+from toddler.session.models import (
+    Conversation,
+    ConversationSummary,
+    Session,
+    SessionSummary,
+    StoredMessage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +30,7 @@ logger = logging.getLogger(__name__)
 # Current schema version (integer — increments on every schema change)
 # ---------------------------------------------------------------------------
 
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 2
 
 # ---------------------------------------------------------------------------
 # SQL
@@ -77,11 +85,32 @@ CREATE TABLE IF NOT EXISTS checkpoints (
 );
 """
 
+_CREATE_CONVERSATIONS = """
+CREATE TABLE IF NOT EXISTS conversations (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    title TEXT,
+    sequence_num INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'active',
+    compacted_summary TEXT,
+    compacted_at_seq INTEGER,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    message_count INTEGER NOT NULL DEFAULT 0,
+    total_input_tokens INTEGER NOT NULL DEFAULT 0,
+    total_output_tokens INTEGER NOT NULL DEFAULT 0
+);
+"""
+
 _CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_messages_session "
     "ON messages(session_id, sequence_num);",
+    "CREATE INDEX IF NOT EXISTS idx_messages_conversation "
+    "ON messages(conversation_id, sequence_num);",
     "CREATE INDEX IF NOT EXISTS idx_checkpoints_session "
     "ON checkpoints(session_id, sequence_num);",
+    "CREATE INDEX IF NOT EXISTS idx_conversations_session "
+    "ON conversations(session_id, status);",
 ]
 
 # ======================================================================
@@ -252,11 +281,12 @@ class SQLiteStore:
         try:
             cur = conn.execute(
                 """INSERT INTO messages
-                   (session_id, sequence_num, role, content_json,
-                    token_count, is_compacted, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                   (session_id, conversation_id, sequence_num, role,
+                    content_json, token_count, is_compacted, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     msg.session_id,
+                    msg.conversation_id,
                     msg.sequence_num,
                     msg.role,
                     msg.content_json,
@@ -275,15 +305,16 @@ class SQLiteStore:
         self,
         session_id: str,
         *,
-        exclude_compacted: bool = True,
+        conversation_id: str | None = None,
         after_sequence: int | None = None,
     ) -> list[StoredMessage]:
-        """Return all messages for *session_id*, ordered by ``sequence_num``.
+        """Return messages for *session_id*, ordered by ``sequence_num``.
 
         Parameters
         ----------
-        exclude_compacted:
-            When ``True`` (the default), skip rows where ``is_compacted=1``.
+        conversation_id:
+            When set, filter by this conversation.  When *None*, all messages
+            for the session are returned (backward-compatible fallback).
         after_sequence:
             When set, only return messages with ``sequence_num > after_sequence``.
         """  # noqa: E501
@@ -292,8 +323,9 @@ class SQLiteStore:
             clauses = ["session_id = ?"]
             params: list[Any] = [session_id]
 
-            if exclude_compacted:
-                clauses.append("is_compacted = 0")
+            if conversation_id:
+                clauses.append("conversation_id = ?")
+                params.append(conversation_id)
             if after_sequence is not None:
                 clauses.append("sequence_num > ?")
                 params.append(after_sequence)
@@ -320,57 +352,148 @@ class SQLiteStore:
             conn.close()
         return int(row[0]) if row else 0
 
-    def replace_messages(
-        self,
-        session_id: str,
-        messages: list[StoredMessage],
-        *,
-        mark_compacted: bool = False,
-    ) -> None:
-        """Atomically replace all messages for *session_id* with *messages*.
+    # ==================================================================
+    # Conversation CRUD
+    # ==================================================================
 
-        Parameters
-        ----------
-        mark_compacted:
-            When ``True``, flag old rows as compacted instead of deleting
-            them.  This preserves history for debugging.
-        """
+    def create_conversation(self, conv: Conversation) -> Conversation:
+        """Insert *conv* into the database and return it."""
         conn = self._connect()
         try:
-            if mark_compacted:
-                conn.execute(
-                    "UPDATE messages SET is_compacted = 1 "
-                    "WHERE session_id = ?",
-                    (session_id,),
-                )
-            else:
-                conn.execute(
-                    "DELETE FROM messages WHERE session_id = ?",
-                    (session_id,),
-                )
-
-            for seq, msg in enumerate(messages):
-                msg.session_id = session_id
-                msg.sequence_num = seq
-                conn.execute(
-                    """INSERT OR REPLACE INTO messages
-                       (session_id, sequence_num, role, content_json,
-                        token_count, is_compacted, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        session_id,
-                        seq,
-                        msg.role,
-                        msg.content_json,
-                        msg.token_count,
-                        int(msg.is_compacted),
-                        msg.created_at.isoformat(),
-                    ),
-                )
-
+            conn.execute(
+                """INSERT INTO conversations
+                   (id, session_id, title, sequence_num, status,
+                    compacted_summary, compacted_at_seq, created_at,
+                    updated_at, message_count, total_input_tokens,
+                    total_output_tokens)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    conv.id,
+                    conv.session_id,
+                    conv.title,
+                    conv.sequence_num,
+                    conv.status,
+                    conv.compacted_summary,
+                    conv.compacted_at_seq,
+                    conv.created_at.isoformat(),
+                    conv.updated_at.isoformat(),
+                    conv.message_count,
+                    conv.total_input_tokens,
+                    conv.total_output_tokens,
+                ),
+            )
             conn.commit()
         finally:
             conn.close()
+        return conv
+
+    def get_conversation(self, conversation_id: str) -> Conversation | None:
+        """Return the conversation with *conversation_id*, or *None*."""
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT * FROM conversations WHERE id = ?",
+                (conversation_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+        return self._row_to_conversation(row) if row else None
+
+    def get_active_conversation(
+        self, session_id: str,
+    ) -> Conversation | None:
+        """Return the active conversation for *session_id*, or *None*."""
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT * FROM conversations "
+                "WHERE session_id = ? AND status = 'active'",
+                (session_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+        return self._row_to_conversation(row) if row else None
+
+    def list_conversations(
+        self,
+        session_id: str,
+    ) -> list[ConversationSummary]:
+        """Return all conversations for *session_id*, newest first."""
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                """SELECT id, session_id, title, sequence_num, status,
+                          message_count, created_at, updated_at
+                   FROM conversations
+                   WHERE session_id = ?
+                   ORDER BY updated_at DESC""",
+                (session_id,),
+            ).fetchall()
+        finally:
+            conn.close()
+        return [self._row_to_conversation_summary(r) for r in rows]
+
+    def update_conversation(self, conv: Conversation) -> bool:
+        """Persist changes to *conv*.  Returns ``True`` if a row was updated."""  # noqa: E501
+        conn = self._connect()
+        try:
+            cur = conn.execute(
+                """UPDATE conversations
+                   SET title = ?, status = ?, compacted_summary = ?,
+                       compacted_at_seq = ?, updated_at = ?,
+                       message_count = ?, total_input_tokens = ?,
+                       total_output_tokens = ?
+                   WHERE id = ?""",
+                (
+                    conv.title,
+                    conv.status,
+                    conv.compacted_summary,
+                    conv.compacted_at_seq,
+                    conv.updated_at.isoformat(),
+                    conv.message_count,
+                    conv.total_input_tokens,
+                    conv.total_output_tokens,
+                    conv.id,
+                ),
+            )
+            conn.commit()
+            updated = cur.rowcount > 0
+        finally:
+            conn.close()
+        return updated
+
+    def archive_conversation(self, conversation_id: str) -> bool:
+        """Set the status of *conversation_id* to ``'archived'``.
+
+        Returns ``True`` if a row was updated.
+        """
+        conn = self._connect()
+        try:
+            cur = conn.execute(
+                "UPDATE conversations SET status = 'archived', "
+                "updated_at = ? WHERE id = ?",
+                (datetime.now().isoformat(), conversation_id),
+            )
+            conn.commit()
+            updated = cur.rowcount > 0
+        finally:
+            conn.close()
+        return updated
+
+    def get_conversation_message_count(
+        self, conversation_id: str,
+    ) -> int:
+        """Return the number of messages in *conversation_id*."""
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM messages "
+                "WHERE conversation_id = ?",
+                (conversation_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+        return int(row[0]) if row else 0
 
     # ==================================================================
     # Checkpoint CRUD  (Phase 9 will build on these stubs)
@@ -517,14 +640,35 @@ class SQLiteStore:
             conn.commit()
             current = 1
 
-        # Future migrations go here:
-        # if current < 2:
-        #     conn.execute("ALTER TABLE ...")
-        #     conn.execute(
-        #         "UPDATE _schema_version SET version = 2"
-        #     )
-        #     conn.commit()
-        #     current = 2
+        if current < 2:
+            logger.info("Migrating to schema v2 — adding conversations.")
+            conn.execute(_CREATE_CONVERSATIONS)
+
+            # Add conversation_id column to messages (if not already present).
+            _add_column_if_missing(
+                conn, "messages", "conversation_id",
+                "TEXT NOT NULL DEFAULT ''",
+            )
+
+            # Create the new index.
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_messages_conversation "
+                "ON messages(conversation_id, sequence_num);"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_conversations_session "
+                "ON conversations(session_id, status);"
+            )
+
+            # Backfill: for each session that has messages, create a default
+            # "active" conversation and link all existing messages to it.
+            _backfill_conversations(conn)
+
+            conn.execute(
+                "UPDATE _schema_version SET version = 2"
+            )
+            conn.commit()
+            current = 2
 
         if current != CURRENT_SCHEMA_VERSION:
             logger.warning(
@@ -561,10 +705,43 @@ class SQLiteStore:
         )
 
     @staticmethod
+    def _row_to_conversation(row: sqlite3.Row) -> Conversation:
+        return Conversation(
+            id=row["id"],
+            session_id=row["session_id"],
+            title=row["title"],
+            sequence_num=row["sequence_num"],
+            status=row["status"],
+            compacted_summary=row["compacted_summary"],
+            compacted_at_seq=row["compacted_at_seq"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+            updated_at=datetime.fromisoformat(row["updated_at"]),
+            message_count=row["message_count"],
+            total_input_tokens=row["total_input_tokens"],
+            total_output_tokens=row["total_output_tokens"],
+        )
+
+    @staticmethod
+    def _row_to_conversation_summary(
+        row: sqlite3.Row,
+    ) -> ConversationSummary:
+        return ConversationSummary(
+            id=row["id"],
+            session_id=row["session_id"],
+            title=row["title"],
+            sequence_num=row["sequence_num"],
+            status=row["status"],
+            message_count=row["message_count"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+            updated_at=datetime.fromisoformat(row["updated_at"]),
+        )
+
+    @staticmethod
     def _row_to_message(row: sqlite3.Row) -> StoredMessage:
         return StoredMessage(
             id=row["id"],
             session_id=row["session_id"],
+            conversation_id=row["conversation_id"],
             sequence_num=row["sequence_num"],
             role=row["role"],
             content_json=row["content_json"],
@@ -589,3 +766,83 @@ def _json_loads(text: str) -> Any:
     import json
 
     return json.loads(text)
+
+
+# ---------------------------------------------------------------------------
+# Migration helpers
+# ---------------------------------------------------------------------------
+
+
+def _add_column_if_missing(
+    conn: sqlite3.Connection,
+    table: str,
+    column: str,
+    col_def: str,
+) -> None:
+    """Add *column* to *table* if it doesn't already exist."""
+    info = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    existing = {row["name"] for row in info}
+    if column not in existing:
+        conn.execute(
+            f"ALTER TABLE {table} ADD COLUMN {column} {col_def}"
+        )
+
+
+def _backfill_conversations(conn: sqlite3.Connection) -> None:
+    """Create a default conversation for each session with messages and
+    backfill ``conversation_id`` on existing message rows.
+
+    Sparse sequence_num is assigned per-session: the new conversation
+    inherits the session's highest sequence_num.
+    """
+    now = datetime.now().isoformat()
+
+    # Find sessions that have messages but no conversation.
+    rows = conn.execute(
+        """SELECT DISTINCT s.id AS sid
+           FROM sessions s
+           JOIN messages m ON m.session_id = s.id
+           WHERE m.conversation_id = ''
+           ORDER BY s.id"""
+    ).fetchall()
+
+    for row in rows:
+        sid = row["sid"]
+        conv_id = uuid.uuid4().hex
+
+        # Get the highest sequence_num for this session.
+        max_seq = conn.execute(
+            "SELECT MAX(sequence_num) FROM messages WHERE session_id = ?",
+            (sid,),
+        ).fetchone()[0] or 0
+
+        conn.execute(
+            """INSERT INTO conversations
+               (id, session_id, title, sequence_num, status,
+                compacted_summary, compacted_at_seq, created_at,
+                updated_at, message_count, total_input_tokens,
+                total_output_tokens)
+               VALUES (?, ?, ?, ?, 'active', NULL, NULL, ?, ?, 0, 0, 0)""",
+            (conv_id, sid, None, max_seq + 1, now, now),
+        )
+
+        # Backfill messages with the new conversation_id.
+        conn.execute(
+            "UPDATE messages SET conversation_id = ? "
+            "WHERE session_id = ? AND conversation_id = ''",
+            (conv_id, sid),
+        )
+
+        # Update message_count on the conversation.
+        msg_count = conn.execute(
+            "SELECT COUNT(*) FROM messages WHERE conversation_id = ?",
+            (conv_id,),
+        ).fetchone()[0]
+        conn.execute(
+            "UPDATE conversations SET message_count = ? WHERE id = ?",
+            (msg_count, conv_id),
+        )
+
+    logger.info(
+        f"Backfilled conversations for {len(rows)} session(s)."
+    )

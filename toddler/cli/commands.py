@@ -175,15 +175,21 @@ class SlashCommandDispatcher:
         """``/quit``, ``/exit``, ``/q`` — exit the REPL."""
         return CommandResult(continue_repl=False, message="Goodbye.")
 
-    async def _cmd_clear(self, _args: str) -> CommandResult:
-        """``/clear`` — clear the screen."""
-        # The caller (CLIApp) handles the actual clearing because it owns
-        # the Rich Console reference.  We return a sentinel that the caller
-        # can check, but for simplicity we just return success with a
-        # "clear" flag via convention.
+    async def _cmd_clear(self, args: str) -> CommandResult:
+        """``/clear [title]`` — archive current conversation and start fresh.
+
+        If an optional title is provided, it is set on the current
+        conversation before archiving.  The CLI layer handles the actual
+        conversation lifecycle.
+        """
+        title = args.strip() or ""
+        sentinel = (
+            f"__NEW_CONVERSATION__:{title}" if title
+            else "__NEW_CONVERSATION__"
+        )
         return CommandResult(
             continue_repl=True,
-            message="__CLEAR__",
+            message=sentinel,
             rendered=True,
         )
 
@@ -334,6 +340,28 @@ class SlashCommandDispatcher:
             message="\n".join(lines),
         )
 
+    async def _cmd_resume(self, args: str) -> CommandResult:
+        """``/resume <conversation_id>`` — resume an archived conversation."""
+        conv_id = args.strip()
+        if not conv_id:
+            return CommandResult(
+                continue_repl=True,
+                message="Usage: /resume <conversation_id>",
+            )
+        return CommandResult(
+            continue_repl=True,
+            message=f"__RESUME_CONVERSATION__:{conv_id}",
+            rendered=True,
+        )
+
+    async def _cmd_conversations(self, _args: str) -> CommandResult:
+        """``/conversations`` — list conversations in the current session."""
+        return CommandResult(
+            continue_repl=True,
+            message="__LIST_CONVERSATIONS__",
+            rendered=True,
+        )
+
     async def _cmd_session(self, args: str) -> CommandResult:
         """``/session <subcommand>`` — session management."""
         sub = args.strip().lower()
@@ -453,6 +481,8 @@ _COMMAND_TABLE: dict[str, _Handler] = {
     "/clear": SlashCommandDispatcher._cmd_clear,
     "/help": SlashCommandDispatcher._cmd_help,
     "/plan": SlashCommandDispatcher._cmd_plan,
+    "/resume": SlashCommandDispatcher._cmd_resume,
+    "/conversations": SlashCommandDispatcher._cmd_conversations,
     "/rollback": SlashCommandDispatcher._cmd_rollback,
     "/checkpoints": SlashCommandDispatcher._cmd_checkpoints,
     "/session": SlashCommandDispatcher._cmd_session,
@@ -469,12 +499,14 @@ HELP_TEXT = """\
 | Command | Description |
 |---------|-------------|
 | `/plan` | Flag the next message for plan mode (research → propose → execute) |
+| `/clear [title]` | Archive current conversation and start a fresh one |
+| `/resume <id>` | Resume a previously archived conversation |
+| `/conversations` | List conversations in the current session |
 | `/rollback <id>` | Rollback to a checkpoint (restores files + conversation) |
 | `/checkpoints` | List all checkpoints for the current session |
 | `/session info` | Show current session details |
 | `/session list` | List all saved sessions |
 | `/session switch <id>` | Switch to another session |
 | `/help` | Show this help text |
-| `/clear` | Clear the screen |
 | `/quit`, `/exit` | Exit the REPL |
 """  # noqa: E501

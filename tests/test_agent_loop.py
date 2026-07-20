@@ -22,6 +22,8 @@ from toddler.agent.events import (
 )
 from toddler.agent.loop import AgentLoop
 from toddler.config.settings import Settings
+from toddler.context.conversation_context import ConversationContext
+from toddler.context.system_prompt import SystemPromptBuilder
 from toddler.llm.base import BaseLLMProvider
 from toddler.llm.types import ContentBlock, LLMResponse, Message, StreamEvent, TokenUsage
 from toddler.tools.base import BaseTool, Permission, ToolResult
@@ -239,13 +241,23 @@ def executor(registry, settings) -> ToolExecutor:
 
 
 @pytest.fixture
-def loop(registry, executor, settings) -> AgentLoop:
+def conv_ctx() -> ConversationContext:
+    """Bare ConversationContext for tests (no backing session)."""
+    return ConversationContext(
+        session_mgr=None,
+        prompt_builder=SystemPromptBuilder(),
+    )
+
+
+@pytest.fixture
+def loop(registry, executor, settings, conv_ctx) -> AgentLoop:
     """AgentLoop with mock LLM, echo & failing tools, default settings."""
     return AgentLoop(
         llm_provider=MockLLMProvider(),
         tool_registry=registry,
         tool_executor=executor,
         settings=settings,
+        context=conv_ctx,
     )
 
 
@@ -270,7 +282,7 @@ async def _collect_events(gen: AsyncIterator) -> list:
 class TestSimpleTextResponse:
     """Agent loop with a plain-text (end_turn) LLM response."""
 
-    async def test_single_text_response(self, registry, executor, settings):
+    async def test_single_text_response(self, registry, executor, settings, conv_ctx):
         llm = MockLLMProvider(
             responses=[
                 _make_llm_response(
@@ -279,7 +291,7 @@ class TestSimpleTextResponse:
                 ),
             ]
         )
-        loop = AgentLoop(llm, registry, executor, settings)
+        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx)
         events = await _collect_events(loop.run("Hi!"))
 
         assert len(events) >= 2
@@ -288,14 +300,14 @@ class TestSimpleTextResponse:
         assert isinstance(events[-1], AgentFinished)
         assert events[-1].reason == "LLM finished its turn."
 
-    async def test_no_text_response(self, registry, executor, settings):
+    async def test_no_text_response(self, registry, executor, settings, conv_ctx):
         """LLM returns end_turn with no text content."""
         llm = MockLLMProvider(
             responses=[
                 _make_llm_response(text="", stop_reason="end_turn"),
             ]
         )
-        loop = AgentLoop(llm, registry, executor, settings)
+        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx)
         events = await _collect_events(loop.run("Hi!"))
 
         # No TextDelta when text is empty.
@@ -311,7 +323,7 @@ class TestSimpleTextResponse:
 class TestToolCalls:
     """Agent loop with tool_use LLM responses."""
 
-    async def test_single_tool_call(self, registry, executor, settings):
+    async def test_single_tool_call(self, registry, executor, settings, conv_ctx):  # noqa: E501
         llm = MockLLMProvider(
             responses=[
                 _make_llm_response(
@@ -329,7 +341,7 @@ class TestToolCalls:
                 ),
             ]
         )
-        loop = AgentLoop(llm, registry, executor, settings)
+        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx)
         events = await _collect_events(loop.run("Echo please"))
 
         # Should have: ToolCallStart, ToolCallEnd, TextDelta, AgentFinished
@@ -354,7 +366,7 @@ class TestToolCalls:
         # LLM should have been called twice.
         assert llm.call_count == 2
 
-    async def test_multiple_tool_calls_in_one_response(self, registry, executor, settings):
+    async def test_multiple_tool_calls_in_one_response(self, registry, executor, settings, conv_ctx):
         """LLM requests multiple tools in one response."""
         llm = MockLLMProvider(
             responses=[
@@ -372,7 +384,7 @@ class TestToolCalls:
                 _make_llm_response(text="All done", stop_reason="end_turn"),
             ]
         )
-        loop = AgentLoop(llm, registry, executor, settings)
+        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx)
         events = await _collect_events(loop.run("Double echo"))
 
         starts = [e for e in events if isinstance(e, ToolCallStart)]
@@ -390,7 +402,7 @@ class TestToolCalls:
 class TestErrorRecovery:
     """Tool errors are fed back to the LLM as is_error=True."""
 
-    async def test_failing_tool_error_fed_back(self, registry, executor, settings):
+    async def test_failing_tool_error_fed_back(self, registry, executor, settings, conv_ctx):
         llm = MockLLMProvider(
             responses=[
                 _make_llm_response(
@@ -402,7 +414,7 @@ class TestErrorRecovery:
                 _make_llm_response(text="I'll try something else", stop_reason="end_turn"),
             ]
         )
-        loop = AgentLoop(llm, registry, executor, settings)
+        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx)
         events = await _collect_events(loop.run("Do something"))
 
         ends = [e for e in events if isinstance(e, ToolCallEnd)]
@@ -419,7 +431,7 @@ class TestErrorRecovery:
         assert tool_block.is_error is True
         assert "Simulated failure" in tool_block.tool_result_content
 
-    async def test_unknown_tool_error(self, registry, executor, settings):
+    async def test_unknown_tool_error(self, registry, executor, settings, conv_ctx):
         """Calling a tool not in the registry should produce an error result."""
         llm = MockLLMProvider(
             responses=[
@@ -432,7 +444,7 @@ class TestErrorRecovery:
                 _make_llm_response(text="Ok, I'll adapt", stop_reason="end_turn"),
             ]
         )
-        loop = AgentLoop(llm, registry, executor, settings)
+        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx)
         events = await _collect_events(loop.run("Try unknown tool"))
 
         ends = [e for e in events if isinstance(e, ToolCallEnd)]
@@ -440,14 +452,14 @@ class TestErrorRecovery:
         assert not ends[0].result.success
         assert "Unknown tool" in ends[0].result.error
 
-    async def test_llm_call_error(self, registry, executor, settings):
+    async def test_llm_call_error(self, registry, executor, settings, conv_ctx):
         """When the LLM call itself raises, AgentError + AgentFinished are yielded."""
 
         class FailingLLM(MockLLMProvider):
             async def generate(self, messages, tools, *, max_tokens=4096, temperature=0.0, stream=True):
                 raise RuntimeError("API connection lost")
 
-        loop = AgentLoop(FailingLLM(), registry, executor, settings)
+        loop = AgentLoop(FailingLLM(), registry, executor, settings, context=conv_ctx)
         events = await _collect_events(loop.run("Hi"))
 
         errors = [e for e in events if isinstance(e, AgentError)]
@@ -467,7 +479,7 @@ class TestErrorRecovery:
 class TestPermissionGating:
     """AgentPaused is yielded when a WRITE tool needs confirmation."""
 
-    async def test_write_tool_yields_agent_paused(self, registry, executor, settings):
+    async def test_write_tool_yields_agent_paused(self, registry, executor, settings, conv_ctx):
         """A WRITE tool with confirm_write=True should pause the loop."""
         llm = MockLLMProvider(
             responses=[
@@ -482,7 +494,7 @@ class TestPermissionGating:
                 _make_llm_response(text="Written!", stop_reason="end_turn"),
             ]
         )
-        loop = AgentLoop(llm, registry, executor, settings)
+        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx)
 
         gen = loop.run("Write this down")
         events: list = []
@@ -505,7 +517,7 @@ class TestPermissionGating:
         assert ends[0].result.success
         assert "Wrote:" in ends[0].result.output
 
-    async def test_deny_write_tool(self, registry, executor, settings):
+    async def test_deny_write_tool(self, registry, executor, settings, conv_ctx):
         """Denying a WRITE tool produces an error result."""
         llm = MockLLMProvider(
             responses=[
@@ -520,7 +532,7 @@ class TestPermissionGating:
                 _make_llm_response(text="Ok, I won't write", stop_reason="end_turn"),
             ]
         )
-        loop = AgentLoop(llm, registry, executor, settings)
+        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx)
 
         gen = loop.run("Write this")
         events = []
@@ -534,7 +546,7 @@ class TestPermissionGating:
         assert not ends[0].result.success
         assert "denied" in ends[0].result.error.lower()
 
-    async def test_read_tool_auto_approves(self, registry, executor, settings):
+    async def test_read_tool_auto_approves(self, registry, executor, settings, conv_ctx):
         """READ tools should not trigger AgentPaused."""
         llm = MockLLMProvider(
             responses=[
@@ -549,7 +561,7 @@ class TestPermissionGating:
                 _make_llm_response(text="Done", stop_reason="end_turn"),
             ]
         )
-        loop = AgentLoop(llm, registry, executor, settings)
+        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx)
         events = await _collect_events(loop.run("Echo test"))
 
         paused = [e for e in events if isinstance(e, AgentPaused)]
@@ -564,7 +576,7 @@ class TestPermissionGating:
 class TestStopConditions:
     """AgentLoop respects max_iterations."""
 
-    async def test_max_iterations_stops_loop(self, registry, executor, settings):
+    async def test_max_iterations_stops_loop(self, registry, executor, settings, conv_ctx):
         """When the LLM keeps requesting tools, max_iterations caps it."""
         # Each response requests a tool, so the loop will keep going.
         tool_response = _make_llm_response(
@@ -575,7 +587,7 @@ class TestStopConditions:
         )
 
         llm = MockLLMProvider(responses=[tool_response] * 10)
-        loop = AgentLoop(llm, registry, executor, settings)
+        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx)
         events = await _collect_events(
             loop.run("Loop forever", max_iterations=3)
         )
@@ -585,7 +597,7 @@ class TestStopConditions:
         assert "max_iterations" in finishes[0].reason.lower() or \
             "maximum iterations" in finishes[0].reason.lower()
 
-    async def test_tool_use_with_empty_calls_stops(self, registry, executor, settings):
+    async def test_tool_use_with_empty_calls_stops(self, registry, executor, settings, conv_ctx):
         """LLM says tool_use but provides no tool blocks — should stop."""
         llm = MockLLMProvider(
             responses=[
@@ -595,7 +607,7 @@ class TestStopConditions:
                 ),
             ]
         )
-        loop = AgentLoop(llm, registry, executor, settings)
+        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx)
         events = await _collect_events(loop.run("Do something"))
 
         finishes = [e for e in events if isinstance(e, AgentFinished)]
@@ -611,7 +623,7 @@ class TestStopConditions:
 class TestConversationContext:
     """The LLM receives the full conversation history."""
 
-    async def test_tool_results_appear_in_next_call(self, registry, executor, settings):
+    async def test_tool_results_appear_in_next_call(self, registry, executor, settings, conv_ctx):
         llm = MockLLMProvider(
             responses=[
                 _make_llm_response(
@@ -625,7 +637,7 @@ class TestConversationContext:
                 _make_llm_response(text="Complete", stop_reason="end_turn"),
             ]
         )
-        loop = AgentLoop(llm, registry, executor, settings)
+        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx)
         await _collect_events(loop.run("Test context"))
 
         # Second call should include: system, user, assistant (tool_use), tool
@@ -636,21 +648,21 @@ class TestConversationContext:
         assert "assistant" in roles
         assert "tool" in roles
 
-    async def test_system_prompt_overrides_default(self, registry, executor, settings):
+    async def test_system_prompt_is_built_by_context(self, registry, executor, settings, conv_ctx):  # noqa: E501
+        """The system prompt is assembled by ConversationContext.prepare_turn()."""
         llm = MockLLMProvider(
             responses=[
                 _make_llm_response(text="Ok", stop_reason="end_turn"),
             ]
         )
-        loop = AgentLoop(llm, registry, executor, settings)
-        await _collect_events(
-            loop.run("Hi", system_prompt="Custom system prompt!")
-        )
+        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx)
+        await _collect_events(loop.run("Hi"))
 
         first_msgs = llm.messages_history[0]
         sys_msg = first_msgs[0]
         assert sys_msg.role == "system"
-        assert sys_msg.text == "Custom system prompt!"
+        # Should contain base persona (not empty).
+        assert "Toddler" in sys_msg.text
 
 
 # ============================================================================
@@ -661,7 +673,7 @@ class TestConversationContext:
 class TestMultiIteration:
     """The loop correctly chains multiple LLM → tool → LLM rounds."""
 
-    async def test_three_rounds(self, registry, executor, settings):
+    async def test_three_rounds(self, registry, executor, settings, conv_ctx):
         """Three rounds of tool calls before finishing."""
         llm = MockLLMProvider(
             responses=[
@@ -680,7 +692,7 @@ class TestMultiIteration:
                 _make_llm_response(text="Final answer", stop_reason="end_turn"),
             ]
         )
-        loop = AgentLoop(llm, registry, executor, settings)
+        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx)
         events = await _collect_events(loop.run("Multi-round"))
 
         starts = [e for e in events if isinstance(e, ToolCallStart)]

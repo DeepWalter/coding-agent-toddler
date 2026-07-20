@@ -5,13 +5,9 @@ support: the agent now calls the LLM with ``stream=True`` by default and
 uses :class:`~toddler.agent.handler.StreamHandler` to process the
 real-time token stream, yielding :class:`AgentEvent` objects as they arrive.
 
-Phase 7 adds context management: the loop now tracks token usage via
-:class:`~toddler.context.window.ContextWindowManager`, triggers compaction
-via :class:`~toddler.context.compaction.ConversationCompactor` when the
-conversation grows too large, and uses
-:class:`~toddler.context.system_prompt.SystemPromptBuilder` to assemble a
-layered system prompt from persona, project map, persistent memory, and
-mode-specific instructions.
+The loop receives a single :class:`~toddler.context.ConversationContext`
+instance that handles system prompt assembly, context window tracking,
+compaction, and persistence — keeping the orchestration layer clean.
 """
 
 from __future__ import annotations
@@ -32,16 +28,13 @@ from toddler.agent.events import (
 )
 from toddler.agent.handler import StreamHandler
 from toddler.agent.stop_conditions import StopConditionChecker
-from toddler.context.system_prompt import SystemPromptBuilder
 from toddler.llm.types import ContentBlock, Message, TokenUsage
 from toddler.tools.base import Permission, ToolCall, ToolResult
 
 if TYPE_CHECKING:
     from toddler.config.settings import Settings
-    from toddler.context.compaction import ConversationCompactor
-    from toddler.context.window import ContextWindowManager
+    from toddler.context.conversation_context import ConversationContext
     from toddler.llm.base import BaseLLMProvider
-    from toddler.session.manager import SessionManager
     from toddler.tools.executor import ToolExecutor
     from toddler.tools.registry import ToolRegistry
 
@@ -98,27 +91,16 @@ class AgentLoop:
         tool_executor: ToolExecutor,
         settings: Settings,
         *,
-        system_prompt_builder: SystemPromptBuilder | None = None,
-        context_window_mgr: ContextWindowManager | None = None,
-        conversation_compactor: ConversationCompactor | None = None,
-        session_manager: SessionManager | None = None,
+        context: ConversationContext,
     ) -> None:
         self._llm = llm_provider
         self._registry = tool_registry
         self._executor = tool_executor
         self._settings = settings
 
-        # --- Phase 7 context management ---
-        self._prompt_builder = (
-            system_prompt_builder or SystemPromptBuilder()
-        )
-        self._window_mgr = context_window_mgr
-        self._compactor = conversation_compactor
-        self._session_mgr = session_manager
-
-        # Track whether compaction has already happened this turn so we
-        # can switch to compact prompt variants.
-        self._has_compacted: bool = False
+        # Single context object — handles prompt building, window tracking,
+        # compaction, and persistence.
+        self._ctx = context
 
         # Confirmation gate — see _execute_with_gating for the protocol.
         self._approval_event: asyncio.Event | None = None
@@ -132,12 +114,10 @@ class AgentLoop:
         self,
         user_input: str,
         *,
-        system_prompt: str | None = None,
         max_iterations: int | None = None,
         token_budget: int | None = None,
         stream: bool = False,
         mode: str = "execute",
-        session_id: str | None = None,
     ) -> AsyncIterator[AgentEvent]:
         """Run the agent loop for a single user request.
 
@@ -145,9 +125,6 @@ class AgentLoop:
         ----------
         user_input:
             The user's request (plain text).
-        system_prompt:
-            Custom system prompt.  When *None*, the prompt is assembled
-            from layers via :class:`SystemPromptBuilder`.
         max_iterations:
             Override the configured max iterations.
         token_budget:
@@ -160,25 +137,9 @@ class AgentLoop:
             Agent mode hint — ``"execute"``, ``"plan_exploring"``, or
             ``"plan_executing"``.  Used by the prompt builder to select
             mode-specific instructions.
-        session_id:
-            Optional session ID for persisting compaction results via the
-            session manager.
         """
-        # --- reset per-turn state ---
-        self._has_compacted = False
-
-        # --- build system prompt ---
-        if system_prompt is not None:
-            sys_text = system_prompt
-        elif self._has_compacted:
-            sys_text = self._prompt_builder.build_compact(mode)
-        else:
-            sys_text = self._prompt_builder.build(mode)
-
-        messages: list[Message] = [
-            Message.system(sys_text),
-            Message.user(user_input),
-        ]
+        # --- build/append to the message list via the context ---
+        messages = await self._ctx.prepare_turn(user_input, mode)
         tools = self._registry.to_api_schemas()
 
         max_iter = (
@@ -199,8 +160,8 @@ class AgentLoop:
                 yield AgentFinished(reason=stop_reason.message, usage=None)
                 return
 
-            # -- context window management (Phase 7.3) ---
-            await self._check_context_window(messages, session_id)
+            # -- context window management ---
+            await self._ctx.check_and_compact()
 
             # -- call LLM ---
             logger.debug(
@@ -429,101 +390,6 @@ class AgentLoop:
     # ==================================================================
     # Internal helpers
     # ==================================================================
-
-    # ==================================================================
-    # Context window management (Phase 7.3)
-    # ==================================================================
-
-    async def _check_context_window(
-        self,
-        messages: list[Message],
-        session_id: str | None,
-    ) -> None:
-        """Check token usage and trigger compaction or truncation if needed.
-
-        Called before every LLM call.  When the context window manager is
-        not configured this is a no-op.
-        """
-        if self._window_mgr is None:
-            return
-
-        # --- log token usage ---
-        token_count = self._window_mgr.count_tokens(messages)
-        status = self._window_mgr.status_line(messages)
-        logger.info(f"Context: {status}")
-
-        # --- compaction ---
-        if (
-            self._compactor is not None
-            and self._window_mgr.should_compact(messages)
-        ):
-            logger.warning(
-                f"Compaction triggered at {status}.  "
-                f"Compacting {len(messages)} messages..."
-            )
-            try:
-                compacted = await self._compactor.compact(messages)
-                before = token_count
-                after = self._window_mgr.count_tokens(compacted)
-
-                # Replace in-place so the loop body uses the compacted list.
-                messages.clear()
-                messages.extend(compacted)
-
-                self._has_compacted = True
-                logger.warning(
-                    f"Compaction complete: {before:,} → {after:,} tokens "
-                    f"({len(compacted)} messages)."
-                )
-
-                # --- persist compaction (Phase 7.3) ---
-                if session_id and self._session_mgr is not None:
-                    try:
-                        await self._session_mgr.save_compacted_messages(
-                            session_id, compacted,
-                        )
-                        logger.debug(
-                            "Compacted messages persisted to session "
-                            f"{session_id[:12]}..."
-                        )
-                    except Exception:
-                        logger.exception(
-                            "Failed to persist compacted messages — "
-                            "continuing with in-memory compaction."
-                        )
-
-                # After compaction, rebuild the system prompt with the
-                # compact variant so subsequent turns start smaller.
-                if self._has_compacted and messages:
-                    compact_sys = self._prompt_builder.build_compact()
-                    # Replace the leading system message(s).
-                    cut = 0
-                    for i, m in enumerate(messages):
-                        if m.role == "system":
-                            cut = i + 1
-                        else:
-                            break
-                    new_sys = Message.system(compact_sys)
-                    messages[:cut] = [new_sys]
-
-            except Exception:
-                logger.exception(
-                    "Compaction failed — continuing with original messages."
-                )
-
-            return  # Don't also truncate in the same iteration.
-
-        # --- truncation (emergency brake) ---
-        if self._window_mgr.should_truncate(messages):
-            before = token_count
-            truncated = self._window_mgr.truncate(messages)
-            after = self._window_mgr.count_tokens(truncated)
-
-            messages.clear()
-            messages.extend(truncated)
-            logger.error(
-                f"EMERGENCY TRUNCATION: {before:,} → {after:,} tokens."
-            )
 
     async def _execute_with_gating(self, call: ToolCall) -> ToolResult:
         """Execute *call*, respecting the confirmation gate.

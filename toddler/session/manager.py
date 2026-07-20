@@ -14,7 +14,13 @@ from datetime import UTC, datetime
 from typing import Any
 
 from toddler.llm.types import ContentBlock, Message, TokenUsage
-from toddler.session.models import Session, SessionSummary, StoredMessage
+from toddler.session.models import (
+    Conversation,
+    ConversationSummary,
+    Session,
+    SessionSummary,
+    StoredMessage,
+)
 from toddler.session.store import SQLiteStore
 
 logger = logging.getLogger(__name__)
@@ -133,15 +139,29 @@ class SessionManager:
         session_id: str,
         message: Message,
         *,
+        conversation_id: str,
         token_count: int = 0,
     ) -> int:
-        """Serialise *message* and persist it as the next message in *session_id*.
+        """Serialise *message* and persist it as the next message.
+
+        Parameters
+        ----------
+        session_id:
+            The parent session ID.
+        message:
+            The Message to persist.
+        conversation_id:
+            The conversation this message belongs to (required).
+        token_count:
+            Optional token count for the message.
 
         Returns the new ``sequence_num``.
         """  # noqa: E501
+        # Use global sequence within the session.
         current_count = self._store.get_message_count(session_id)
         stored = StoredMessage(
             session_id=session_id,
+            conversation_id=conversation_id,
             sequence_num=current_count,
             role=message.role,
             content_json=_serialize_content(message.content),
@@ -150,12 +170,21 @@ class SessionManager:
         )
         self._store.append_message(stored)
 
-        # Update the session's message_count and timestamp.
+        # Update session counters.
         session = self._store.get_session(session_id)
         if session:
             session.message_count = current_count + 1
             session.updated_at = datetime.now(UTC)
             self._store.update_session(session)
+
+        # Update conversation counters.
+        conv = self._store.get_conversation(conversation_id)
+        if conv:
+            conv.message_count = (
+                self._store.get_conversation_message_count(conversation_id)
+            )
+            conv.updated_at = datetime.now(UTC)
+            self._store.update_conversation(conv)
 
         return stored.sequence_num
 
@@ -163,57 +192,109 @@ class SessionManager:
         self,
         session_id: str,
         *,
-        exclude_compacted: bool = True,
+        conversation_id: str | None = None,
         after_sequence: int | None = None,
     ) -> list[Message]:
-        """Retrieve and deserialise all messages for *session_id*."""
+        """Retrieve and deserialise messages for *session_id*.
+
+        When *conversation_id* is provided, only messages from that
+        conversation are returned.  When *after_sequence* is set, only
+        messages with ``sequence_num > after_sequence`` are returned.
+        """
         stored_list = self._store.get_messages(
             session_id,
-            exclude_compacted=exclude_compacted,
+            conversation_id=conversation_id,
             after_sequence=after_sequence,
         )
         return [_stored_to_message(s) for s in stored_list]
 
-    async def replace_messages(
+    # ==================================================================
+    # Conversation lifecycle
+    # ==================================================================
+
+    async def create_conversation(
         self,
         session_id: str,
-        messages: list[Message],
         *,
-        mark_compacted: bool = False,
-    ) -> None:
-        """Atomically replace all messages for *session_id*.
+        title: str | None = None,
+        status: str = "active",
+    ) -> Conversation:
+        """Create a new conversation within *session_id*.
 
-        Used by the compactor (Phase 7) to swap original messages with
-        summary versions.
+        Returns the new :class:`Conversation`.
         """
-        to_persist = [
-            _message_to_stored(session_id, i, m)
-            for i, m in enumerate(messages)
-        ]
-        self._store.replace_messages(
-            session_id, to_persist, mark_compacted=mark_compacted,
+        # Get the next global sequence_num from session messages.
+        current_count = self._store.get_message_count(session_id)
+        conv = Conversation(
+            id=uuid.uuid4().hex,
+            session_id=session_id,
+            title=title,
+            sequence_num=current_count,
+            status=status,
         )
+        self._store.create_conversation(conv)
+        logger.info(
+            f"Created conversation {conv.id} in session {session_id}."
+        )
+        return conv
 
-        # Update message_count to match.
-        session = self._store.get_session(session_id)
-        if session:
-            session.message_count = len(to_persist)
-            session.updated_at = datetime.now(UTC)
-            self._store.update_session(session)
+    async def get_or_create_active_conversation(
+        self, session_id: str,
+    ) -> Conversation:
+        """Return the active conversation for *session_id*.
 
-    async def save_compacted_messages(
-        self,
-        session_id: str,
-        compacted_messages: list[Message],
-    ) -> None:
-        """Replace session messages with compacted versions.
-
-        Old messages are marked ``is_compacted=True`` rather than deleted
-        so they can be inspected for debugging.
+        If no active conversation exists (e.g. migrated session), create one.
         """
-        await self.replace_messages(
-            session_id, compacted_messages, mark_compacted=True,
+        conv = self._store.get_active_conversation(session_id)
+        if conv is not None:
+            return conv
+        logger.info(
+            f"No active conversation for session {session_id} — creating."
         )
+        return await self.create_conversation(session_id)
+
+    async def list_conversations(
+        self, session_id: str,
+    ) -> list[ConversationSummary]:
+        """Return all conversations for *session_id*, newest first."""
+        return self._store.list_conversations(session_id)
+
+    async def get_conversation(
+        self, conversation_id: str,
+    ) -> Conversation | None:
+        """Return the conversation with *conversation_id*, or *None*."""
+        return self._store.get_conversation(conversation_id)
+
+    async def update_conversation(self, conv: Conversation) -> None:
+        """Persist changes to *conv* (title, compaction pointers, etc.)."""
+        conv.updated_at = datetime.now(UTC)
+        self._store.update_conversation(conv)
+
+    async def archive_conversation(
+        self, conversation_id: str,
+    ) -> None:
+        """Archive *conversation_id* so it's no longer active."""
+        self._store.archive_conversation(conversation_id)
+        logger.info(f"Archived conversation {conversation_id}.")
+
+    async def get_conversation_summaries(
+        self, session_id: str, *, exclude_id: str | None = None,
+    ) -> list[tuple[int, str]]:
+        """Return ``(sequence_num, title)`` tuples for all non-empty
+        conversations in *session_id*, excluding *exclude_id* if given.
+
+        Used for cross-conversation context injection into the system prompt.
+        """
+        convs = await self.list_conversations(session_id)
+        result: list[tuple[int, str]] = []
+        for c in convs:
+            if exclude_id is not None and c.id == exclude_id:
+                continue
+            if c.message_count > 0:
+                result.append(
+                    (c.sequence_num, c.display_title)
+                )
+        return result
 
     # ==================================================================
     # Checkpoint delegates  (Phase 9 will build on these)

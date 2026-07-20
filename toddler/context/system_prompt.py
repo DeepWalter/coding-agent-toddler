@@ -131,7 +131,12 @@ class SystemPromptBuilder:
     # Public API
     # ------------------------------------------------------------------
 
-    def build(self, mode: str = "execute") -> str:
+    def build(
+        self,
+        mode: str = "execute",
+        *,
+        prior_conversation_summaries: list[str] | None = None,
+    ) -> str:
         """Assemble the full system prompt for *mode*.
 
         Parameters
@@ -140,6 +145,11 @@ class SystemPromptBuilder:
             One of ``"execute"``, ``"plan_exploring"``, or
             ``"plan_executing"``.  Controls which mode-specific
             instructions are appended.
+        prior_conversation_summaries:
+            Optional list of ``"(title)"`` strings from earlier
+            conversations in the same session.  When provided, a
+            "Prior Work in This Session" section is injected after
+            the project map.
 
         Returns
         -------
@@ -154,6 +164,11 @@ class SystemPromptBuilder:
         if proj:
             sections.append(proj)
 
+        if prior_conversation_summaries:
+            sections.append(
+                self._prior_work_section(prior_conversation_summaries)
+            )
+
         mem = self._persistent_memory_section()
         if mem:
             sections.append(mem)
@@ -161,7 +176,12 @@ class SystemPromptBuilder:
         sections.append(self._mode_instructions(mode))
         return "\n\n".join(sections)
 
-    def build_compact(self, mode: str = "execute") -> str:
+    def build_compact(
+        self,
+        mode: str = "execute",
+        *,
+        prior_conversation_summaries: list[str] | None = None,
+    ) -> str:
         """Like :meth:`build` but uses shorter variants of every layer.
 
         Useful when the conversation is long and every token counts.
@@ -172,6 +192,13 @@ class SystemPromptBuilder:
         proj = self._compact_project_map()
         if proj:
             sections.append(proj)
+
+        if prior_conversation_summaries:
+            sections.append(
+                self._prior_work_section_compact(
+                    prior_conversation_summaries
+                )
+            )
 
         mem = self._compact_memory_section()
         if mem:
@@ -281,6 +308,29 @@ class SystemPromptBuilder:
 
     def _compact_memory_section(self) -> str:
         return self._memory_compact_text or ""
+
+    # -- prior work (cross-conversation context) --
+
+    @staticmethod
+    def _prior_work_section(titles: list[str]) -> str:
+        """Build a "Prior Work in This Session" section from titles."""
+        lines = [
+            "## Prior Work in This Session",
+            "",
+            "You have had previous conversations in this session.  Their",
+            "topics are listed below — use this context to understand what",
+            "the user has been working on:",
+            "",
+        ]
+        for t in titles:
+            lines.append(f"- {t}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _prior_work_section_compact(titles: list[str]) -> str:
+        """Compact variant of the prior-work section."""
+        items = ", ".join(titles)
+        return f"Prior session work: {items}"
 
     # -- mode instructions --
 

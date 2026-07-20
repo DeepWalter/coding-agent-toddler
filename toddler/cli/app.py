@@ -40,6 +40,7 @@ from toddler.cli.display import StreamDisplay
 from toddler.cli.input_handler import InputHandler
 from toddler.cli.renderer import Renderer
 from toddler.config.settings import Settings
+from toddler.context.conversation_context import ConversationContext
 from toddler.context.system_prompt import SystemPromptBuilder
 from toddler.llm.base import BaseLLMProvider
 from toddler.llm.provider import OpenAICompatibleProvider
@@ -179,9 +180,10 @@ class CLIApp:
             session_manager=session_manager,
         )
 
-        # --- Current session (set on run) ---
+        # --- Current session + conversation context (set on run) ---
         self._session: Session | None = None
-        self._session_titles_scheduled: set[str] = set()
+        self._ctx: ConversationContext | None = None
+        self._agent_impl: AgentLoop | None = None
 
     # ==================================================================
     # Entry points
@@ -204,8 +206,26 @@ class CLIApp:
             self._renderer.info(
                 f"Session: {self._session.id[:12]}..."
             )
+
+            # Create the single ConversationContext for the REPL lifetime.
+            self._ctx = ConversationContext(
+                self._session_mgr, self._prompt_builder,
+                window_mgr=self._context_window_mgr,
+                compactor=self._conversation_compactor,
+            )
+            conv = await self._session_mgr.get_or_create_active_conversation(
+                self._session.id,
+            )
+            await self._ctx.activate(conv)
         else:
             self._session = None
+            # Create a bare context for tests / no-persistence mode.
+            self._ctx = ConversationContext(
+                self._session_mgr,  # type: ignore[arg-type]
+                self._prompt_builder,
+                window_mgr=self._context_window_mgr,
+                compactor=self._conversation_compactor,
+            )
 
         self._wire_checkpointing()
 
@@ -259,17 +279,35 @@ class CLIApp:
         When a session manager is available, the turn is persisted so the
         interaction can be resumed later via ``--session``.
         """
-        # --- Resolve or create session ---
+        # --- Resolve or create session + conversation context ---
         if self._session_mgr is not None:
             self._session = await self._session_mgr.get_or_create(
                 session_id,
             )
+            self._ctx = ConversationContext(
+                self._session_mgr, self._prompt_builder,
+                window_mgr=self._context_window_mgr,
+                compactor=self._conversation_compactor,
+            )
+            conv = await self._session_mgr.get_or_create_active_conversation(
+                self._session.id,
+            )
+            await self._ctx.activate(conv)
         else:
             self._session = None
+            self._ctx = ConversationContext(
+                None, self._prompt_builder,
+                window_mgr=self._context_window_mgr,
+                compactor=self._conversation_compactor,
+            )
 
         self._wire_checkpointing()
 
         await self._run_agent_turn(query, force_plan=force_plan)
+
+        # Persist after one-shot turn.
+        if self._ctx is not None:
+            await self._ctx.save()
 
     # ==================================================================
     # Checkpoint wiring (deferred until session resolution)
@@ -330,27 +368,15 @@ class CLIApp:
             )
             self._renderer.info(f"Plan mode triggered ({trigger}).")
 
-        # --- Persist the user message ---
-        user_msg = Message.user(user_input)
-        if self._session is not None and self._session_mgr is not None:
-            await self._session_mgr.append_message(
-                self._session.id, user_msg,
-            )
-            # Auto-title after first user message (non-blocking).
-            if self._session.id not in self._session_titles_scheduled:
-                self._session_titles_scheduled.add(self._session.id)
-                self._auto_title_background(
-                    self._session.id, user_input,
-                )
+        # Persistence is handled by ConversationContext — no manual
+        # append_message calls needed.
 
-        session_id = self._session.id if self._session else None
         mode_hint = self._sm.get_mode_hint()
 
         stream = self._settings.streaming_enabled
         if stream:
             await self._run_streaming_turn(
                 user_input,
-                session_id=session_id,
                 mode_hint=mode_hint,
             )
         else:
@@ -358,10 +384,13 @@ class CLIApp:
                 user_input,
                 max_iterations=self._settings.max_iterations,
                 stream=False,
-                session_id=session_id,
                 mode=mode_hint,
             )
             await self._process_events(gen)
+
+        # --- Persist deltas after the turn completes ---
+        if self._ctx is not None:
+            await self._ctx.save()
 
     # ==================================================================
     # Streaming turn (Phase 6)
@@ -371,7 +400,6 @@ class CLIApp:
         self,
         user_input: str,
         *,
-        session_id: str | None = None,
         mode_hint: str = "execute",
     ) -> None:
         """Run an agent turn with real-time Rich Live display."""
@@ -384,7 +412,6 @@ class CLIApp:
             user_input,
             max_iterations=self._settings.max_iterations,
             stream=True,
-            session_id=session_id,
             mode=mode_hint,
         )
 
@@ -447,8 +474,6 @@ class CLIApp:
                                 event.input,
                             )
                         )
-                        # Tool results are persisted separately as a tool
-                        # message (see below).
 
                     case AgentPaused():
                         # Stop live display to show confirmation prompt,
@@ -490,19 +515,15 @@ class CLIApp:
             display.stop()
             raise
 
-        # --- Persist the assistant response ---
-        if self._session is not None and self._session_mgr is not None:
-            # Build the assistant message from collected blocks.
-            # Merge consecutive text blocks to keep the stored form clean.
+        # --- Persist the assistant response via ConversationContext ---
+        if self._ctx is not None and assistant_blocks:
             merged = _merge_text_blocks(assistant_blocks)
             if merged:
                 assistant_msg = Message.assistant(merged)
-                await self._session_mgr.append_message(
-                    self._session.id, assistant_msg,
-                )
+                self._ctx.append(assistant_msg)
 
             # Accumulate token usage.
-            if usage is not None:
+            if usage is not None and self._session_mgr is not None:
                 await self._session_mgr.accumulate_tokens(
                     self._session.id, usage,
                 )
@@ -571,16 +592,14 @@ class CLIApp:
                 case _:
                     logger.debug(f"Unhandled event: {type(event).__name__}")
 
-        # --- Persist the assistant response ---
-        if self._session is not None and self._session_mgr is not None:
+        # --- Persist the assistant response via ConversationContext ---
+        if self._ctx is not None and assistant_blocks:
             merged = _merge_text_blocks(assistant_blocks)
             if merged:
                 assistant_msg = Message.assistant(merged)
-                await self._session_mgr.append_message(
-                    self._session.id, assistant_msg,
-                )
+                self._ctx.append(assistant_msg)
 
-            if usage is not None:
+            if usage is not None and self._session_mgr is not None:
                 await self._session_mgr.accumulate_tokens(
                     self._session.id, usage,
                 )
@@ -637,11 +656,26 @@ class CLIApp:
         if result.message == "__SESSION_INFO__":
             await self._show_session_info()
             return True
+        if result.message == "__LIST_CONVERSATIONS__":
+            await self._show_conversations()
+            return True
         if result.message and result.message.startswith(
             "__SESSION_SWITCH__:"
         ):
             target_id = result.message.split(":", 1)[1]
             await self._switch_session(target_id)
+            return True
+        if result.message and result.message.startswith(
+            "__NEW_CONVERSATION__"
+        ):
+            title_part = result.message.split(":", 1)[1] if ":" in result.message else ""  # noqa: E501
+            await self._clear_conversation(title_part or None)
+            return True
+        if result.message and result.message.startswith(
+            "__RESUME_CONVERSATION__:"
+        ):
+            target_id = result.message.split(":", 1)[1]
+            await self._resume_conversation(target_id)
             return True
 
         # --- Display message if not already rendered ---
@@ -670,6 +704,88 @@ class CLIApp:
 | **Output tokens** | {s.total_output_tokens} |
 | **Created** | {s.created_at.strftime('%Y-%m-%d %H:%M UTC')} |
 """)
+
+    async def _clear_conversation(self, title: str | None = None) -> None:
+        """Start a new conversation, archiving the current one.
+
+        If *title* is provided, it overrides the auto-title on the current
+        conversation before archiving.
+        """
+        if self._ctx is None or self._session_mgr is None:
+            self._renderer.info("Session persistence is disabled.")
+            return
+
+        # Set user-provided title before archiving.
+        if title:
+            self._ctx.set_title(title)
+        await self._ctx.save()
+
+        # Archive the current conversation.
+        if self._ctx.conversation is not None:
+            await self._session_mgr.archive_conversation(
+                self._ctx.conversation.id,
+            )
+
+        # Create a fresh active conversation.
+        conv = await self._session_mgr.get_or_create_active_conversation(
+            self._session.id,
+        )
+        await self._ctx.activate(conv)
+        self._renderer.info(
+            "Started new conversation. "
+            "Your previous conversation was archived."
+        )
+
+    async def _resume_conversation(self, conversation_id: str) -> None:
+        """Switch to an existing (usually archived) conversation."""
+        if self._ctx is None or self._session_mgr is None:
+            self._renderer.warning("Session persistence is disabled.")
+            return
+
+        old_conv = await self._session_mgr.get_conversation(conversation_id)
+        if old_conv is None:
+            self._renderer.error(
+                f"Conversation '{conversation_id[:16]}...' not found."
+            )
+            return
+
+        await self._ctx.activate(old_conv)
+        title = old_conv.display_title
+        self._renderer.info(
+            f"Resumed conversation: {title}"
+        )
+
+    async def _show_conversations(self) -> None:
+        """List all conversations for the current session."""
+        if self._session_mgr is None or self._session is None:
+            self._renderer.warning("Session persistence is disabled.")
+            return
+
+        convs = await self._session_mgr.list_conversations(self._session.id)
+        if not convs:
+            self._renderer.info("No conversations in this session.")
+            return
+
+        active_id = (
+            self._ctx.conversation.id
+            if self._ctx and self._ctx.conversation
+            else None
+        )
+
+        self._renderer.console.print()
+        lines = [
+            f"| {'':>1} | {'ID':<34} | {'Title':<40} | {'Msgs':>5} | {'Age':<10} |",  # noqa: E501
+            f"|{'-'*3}|{'-'*36}|{'-'*42}|{'-'*7}|{'-'*12}|",
+        ]
+        for c in convs:
+            marker = "*" if c.id == active_id else " "
+            sid = c.id[:32]
+            title = (c.display_title or "—")[:39]
+            lines.append(
+                f"| {marker:<1} | {sid:<34} | {title:<40} | {c.message_count:>5} | {c.age:<10} |"  # noqa: E501
+            )
+        self._renderer.markdown("\n".join(lines))
+        self._renderer.info("* = active conversation")
 
     async def _show_session_list(self) -> None:
         """List all saved sessions."""
@@ -794,7 +910,7 @@ class CLIApp:
         """Build the bottom toolbar string."""
         return (
             " Alt+Enter: newline │ Ctrl+D: exit │ "
-            "/plan /rollback /checkpoints /session /help /quit "
+            "/plan /clear /resume /conversations /session /help /quit "
         )
 
     # ==================================================================
@@ -803,17 +919,20 @@ class CLIApp:
 
     @property
     def _agent(self) -> AgentLoop:
-        """Lazily build the agent loop (needs the LLM provider)."""
-        if not hasattr(self, '_agent_impl'):
+        """Lazily build the agent loop.
+
+        ``self._ctx`` is a stable reference — once created it never
+        changes (activate() swaps the conversation inside it, not the
+        instance itself).  So AgentLoop can safely capture it in
+        ``__init__``.
+        """
+        if self._agent_impl is None:
             self._agent_impl = AgentLoop(
                 llm_provider=self._llm,
                 tool_registry=self._registry,
                 tool_executor=self._executor,
                 settings=self._settings,
-                system_prompt_builder=self._prompt_builder,
-                context_window_mgr=self._context_window_mgr,
-                conversation_compactor=self._conversation_compactor,
-                session_manager=self._session_mgr,
+                context=self._ctx,
             )
         return self._agent_impl
 
