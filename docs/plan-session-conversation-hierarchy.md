@@ -85,30 +85,36 @@ say over what appears in `/conversations` listings.
 class ConversationContext:
     """In-memory buffer and management orchestrator for a conversation.
 
-    Created when a conversation is activated.  Holds messages across
-    turns — no DB reload per turn.  Syncs deltas to DB on save().
+    A single instance lives for the lifetime of the REPL.  It holds the
+    shared collaborators (SessionManager, SystemPromptBuilder,
+    ContextWindowManager, ConversationCompactor) and switches between
+    conversations via :meth:`activate`.
 
-    Wires together the three context-management components
-    (SystemPromptBuilder, ContextWindowManager, ConversationCompactor)
-    so AgentLoop only deals with ONE object instead of four.
+    Holds messages across turns — no DB reload per turn.  Syncs deltas to
+    DB on save().
+
+    Wires together the three context-management components so AgentLoop
+    only deals with ONE object instead of four.
     """
 
     def __init__(
         self,
-        conversation: Conversation,
         session_mgr: SessionManager,
         prompt_builder: SystemPromptBuilder,
         *,
         window_mgr: ContextWindowManager | None = None,
         compactor: ConversationCompactor | None = None,
     ) -> None:
-        self._conv = conversation
+        # Shared collaborators — never change across conversations.
         self._mgr = session_mgr
         self._prompt_builder = prompt_builder
         self._window_mgr = window_mgr
         self._compactor = compactor
 
+        # Per-conversation state — reset on each activate().
+        self._conv: Conversation | None = None
         self._messages: list[Message] = []
+        self._base_seq: int = 0        # min sequence_num from last load
         self._loaded = False
         self._persisted_count = 0
         self._has_compacted = False
@@ -117,27 +123,72 @@ class ConversationContext:
     # Lifecycle
     # ------------------------------------------------------------------
 
-    async def load(self) -> None:
-        """Load active context from DB. Called once on activation."""
-        after = self._conv.compacted_at_seq or -1
+    async def activate(self, conversation: Conversation) -> None:
+        """Save current conversation (if any) and switch to *conversation*.
+
+        Call on startup, ``/clear``, and ``/resume``.  After this returns,
+        :attr:`messages` contains the loaded history (or is ready for a
+        fresh first turn).
+        """
+        if self._conv is not None:
+            await self.save()
+
+        self._conv = conversation
+        self._messages.clear()
+        self._base_seq = 0
+        self._loaded = False
+        self._persisted_count = 0
+        self._has_compacted = False
+
+        await self._load()
+
+    async def start_fresh(self, session_id: str) -> None:
+        """Create a new active conversation and activate it."""
+        conv = await self._mgr.get_or_create_active_conversation(session_id)
+        await self.activate(conv)
+
+    async def _load(self) -> None:
+        """Load active context from DB.  Called once per activation."""
+        after_seq = self._conv.compacted_at_seq or -1
         recent = await self._mgr.get_messages(
             conversation_id=self._conv.id,
-            after_sequence=after,
+            after_sequence=after_seq,
         )
+
+        # The first non-compacted message in the conversation has
+        # sequence_num = after_seq + 1 (or 0 if never compacted).
+        self._base_seq = after_seq + 1
         self._messages = []
+
+        # Persisted count tracks how many message-list positions
+        # correspond to already-persisted content.  The synthetic
+        # summary is stored on the conversation row (not the messages
+        # table), so we count it as "already persisted" to prevent
+        # save() from trying to write it as a message row.
+        self._persisted_count = 0
+
         if self._conv.compacted_summary:
             self._messages.append(
                 Message.user(
-                    f"[Compacted history — summary of the conversation so far]\n\n"
-                    f"{self._conv.compacted_summary}"
+                    "[Compacted history — summary of the conversation so far]\n\n"
+                    + self._conv.compacted_summary
                 )
             )
+            self._persisted_count = 1  # synthetic — lives on conversation row
+
         self._messages.extend(recent)
-        self._persisted_count = len(recent)
+        self._persisted_count += len(recent)
         self._loaded = True
 
     async def save(self) -> None:
-        """Persist new messages to DB and update conversation metadata."""
+        """Persist new messages to DB and update conversation metadata.
+
+        Only persists messages added since the last save() or load().
+        The synthetic compaction-summary message (if present) is already
+        accounted for in ``_persisted_count`` and is never written to the
+        messages table — its content lives on
+        ``conversation.compacted_summary``.
+        """
         new_msgs = self._messages[self._persisted_count:]
         for msg in new_msgs:
             await self._mgr.append_message(self._conv.id, msg)
@@ -217,9 +268,15 @@ class ConversationContext:
                 summary = self._extract_summary(compacted)
 
                 # Count how many original body messages were summarized.
-                # The compactor keeps the last _keep_recent messages;
-                # everything before that (minus system messages) was summarized.
-                up_to_seq = self._compute_compacted_up_to()
+                # Count body messages in the compacted result (minus system
+                # and the synthetic summary message).
+                body_after = sum(
+                    1 for m in compacted
+                    if m.role != "system"
+                    and not (m.role == "user" and m.content
+                             and m.text.startswith("[Compacted"))
+                )
+                up_to_seq = self._compute_compacted_up_to(body_after)
 
                 self.apply_compaction(compacted, summary, up_to_seq)
 
@@ -265,13 +322,18 @@ class ConversationContext:
     ) -> None:
         """Replace in-memory messages with compacted version.
 
+        Mutates ``_messages`` **in-place** (``clear()`` + ``extend()``)
+        so that any external references to the list (e.g. a local variable
+        in AgentLoop.run()) remain valid.
+
         Updates the conversation metadata so the compaction survives
-        restarts.  Does NOT reset _persisted_count — the recent messages
-        were already persisted in earlier save() calls and the summary is
-        stored on the conversation row (not as a message row).  Only
-        genuinely new messages from future turns will be persisted.
+        restarts.  Does NOT reset ``_persisted_count`` — the recent
+        messages were already persisted in earlier save() calls and the
+        summary is stored on the conversation row (not as a message row).
+        Only genuinely new messages from future turns will be persisted.
         """
-        self._messages = list(compacted)
+        self._messages.clear()
+        self._messages.extend(compacted)
         self._conv.compacted_summary = summary
         self._conv.compacted_at_seq = up_to_seq
 
@@ -315,18 +377,25 @@ class ConversationContext:
                     return text
         return ""
 
-    def _compute_compacted_up_to(self) -> int:
+    def _compute_compacted_up_to(self, kept_count: int) -> int:
         """Return the sequence_num of the last message covered by the summary.
 
-        We track this by counting how many non-system messages were in the
-        original list before compaction minus the _keep_recent that were kept.
-        The caller (SessionManager) can map this to actual sequence numbers.
+        ``kept_count`` is the number of body messages the compactor
+        preserved (passed in by ``check_and_compact``).  Everything before
+        those was summarized.
+
+        Uses ``_base_seq`` (the sequence_num of the first non-compacted
+        message at load time).
+
+        Example: if ``_base_seq = 5`` and 30 messages were summarized,
+        returns ``5 + 30 - 1 = 34`` — messages with seq ≤ 34 are covered
+        by the summary and will be skipped on next load.
         """
-        # Simplified: the compactor keeps _keep_recent body messages, so
-        # everything before that was summarized.  We store the count of
-        # summarized messages; the actual sequence_num mapping is handled
-        # during save().
-        return 0  # Filled in by caller; see Compaction section below.
+        body_before = sum(1 for m in self._messages if m.role != "system")
+        summarized = max(0, body_before - kept_count)
+        if summarized <= 0:
+            return self._conv.compacted_at_seq or self._base_seq - 1
+        return self._base_seq + summarized - 1
 
     def _replace_system_messages(self, new_sys_text: str) -> None:
         """Replace leading system message(s) with a single new one."""
@@ -344,9 +413,10 @@ class ConversationContext:
 
 ```
 REPL start
-  → ctx = ConversationContext(conv, mgr, prompt_builder,
+  → ctx = ConversationContext(mgr, prompt_builder,
                                window_mgr=wm, compactor=cp)
-  → ctx.load()                              # DB → memory (once)
+  → conv = await mgr.get_or_create_active_conversation(session.id)
+  → ctx.activate(conv)                       # DB → memory (once)
 
 Turn 1: Q₁
   → ctx.prepare_turn(Q₁, mode)             # builds [sys, Q₁], auto-titles from Q₁ if no title
@@ -373,13 +443,12 @@ Turn 3: Q₃
 /clear ["Optional title"]
   → ctx.set_title(title) if provided        # override auto-title
   → ctx.save()                              # persist final state with title
-  → ctx = ConversationContext(new_conv, mgr, prompt_builder, ...)
-  → ctx.load()                              # fresh — only system prompt
+  → conv = await mgr.get_or_create_active_conversation(session.id)
+  → ctx.activate(conv)                      # save + load — fresh, only system prompt
 
 /resume <old_id>
-  → ctx.save()                              # persist current
-  → ctx = ConversationContext(old_conv, mgr, prompt_builder, ...)
-  → ctx.load()                              # DB → memory for old conversation
+  → old_conv = await mgr.get_conversation(old_id)
+  → ctx.activate(old_conv)                  # save current, load old conv from DB
 ```
 
 ---
@@ -428,20 +497,27 @@ CREATE TABLE conversations (
 **How active context is derived from DB on load:**
 
 ```python
-async def load(self):
-    conv = await mgr.get_conversation(self.conversation_id)
+async def _load(self):
+    """Called internally by activate()."""
+    conv = self._conv
     after = conv.compacted_at_seq or -1
-    recent = await mgr.get_messages(
-        conversation_id=self.conversation_id,
+    recent = await self._mgr.get_messages(
+        conversation_id=conv.id,
         after_sequence=after,              # skip messages covered by summary
     )
+    self._base_seq = after + 1
     self._messages = []
+    self._persisted_count = 0
     if conv.compacted_summary:
-        # Summary is a synthetic message, NOT stored in messages table
+        # Summary is a synthetic message, NOT stored in messages table.
+        # Count it toward _persisted_count so save() never tries to write
+        # it as a message row.
         self._messages.append(
             Message.user(f"[Compacted history]\n\n{conv.compacted_summary}")
         )
+        self._persisted_count = 1
     self._messages.extend(recent)
+    self._persisted_count += len(recent)
 ```
 
 The `messages` table always contains the **original** messages. Compaction
@@ -481,25 +557,19 @@ class AgentLoop:
         # ... call _check_context_window(messages, session_id) ...
 ```
 
-**After** (1 context param, no `_check_context_window`, no `_has_compacted`):
+**After** (1 required context param, no `_check_context_window`, no `_has_compacted`):
 
 ```python
 class AgentLoop:
     def __init__(self, llm, registry, executor, settings, *,
-                 context: ConversationContext | None = None):
+                 context: ConversationContext):
         self._ctx = context
 
     async def run(self, user_input, *, mode="execute", ...):
-        if self._ctx is not None:
-            messages = self._ctx.prepare_turn(user_input, mode)
-        else:
-            # Legacy path — no session, no history.
-            sys_text = _DEFAULT_SYSTEM_PROMPT  # or inline minimal prompt
-            messages = [Message.system(sys_text), Message.user(user_input)]
+        messages = self._ctx.prepare_turn(user_input, mode)
 
         while True:
-            if self._ctx is not None:
-                await self._ctx.check_and_compact()
+            await self._ctx.check_and_compact()
             # ... LLM call, tool execution — unchanged ...
 ```
 
@@ -509,7 +579,11 @@ class AgentLoop:
 - `session_id` parameter is **removed** from `run()` — the context already
   knows its conversation.
 - `system_prompt` parameter is **removed** from `run()` — use
-  `ctx.prepare_turn()` instead; for legacy mode, use a simple default.
+  `ctx.prepare_turn()` instead.
+- ``context`` is **required** — ``ConversationContext`` is always created in
+  ``CLIApp``; there is no legacy ``None`` path.  Tests that previously
+  constructed ``AgentLoop`` without a context can pass a bare
+  ``ConversationContext(mgr, prompt_builder)`` with no backing session.
 
 ---
 
@@ -520,18 +594,21 @@ class CLIApp:
     def __init__(self, settings, *, session_manager=None, llm=None, ...):
         # ... unchanged ...
         self._ctx: ConversationContext | None = None
+        # Agent loop is built once — ctx is a stable reference, no
+        # property hack needed.
+        self._agent_impl: AgentLoop | None = None
 
     async def run_repl(self, *, session_id=None):
-        # Resolve session + conversation, build ConversationContext.
+        # Resolve session + conversation, build ConversationContext once.
         if self._session_mgr is not None:
             session = await self._session_mgr.get_or_create(session_id)
-            conv = await self._session_mgr.get_or_create_active_conversation(session.id)
             self._ctx = ConversationContext(
-                conv, self._session_mgr, self._prompt_builder,
+                self._session_mgr, self._prompt_builder,
                 window_mgr=self._context_window_mgr,
                 compactor=self._conversation_compactor,
             )
-            await self._ctx.load()
+            conv = await self._session_mgr.get_or_create_active_conversation(session.id)
+            await self._ctx.activate(conv)
 
         while True:
             user_input = await self._input.prompt(...)
@@ -556,14 +633,22 @@ class CLIApp:
         if self._ctx is not None:
             await self._ctx.save()
 
-    def _handle_slash_command(self, text):
-        # /clear → ctx.save(), create new conv, ctx = ConversationContext(...), ctx.load()
-        # /resume <id> → ctx.save(), load conv, ctx = ConversationContext(...), ctx.load()
+    async def _handle_slash_command(self, text):
+        # /clear [title] → ctx.set_title(title), ctx.save(), create
+        #   new active conv, ctx.activate(new_conv)
+        # /resume <id> → ctx.activate(old_conv) (activates saves current first)
         ...
 
     @property
     def _agent(self) -> AgentLoop:
-        if not hasattr(self, '_agent_impl'):
+        """Lazily build the agent loop.
+
+        ``self._ctx`` is a stable reference — once created it never
+        changes (activate() swaps the conversation inside it, not the
+        instance itself).  So AgentLoop can safely capture it in
+        ``__init__``.
+        """
+        if self._agent_impl is None:
             self._agent_impl = AgentLoop(
                 llm_provider=self._llm,
                 tool_registry=self._registry,
@@ -574,9 +659,10 @@ class CLIApp:
         return self._agent_impl
 ```
 
-Note: `_agent` is a property that reads `self._ctx` at call time. When the
-context changes (e.g., `/clear` creates a new `ConversationContext`), the
-next agent turn picks it up automatically.
+The agent loop is created lazily on first use and captures ``self._ctx``
+once.  Since ``_ctx`` is never replaced (only its internal conversation is
+swapped via ``activate()``), there is no need for the old property-hack
+pattern that re-reads ``self._ctx`` on every access.
 
 ---
 
@@ -701,14 +787,22 @@ Create the `ConversationContext` class as shown in the Design section above.
 This is the central abstraction — in-memory buffer + orchestrator that wires
 `SystemPromptBuilder`, `ContextWindowManager`, and `ConversationCompactor`.
 
+Key design: a single instance lives for the lifetime of the REPL.
+``__init__`` takes the shared collaborators; ``activate(conversation)``
+switches to a different conversation (saving the current one first).
+
 The class:
-- Takes `Conversation`, `SessionManager`, `SystemPromptBuilder`, and optional `ContextWindowManager` + `ConversationCompactor`
-- `load()` / `save()` — DB round-trip (delegates to `SessionManager`)
-- `prepare_turn(user_input, mode)` — builds system prompt, auto-titles from first user input, appends user input
-- `set_title(title)` — explicitly set conversation title (for `/clear <title>`)
-- `check_and_compact()` — moved from `AgentLoop._check_context_window`
-- `apply_compaction()` — replaces in-memory messages, sets compaction pointer
-- `messages` property — mutable list for AgentLoop to work with
+- ``__init__`` takes `SessionManager`, `SystemPromptBuilder`, and optional `ContextWindowManager` + `ConversationCompactor` (no `Conversation` — that comes later via `activate`)
+- ``activate(conversation)`` — saves current conversation, resets per-conversation state, loads new history from DB
+- ``start_fresh(session_id)`` — creates a new active conversation and activates it
+- ``_load()`` — internal: loads messages from DB, reconstructs compaction summary, sets ``_base_seq`` and ``_persisted_count``
+- ``save()`` — persist new messages (delta) to DB, update conversation metadata
+- ``prepare_turn(user_input, mode)`` — builds system prompt, auto-titles from first user input, appends user input
+- ``set_title(title)`` — explicitly set conversation title (for `/clear <title>`)
+- ``check_and_compact()`` — moved from `AgentLoop._check_context_window`
+- ``apply_compaction()`` — mutates ``_messages`` in-place (``clear()`` + ``extend()``) so external references stay valid, sets compaction pointer
+- ``_compute_compacted_up_to(kept_count)`` — computes ``compacted_at_seq`` from ``_base_seq``
+- ``messages`` property — mutable list for AgentLoop to work with
 
 ### Step 5: `toddler/context/__init__.py` — export `ConversationContext`
 
@@ -718,22 +812,23 @@ Add `ConversationContext` to the public exports.
 
 Constructor changes:
 - **Remove** `system_prompt_builder`, `context_window_mgr`, `conversation_compactor`, `session_manager` parameters
-- **Add** `context: ConversationContext | None = None`
+- **Add** `context: ConversationContext` (required — no default, no `None`)
 - **Remove** `self._prompt_builder`, `self._window_mgr`, `self._compactor`, `self._session_mgr`, `self._has_compacted`
+
+The context reference is stable — ``ConversationContext`` is created once in
+``CLIApp`` and never replaced (``activate()`` swaps the conversation inside
+it).  So ``AgentLoop`` can capture ``self._ctx`` in ``__init__`` without
+needing a property or re-read on each turn.
 
 `run()` changes:
 - **Remove** `system_prompt`, `session_id` parameters
 - Replace inline message building (lines 171-181) with:
   ```python
-  if self._ctx is not None:
-      messages = self._ctx.prepare_turn(user_input, mode)
-  else:
-      messages = [Message.system(_DEFAULT_SYSTEM_PROMPT), Message.user(user_input)]
+  messages = self._ctx.prepare_turn(user_input, mode)
   ```
 - Replace `await self._check_context_window(messages, session_id)` with:
   ```python
-  if self._ctx is not None:
-      await self._ctx.check_and_compact()
+  await self._ctx.check_and_compact()
   ```
 
 Remove entirely:
@@ -742,16 +837,22 @@ Remove entirely:
 
 ### Step 7: `toddler/cli/app.py` — own the `ConversationContext`
 
-- Add `self._ctx: ConversationContext | None = None` attribute
-- In `run_repl()` / `run_one_shot()`: after session resolution, create `ConversationContext`, call `ctx.load()`
+- Add `self._ctx: ConversationContext | None = None` and `self._agent_impl: AgentLoop | None = None` attributes
+- In `run_repl()` / `run_one_shot()`: after session resolution, create a **single** ``ConversationContext``, then call ``ctx.activate(conv)`` to load the initial conversation
 - In `_run_agent_turn()`:
   - **Remove** manual `append_message` for user message (line 336-338) — `ctx.prepare_turn()` handles it
   - **Remove** manual `append_message` for assistant message (lines 499-502, 578-581) — `ctx.save()` handles all persistence
   - **Remove** `session_id` from `self._agent.run()` call
   - After turn completes: `await ctx.save()`
-- `/clear` handler: if optional `<title>` provided, `ctx.set_title(title)`, then `ctx.save()`, create new conversation, `ctx = ConversationContext(...)`, `ctx.load()`
-- `/resume <id>`: `ctx.save()`, load conversation, `ctx = ConversationContext(...)`, `ctx.load()`
-- Update `_agent` property to pass `context=self._ctx` instead of the four individual params
+- `/clear [title]` handler:
+  1. If optional `<title>` provided: `ctx.set_title(title)`
+  2. `ctx.save()` to persist final state of current conversation
+  3. `conv = await session_mgr.get_or_create_active_conversation(session.id)`
+  4. `await ctx.activate(conv)` — saves current, loads fresh
+- `/resume <id>`:
+  1. `old_conv = await session_mgr.get_conversation(id)`
+  2. `await ctx.activate(old_conv)` — saves current, loads old
+- `_agent` property: lazily creates `AgentLoop(context=self._ctx)` once. Since ``self._ctx`` is never replaced, no property-hack is needed.
 - Update `_handle_slash_command` to handle `__NEW_CONVERSATION__:<title>` and `__RESUME_CONVERSATION__:<id>` sentinels
 
 ### Step 8: `toddler/cli/commands.py` — new slash commands
@@ -778,12 +879,11 @@ Remove entirely:
 | Concern | How Handled |
 |---------|-------------|
 | Sessions w/o conversations | Migration creates default conversation + backfills FK |
-| `AgentLoop.run()` without context | `context=None` → legacy path: `[system, user_input]` |
-| `AgentLoop` constructor without context | All old params removed; pass `context=None` or omit |
+| `AgentLoop` without context | Not supported — pass a bare `ConversationContext(mgr, prompt_builder)` for tests |
 | `get_messages()` without `conversation_id` | Falls back to session-only filtering |
-| CLI without session manager | `self._ctx` stays `None`; `_agent` passes `context=None` |
+| CLI without session manager | `ConversationContext` is still created; `activate()` works with any session manager |
 | Old `is_compacted` rows in messages | Migration clears flag; new code ignores the column |
-| Tests calling `AgentLoop(...)` directly | Update to pass `context=None`; legacy message path works |
+| Tests calling `AgentLoop(...)` directly | Update to pass a `ConversationContext` instance |
 
 ---
 
