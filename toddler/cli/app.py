@@ -61,11 +61,10 @@ class CLIApp:
         self._renderer = Renderer()
         self._input = InputHandler()
 
-        # Slash-command dispatcher still uses sentinel strings until
-        # Step 5, where it switches to direct SessionCoordinator calls.
+        # Slash-command dispatcher makes direct calls on SessionCoordinator.
         self._cmd_dispatcher = SlashCommandDispatcher(
             state_machine=session.state_machine,
-            storage_manager=session.storage_manager,
+            session_coordinator=session,
         )
 
     # ==================================================================
@@ -355,54 +354,9 @@ class CLIApp:
         """
         result = await self._cmd_dispatcher.dispatch(text)
 
-        # --- Handle sentinel messages ---
-        if result.message == "__CLEAR__":
-            self._renderer.console.clear()
-            return True
+        # --- Display-only sentinels (commands that need CLI rendering) ---
         if result.message == "__HELP__":
             self._print_help()
-            return True
-        if result.message == "__SESSION_INFO__":
-            await self._show_session_info()
-            return True
-        if result.message == "__LIST_CONVERSATIONS__":
-            await self._show_conversations()
-            return True
-        if result.message and result.message.startswith(
-            "__SESSION_SWITCH__:"
-        ):
-            target_id = result.message.split(":", 1)[1]
-            try:
-                await self._coordinator.switch_session(target_id)
-                self._renderer.info(
-                    f"Switched to session "
-                    f"{self._coordinator.session.id[:12]}... "
-                    f"({self._coordinator.session.message_count} messages)"
-                )
-            except ValueError as exc:
-                self._renderer.error(str(exc))
-            return True
-        if result.message and result.message.startswith(
-            "__NEW_CONVERSATION__"
-        ):
-            title_part = result.message.split(":", 1)[1] if ":" in result.message else ""  # noqa: E501
-            await self._coordinator.new_conversation(title_part or None)
-            self._renderer.info(
-                "Started new conversation. "
-                "Your previous conversation was archived."
-            )
-            return True
-        if result.message and result.message.startswith(
-            "__RESUME_CONVERSATION__:"
-        ):
-            target_id = result.message.split(":", 1)[1]
-            try:
-                await self._coordinator.resume_conversation(target_id)
-                self._renderer.info(
-                    f"Resumed conversation."
-                )
-            except ValueError as exc:
-                self._renderer.error(str(exc))
             return True
 
         # --- Display message if not already rendered ---
@@ -410,87 +364,6 @@ class CLIApp:
             self._renderer.info(result.message)
 
         return result.continue_repl
-
-    # ==================================================================
-    # Session / conversation display helpers
-    # ==================================================================
-
-    async def _show_session_info(self) -> None:
-        """Display info about the current session."""
-        s = self._coordinator.session
-        if s is None:
-            self._renderer.warning("No active session (persistence disabled).")
-            return
-        self._renderer.console.print()
-        self._renderer.markdown(f"""\
-### Session Info
-
-| Field | Value |
-|-------|-------|
-| **ID** | `{s.id}` |
-| **Title** | {s.title or '—'} |
-| **Mode** | {s.mode} |
-| **Messages** | {s.message_count} |
-| **Input tokens** | {s.total_input_tokens} |
-| **Output tokens** | {s.total_output_tokens} |
-| **Created** | {s.created_at.strftime('%Y-%m-%d %H:%M UTC')} |
-""")
-
-    async def _show_conversations(self) -> None:
-        """List all conversations for the current session."""
-        session = self._coordinator.session
-        ctx = self._coordinator.context
-        mgr = self._coordinator.storage_manager
-        if session is None:
-            self._renderer.warning("Session persistence is disabled.")
-            return
-
-        convs = await mgr.list_conversations(session.id)
-        if not convs:
-            self._renderer.info("No conversations in this session.")
-            return
-
-        active_id = (
-            ctx.conversation.id
-            if ctx and ctx.conversation
-            else None
-        )
-
-        self._renderer.console.print()
-        lines = [
-            f"| {'':>1} | {'ID':<34} | {'Title':<40} | {'Msgs':>5} | {'Age':<10} |",  # noqa: E501
-            f"|{'-'*3}|{'-'*36}|{'-'*42}|{'-'*7}|{'-'*12}|",
-        ]
-        for c in convs:
-            marker = "*" if c.id == active_id else " "
-            sid = c.id[:32]
-            title = (c.display_title or "—")[:39]
-            lines.append(
-                f"| {marker:<1} | {sid:<34} | {title:<40} | {c.message_count:>5} | {c.age:<10} |"  # noqa: E501
-            )
-        self._renderer.markdown("\n".join(lines))
-        self._renderer.info("* = active conversation")
-
-    async def _show_session_list(self) -> None:
-        """List all saved sessions."""
-        mgr = self._coordinator.storage_manager
-        sessions = await mgr.list_all()
-        if not sessions:
-            self._renderer.info("No saved sessions.")
-            return
-
-        self._renderer.console.print()
-        lines = [
-            f"| {'ID':<34} | {'Title':<40} | {'Msgs':>5} | {'Age':<10} |",
-            f"|{'-'*36}|{'-'*42}|{'-'*7}|{'-'*12}|",
-        ]
-        for s in sessions:
-            sid = s.id[:32]
-            title = (s.display_title or "—")[:39]
-            lines.append(
-                f"| {sid:<34} | {title:<40} | {s.message_count:>5} | {s.age:<10} |"  # noqa: E501
-            )
-        self._renderer.markdown("\n".join(lines))
 
     # ==================================================================
     # Display helpers

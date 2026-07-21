@@ -9,7 +9,7 @@ Commands:
     ``/checkpoints``    — List checkpoints for the current session.
     ``/session info|list|switch <id>`` — Session management.
     ``/help``           — Show available commands.
-    ``/clear``          — Clear the screen.
+    ``/clear``          — Archive conversation and start fresh.
     ``/quit``, ``/exit``— Exit the REPL.
 """
 
@@ -18,13 +18,12 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from toddler.agent.state_machine import AgentStateMachine
     from toddler.checkpoint import CheckpointManagerProvider
-    from toddler.session.manager import StorageManager
-    from toddler.session.models import Session
+    from toddler.session.coordinator import SessionCoordinator
 
 __all__ = [
     "CommandResult",
@@ -61,19 +60,6 @@ class CommandResult:
 
 
 # ============================================================================
-# Callback protocols — allow the dispatcher to remain decoupled from the
-# concrete CLIApp while still triggering actions that require its internals.
-# ============================================================================
-
-
-class SessionInfoProvider(Protocol):
-    """Protocol for objects that can provide current-session context."""
-
-    @property
-    def current_session(self) -> Session | None: ...
-
-
-# ============================================================================
 # SlashCommandDispatcher
 # ============================================================================
 
@@ -86,13 +72,18 @@ class SlashCommandDispatcher:
     :class:`CommandResult` objects — the caller decides how to render
     messages and whether to exit the REPL.
 
+    Session and conversation commands make direct calls on the
+    :class:`~toddler.session.coordinator.SessionCoordinator` instead of
+    returning sentinel strings.
+
     Parameters
     ----------
     state_machine:
         Used by ``/plan`` to flag plan-pending.
-    storage_manager:
-        Used by ``/session`` subcommands.  When *None*, session commands
-        show a "persistence disabled" message.
+    session_coordinator:
+        Used by ``/session``, ``/clear``, ``/resume``, and
+        ``/conversations`` commands.  When *None*, those commands show a
+        "persistence disabled" message.
     checkpoint_manager_provider:
         An async callable that returns a :class:`CheckpointManager` for the
         current session.  Used by ``/rollback`` and ``/checkpoints``.  We
@@ -105,13 +96,13 @@ class SlashCommandDispatcher:
         self,
         *,
         state_machine: AgentStateMachine | None = None,
-        storage_manager: StorageManager | None = None,
+        session_coordinator: SessionCoordinator | None = None,
         checkpoint_manager_provider: (
             CheckpointManagerProvider | None
         ) = None,
     ) -> None:
         self._sm = state_machine
-        self._storage_mgr = storage_manager
+        self._coordinator = session_coordinator
         self._ckpt_provider = checkpoint_manager_provider
 
     # ------------------------------------------------------------------
@@ -179,18 +170,21 @@ class SlashCommandDispatcher:
         """``/clear [title]`` — archive current conversation and start fresh.
 
         If an optional title is provided, it is set on the current
-        conversation before archiving.  The CLI layer handles the actual
-        conversation lifecycle.
+        conversation before archiving.
         """
-        title = args.strip() or ""
-        sentinel = (
-            f"__NEW_CONVERSATION__:{title}" if title
-            else "__NEW_CONVERSATION__"
-        )
+        if self._coordinator is None:
+            return CommandResult(
+                continue_repl=True,
+                message="Session persistence is disabled.",
+            )
+        title = args.strip() or None
+        await self._coordinator.new_conversation(title)
         return CommandResult(
             continue_repl=True,
-            message=sentinel,
-            rendered=True,
+            message=(
+                "Started new conversation. "
+                "Your previous conversation was archived."
+            ),
         )
 
     async def _cmd_help(self, _args: str) -> CommandResult:
@@ -348,18 +342,62 @@ class SlashCommandDispatcher:
                 continue_repl=True,
                 message="Usage: /resume <conversation_id>",
             )
-        return CommandResult(
-            continue_repl=True,
-            message=f"__RESUME_CONVERSATION__:{conv_id}",
-            rendered=True,
-        )
+        if self._coordinator is None:
+            return CommandResult(
+                continue_repl=True,
+                message="Session persistence is disabled.",
+            )
+        try:
+            await self._coordinator.resume_conversation(conv_id)
+            return CommandResult(
+                continue_repl=True,
+                message="Resumed conversation.",
+            )
+        except ValueError as exc:
+            return CommandResult(
+                continue_repl=True,
+                message=str(exc),
+            )
 
     async def _cmd_conversations(self, _args: str) -> CommandResult:
         """``/conversations`` — list conversations in the current session."""
+        if self._coordinator is None or self._coordinator.session is None:
+            return CommandResult(
+                continue_repl=True,
+                message="Session persistence is disabled.",
+            )
+
+        mgr = self._coordinator.storage_manager
+        convs = await mgr.list_conversations(self._coordinator.session.id)
+        if not convs:
+            return CommandResult(
+                continue_repl=True,
+                message="No conversations in this session.",
+            )
+
+        active_id = (
+            self._coordinator.context.conversation.id
+            if self._coordinator.context
+            and self._coordinator.context.conversation
+            else None
+        )
+
+        lines: list[str] = [
+            f"{'':>1}  {'ID':<34}  {'Title':<40}  {'Msgs':>5}  {'Age':<10}",
+            f"{'─'*1}  {'─'*34}  {'─'*40}  {'─'*5}  {'─'*10}",
+        ]
+        for c in convs:
+            marker = "*" if c.id == active_id else " "
+            sid = c.id[:32]
+            title = (c.display_title or "—")[:39]
+            lines.append(
+                f"{marker:<1}  {sid:<34}  {title:<40}  {c.message_count:>5}  {c.age:<10}"  # noqa: E501
+            )
+        lines.append("* = active conversation")
+
         return CommandResult(
             continue_repl=True,
-            message="__LIST_CONVERSATIONS__",
-            rendered=True,
+            message="\n".join(lines),
         )
 
     async def _cmd_session(self, args: str) -> CommandResult:
@@ -388,23 +426,36 @@ class SlashCommandDispatcher:
 
     async def _session_info(self) -> CommandResult:
         """Return session info as a pre-formatted message."""
-        # The caller (CLIApp) has the actual session object.  We return a
-        # sentinel that says "render session info" and let CLIApp handle it.
+        s = self._coordinator.session if self._coordinator else None
+        if s is None:
+            return CommandResult(
+                continue_repl=True,
+                message="No active session (persistence disabled).",
+            )
+
+        lines = [
+            f"  {'ID':<16}  {s.id}",
+            f"  {'Title':<16}  {s.title or '—'}",
+            f"  {'Mode':<16}  {s.mode}",
+            f"  {'Messages':<16}  {s.message_count}",
+            f"  {'Input tokens':<16}  {s.total_input_tokens}",
+            f"  {'Output tokens':<16}  {s.total_output_tokens}",
+            f"  {'Created':<16}  {s.created_at.strftime('%Y-%m-%d %H:%M UTC')}",
+        ]
         return CommandResult(
             continue_repl=True,
-            message="__SESSION_INFO__",
-            rendered=True,
+            message="\n".join(lines),
         )
 
     async def _session_list(self) -> CommandResult:
         """Return session list as a pre-formatted message."""
-        if self._storage_mgr is None:
+        if self._coordinator is None:
             return CommandResult(
                 continue_repl=True,
                 message="Session persistence is disabled.",
             )
         try:
-            sessions = await self._storage_mgr.list_all()
+            sessions = await self._coordinator.storage_manager.list_all()
         except Exception as exc:
             logger.exception("Failed to list sessions.")
             return CommandResult(
@@ -436,33 +487,32 @@ class SlashCommandDispatcher:
 
     async def _session_switch(self, target_id: str) -> CommandResult:
         """Switch to a different session."""
-        if self._storage_mgr is None:
+        if self._coordinator is None:
             return CommandResult(
                 continue_repl=True,
                 message="Session persistence is disabled.",
             )
         try:
-            session = await self._storage_mgr.get(target_id)
+            await self._coordinator.switch_session(target_id)
+            s = self._coordinator.session
+            return CommandResult(
+                continue_repl=True,
+                message=(
+                    f"Switched to session {s.id[:12]}... "
+                    f"({s.message_count} messages)"
+                ),
+            )
+        except ValueError as exc:
+            return CommandResult(
+                continue_repl=True,
+                message=str(exc),
+            )
         except Exception as exc:
             logger.exception("Failed to switch session.")
             return CommandResult(
                 continue_repl=True,
                 message=f"Failed to switch session: {exc}",
             )
-
-        if session is None:
-            return CommandResult(
-                continue_repl=True,
-                message=f"Session '{target_id[:16]}...' not found.",
-            )
-
-        # We can't actually switch the session from here — that requires
-        # updating CLIApp._session.  Return a sentinel with the session ID.
-        return CommandResult(
-            continue_repl=True,
-            message=f"__SESSION_SWITCH__:{session.id}",
-            rendered=True,
-        )
 
 
 # ============================================================================
