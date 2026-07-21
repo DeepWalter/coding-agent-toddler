@@ -23,8 +23,8 @@ from typing import TYPE_CHECKING, Protocol
 if TYPE_CHECKING:
     from toddler.agent.state_machine import AgentStateMachine
     from toddler.checkpoint import CheckpointManagerProvider
-    from toddler.storage.manager import StorageManager
-    from toddler.storage.models import Session
+    from toddler.session.manager import StorageManager
+    from toddler.session.models import Session
 
 __all__ = [
     "CommandResult",

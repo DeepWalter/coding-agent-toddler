@@ -45,8 +45,8 @@ from toddler.context.system_prompt import SystemPromptBuilder
 from toddler.llm.base import BaseLLMProvider
 from toddler.llm.provider import OpenAICompatibleProvider
 from toddler.llm.types import Message, TokenUsage
-from toddler.storage.manager import StorageManager
-from toddler.storage.models import Session
+from toddler.session.manager import StorageManager
+from toddler.session.models import Session
 from toddler.tools import create_default_registry
 from toddler.tools.executor import ToolExecutor, always_approve
 
@@ -55,7 +55,7 @@ if TYPE_CHECKING:
     from toddler.context.memory import PersistentMemory
     from toddler.context.project_map import ProjectMapper
     from toddler.context.window import ContextWindowManager
-    from toddler.storage.store import SQLiteStore
+    from toddler.session.store import SQLiteStore
 
 logger = logging.getLogger(__name__)
 

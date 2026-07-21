@@ -1,6 +1,6 @@
-"""StorageManager — high-level storage lifecycle and message persistence.
+"""StorageManager — high-level session lifecycle and message persistence.
 
-Sits between the CLI / agent loop and :class:`~toddler.storage.store.SQLiteStore`.
+Sits between the CLI / agent loop and :class:`~toddler.session.store.SQLiteStore`.
 Handles ContentBlock serialization, token accumulation, and all
 business logic that shouldn't live in the raw data layer.
 """  # noqa: E501
@@ -15,14 +15,14 @@ from datetime import UTC, datetime
 from typing import Any
 
 from toddler.llm.types import ContentBlock, Message, TokenUsage
-from toddler.storage.models import (
+from toddler.session.models import (
     Conversation,
     ConversationSummary,
     Session,
     SessionSummary,
     StoredMessage,
 )
-from toddler.storage.store import SQLiteStore
+from toddler.session.store import SQLiteStore
 
 logger = logging.getLogger(__name__)
 

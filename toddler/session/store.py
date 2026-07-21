@@ -4,7 +4,7 @@ and conversations.
 Manages schema creation, migrations, and raw CRUD operations.  The store is
 intentionally "dumb" — it doesn't know about LLM types, content
 serialization, or business logic.  That layer lives in
-:class:`~toddler.storage.manager.StorageManager`.
+:class:`~toddler.session.manager.StorageManager`.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from toddler.storage.models import (
+from toddler.session.models import (
     Conversation,
     ConversationSummary,
     Session,

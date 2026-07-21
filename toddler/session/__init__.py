@@ -1,14 +1,14 @@
-"""Storage persistence — models, SQLite store, and high-level manager."""
+"""Session persistence — models, SQLite store, and high-level manager."""
 
-from toddler.storage.manager import StorageManager, print_sessions
-from toddler.storage.models import (
+from toddler.session.manager import StorageManager, print_sessions
+from toddler.session.models import (
     Conversation,
     ConversationSummary,
     Session,
     SessionSummary,
     StoredMessage,
 )
-from toddler.storage.store import SQLiteStore
+from toddler.session.store import SQLiteStore
 
 __all__ = [
     "Conversation",

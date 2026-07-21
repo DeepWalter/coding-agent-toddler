@@ -25,9 +25,9 @@ from toddler.context.memory import PersistentMemory
 from toddler.context.project_map import ProjectMapper
 from toddler.context.window import ContextWindowManager
 from toddler.llm.provider import OpenAICompatibleProvider
-from toddler.storage import print_sessions
-from toddler.storage.manager import StorageManager
-from toddler.storage.store import SQLiteStore
+from toddler.session import print_sessions
+from toddler.session.manager import StorageManager
+from toddler.session.store import SQLiteStore
 
 
 def build_argparser() -> argparse.ArgumentParser:

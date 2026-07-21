@@ -19,8 +19,8 @@ if TYPE_CHECKING:
     from toddler.context.compaction import ConversationCompactor
     from toddler.context.system_prompt import SystemPromptBuilder
     from toddler.context.window import ContextWindowManager
-    from toddler.storage.manager import StorageManager
-    from toddler.storage.models import Conversation
+    from toddler.session.manager import StorageManager
+    from toddler.session.models import Conversation
 
 logger = logging.getLogger(__name__)
 
