@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -56,16 +57,26 @@ class StorageManager:
         title: str | None = None,
         mode: str = "execute",
         metadata: dict[str, Any] | None = None,
+        cwd: str | None = None,
     ) -> Session:
         """Create a new session and persist it.
 
         All parameters are optional — sensible defaults are provided.
+
+        Parameters
+        ----------
+        cwd:
+            Working directory for this session.  Stored in
+            ``metadata["cwd"]`` and used as a fallback title.
+            Defaults to :func:`os.getcwd`.
         """
+        cwd = cwd or os.getcwd()
+        merged_metadata = {"cwd": cwd, **(metadata or {})}
         session = Session(
             id=uuid.uuid4().hex,
-            title=title,
+            title=title or os.path.basename(cwd),
             mode=mode,
-            metadata=metadata or {},
+            metadata=merged_metadata,
         )
         self._store.create_session(session)
         logger.info(f"Created session {session.id} (mode={mode}).")
@@ -80,19 +91,39 @@ class StorageManager:
         session_id: str | None = None,
         *,
         mode: str = "execute",
+        cwd: str | None = None,
     ) -> Session:
         """Return the session identified by *session_id*, or create a new one.
 
         When *session_id* is *None* a fresh session is always created.
+
+        Parameters
+        ----------
+        cwd:
+            Working directory (forwarded to :meth:`create` when a new
+            session is needed — ignored when resuming).
         """
         if session_id:
             session = self._store.get_session(session_id)
             if session:
+                self._warn_cwd_mismatch(session, cwd)
                 return session
             logger.warning(
                 f"Session {session_id} not found — creating new session."
             )
-        return await self.create(mode=mode)
+        return await self.create(mode=mode, cwd=cwd)
+
+    @staticmethod
+    def _warn_cwd_mismatch(session: Session, cwd: str | None) -> None:
+        """Log a warning if *session* was created in a different directory."""
+        stored_cwd = session.metadata.get("cwd") if session.metadata else None
+        current_cwd = cwd or os.getcwd()
+        if stored_cwd and stored_cwd != current_cwd:
+            logger.warning(
+                f"Session {session.id[:12]} was created in "
+                f"{stored_cwd}, but current directory is "
+                f"{current_cwd}. Tool calls may fail if paths differ."
+            )
 
     async def list_all(self) -> list[SessionSummary]:
         """Return all sessions, most-recently-updated first."""

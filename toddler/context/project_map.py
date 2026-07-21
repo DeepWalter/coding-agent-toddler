@@ -301,6 +301,9 @@ class ProjectMapper:
 
         sections: list[str] = []
 
+        # 0. Project root — so tools know the absolute path.
+        sections.append(f"## Project Root: {self._root}")
+
         # 1. Directory tree.
         tree = self._render_tree(dir_children, pruned_dirs)
         sections.append("## Project Structure\n\n```\n" + tree + "\n```")
@@ -327,7 +330,9 @@ class ProjectMapper:
         """
         _, py_files, config_files, _ = self._collect_all()
 
-        sections: list[str] = []
+        sections: list[str] = [
+            f"## Project Root: {self._root}",
+        ]
 
         if config_files:
             lines = ["## Project Configuration"]
