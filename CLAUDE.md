@@ -1,6 +1,26 @@
 # Toddler
 
-Custom Python CLI coding agent. See `docs/plan.md` for architecture and roadmap.
+A personal Python CLI coding agent. Invoked via `tod` — run interactively in a
+REPL or as a one-shot `tod "<task>"`. Uses an OpenAI-compatible LLM provider,
+Rich-based terminal UI, and prompt-toolkit for input.
+
+## Architecture
+
+```
+toddler/
+  main.py             CLI entry point, arg parsing, component wiring
+  agent/              Agent loop, state machine, event handling, stop conditions
+  cli/                Terminal app, commands, display, input handler, renderer
+  config/             Settings (env + CLI overrides), defaults
+  context/            Context window, compaction, conversation context,
+                      persistent memory, project map, system prompt
+  llm/                LLM provider abstraction (OpenAI-compatible), types,
+                      token counting
+  storage/            SQLite-backed session persistence, store, models
+  tools/              Tool registry, base protocol, executor, filesystem, git,
+                      search, shell subprocess
+  checkpoint/         Snapshot/checkpoint management
+```
 
 ## Development Environment
 
