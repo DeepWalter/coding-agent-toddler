@@ -7,11 +7,9 @@ A thin display+input layer that delegates all business logic to
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator
 
 from toddler.agent.events import (
     AgentError,
-    AgentEvent,
     AgentFinished,
     AgentPaused,
     PlanProposed,
@@ -146,7 +144,7 @@ class CLIApp:
     # Agent turn
     # ==================================================================
 
-    async def _run_agent_turn(
+    async def _run_agent_turn(  # noqa: C901
         self,
         user_input: str,
         *,
@@ -155,155 +153,116 @@ class CLIApp:
         """Run one complete agent turn — user input through to finish.
 
         Delegates turn execution to SessionCoordinator and handles
-        display (streaming or non-streaming).
+        display.  In streaming mode a :class:`StreamDisplay` wraps
+        output in Rich Live panels; otherwise the :class:`Renderer`
+        prints directly.
         """
         stream = self._settings.streaming_enabled
-        if stream:
-            await self._run_streaming_turn(user_input, force_plan=force_plan)
-        else:
-            gen = self._coordinator.process_turn(
-                user_input, force_plan=force_plan,
-            )
-            await self._process_events(gen)
-
-    # ==================================================================
-    # Streaming turn
-    # ==================================================================
-
-    async def _run_streaming_turn(  # noqa: C901
-        self,
-        user_input: str,
-        *,
-        force_plan: bool = False,
-    ) -> None:
-        """Run an agent turn with real-time Rich Live display."""
-        display = StreamDisplay(
-            self._renderer.console,
-            refresh_per_second=10,
+        display = (
+            StreamDisplay(self._renderer.console, refresh_per_second=10)
+            if stream
+            else None
         )
 
         gen = self._coordinator.process_turn(
             user_input, force_plan=force_plan,
         )
 
-        display.start()
+        if display:
+            display.start()
+
         try:
             async for event in gen:
                 match event:
                     case TextDelta(text=text):
-                        display.append_text(text)
+                        if display:
+                            display.append_text(text)
+                        else:
+                            self._renderer.markdown(text)
 
                     case ToolCallStart():
-                        display.tool_started(
-                            event.tool_id,
-                            event.tool_name,
-                            summary=_format_tool_summary(
+                        if display:
+                            display.tool_started(
+                                event.tool_id,
                                 event.tool_name,
-                                event.partial_input or {},
-                            ),
-                        )
+                                summary=_format_tool_summary(
+                                    event.tool_name,
+                                    event.partial_input or {},
+                                ),
+                            )
+                        else:
+                            self._renderer.tool_call_start(event)
 
                     case ToolCallDelta():
-                        display.tool_started(
-                            event.tool_id,
-                            "",
-                            summary=_format_tool_summary(
-                                "", event.input_delta,
-                            ),
-                        )
+                        if display:
+                            display.tool_started(
+                                event.tool_id,
+                                "",
+                                summary=_format_tool_summary(
+                                    "", event.input_delta,
+                                ),
+                            )
 
                     case ToolCallEnd():
-                        result_info = event.result
-                        success = result_info.success if result_info else False
-                        summary = (
-                            _truncate_result(result_info)
-                            if result_info else ""
-                        )
-                        display.tool_completed(
-                            event.tool_id,
-                            success=success,
-                            summary=summary,
-                        )
+                        if display:
+                            result_info = event.result
+                            success = (
+                                result_info.success
+                                if result_info else False
+                            )
+                            summary = (
+                                _truncate_result(result_info)
+                                if result_info else ""
+                            )
+                            display.tool_completed(
+                                event.tool_id,
+                                success=success,
+                                summary=summary,
+                            )
+                        else:
+                            self._renderer.tool_call_end(event)
 
                     case AgentPaused():
-                        display.stop()
+                        if display:
+                            display.stop()
                         self._renderer.agent_paused(event)
                         approved = await self._confirm(event)
                         if approved:
                             await self._coordinator.agent.approve_tool_call()
                         else:
                             await self._coordinator.agent.deny_tool_call()
-                        display.start()
+                        if display:
+                            display.start()
 
                     case AgentFinished():
-                        display.stop()
+                        if display:
+                            display.stop()
                         self._renderer.agent_finished(event)
 
                     case AgentError():
-                        display.stop()
+                        if display:
+                            display.stop()
                         self._renderer.agent_error(event)
                         if not event.recoverable:
                             return
-                        display.start()
+                        if display:
+                            display.start()
 
                     case PlanProposed():
-                        display.stop()
+                        if display:
+                            display.stop()
                         self._renderer.info(
                             f"Plan proposed: {event.plan.title}"
                         )
                         self._renderer.markdown(event.plan.summary)
-                        display.start()
+                        if display:
+                            display.start()
 
                     case _:
                         pass
-        except Exception:
-            display.stop()
-            raise
-
-    # ==================================================================
-    # Event processing (non-streaming path)
-    # ==================================================================
-
-    async def _process_events(  # noqa: C901
-        self, events: AsyncIterator[AgentEvent],
-    ) -> None:
-        """Iterate through agent events and render / react to each one."""
-        async for event in events:
-            match event:
-                case TextDelta():
-                    self._renderer.text_delta(event)
-
-                case ToolCallStart():
-                    self._renderer.tool_call_start(event)
-
-                case ToolCallEnd():
-                    self._renderer.tool_call_end(event)
-
-                case AgentPaused():
-                    self._renderer.agent_paused(event)
-                    approved = await self._confirm(event)
-                    if approved:
-                        await self._coordinator.agent.approve_tool_call()
-                    else:
-                        await self._coordinator.agent.deny_tool_call()
-
-                case AgentFinished():
-                    self._renderer.agent_finished(event)
-                    break
-
-                case AgentError():
-                    self._renderer.agent_error(event)
-                    if not event.recoverable:
-                        return
-
-                case PlanProposed():
-                    self._renderer.info(
-                        f"Plan proposed: {event.plan.title}"
-                    )
-                    self._renderer.markdown(event.plan.summary)
-
-                case _:
-                    logger.debug(f"Unhandled event: {type(event).__name__}")
+        finally:
+            if display:
+                display.stop()
 
     # ==================================================================
     # Confirmation prompt
