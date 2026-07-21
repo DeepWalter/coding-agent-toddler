@@ -176,7 +176,6 @@ def main() -> None:
         settings,
         storage_mgr,
         llm,
-        store=store,
         repo_root=Path.cwd(),
     )
 

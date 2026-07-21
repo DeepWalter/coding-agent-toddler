@@ -9,8 +9,6 @@ Public API
 - :class:`CheckpointManager` — create, rollback, list, prune
 - :class:`GitSnapshotter` — git-based snapshot strategy (preferred)
 - :class:`FileSnapshotter` — file-copy snapshot fallback
-- :class:`CheckpointManagerProvider` — factory type for lazy
-  session-scoped :class:`CheckpointManager` creation
 - :func:`create_checkpoint_callback` — factory that builds a
   :class:`~toddler.tools.executor.CheckpointCallback` for
   :class:`~toddler.tools.executor.ToolExecutor`
@@ -19,7 +17,6 @@ Public API
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from toddler.checkpoint.manager import CheckpointManager
@@ -38,7 +35,6 @@ __all__ = [
     "AgentStateSnapshot",
     "Checkpoint",
     "CheckpointManager",
-    "CheckpointManagerProvider",
     "FileManifestEntry",
     "FileSnapshotter",
     "GitSnapshotter",
@@ -48,43 +44,26 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# CheckpointManager provider type
-# ---------------------------------------------------------------------------
-
-CheckpointManagerProvider = Callable[
-    [],
-    CheckpointManager | None,
-]
-"""Factory that returns a :class:`CheckpointManager` for the current
-session, or ``None`` when there is no active session.
-
-Used by :class:`~toddler.cli.commands.SlashCommandDispatcher` to lazily create
-a checkpoint manager on demand (since the session ID is only known at runtime).
-"""
-
 
 # ---------------------------------------------------------------------------
 # Checkpoint callback factory
 # ---------------------------------------------------------------------------
 
 def create_checkpoint_callback(
-    ckpt_provider: CheckpointManagerProvider | None = None,
+    ckpt_manager: CheckpointManager | None = None,
 ) -> CheckpointCallback:
     """Build a callback for
     :class:`~toddler.tools.executor.ToolExecutor`\\'s *checkpoint_cb*
     parameter.
 
     The returned callback creates a pre-mutation checkpoint via the
-    session-scoped :class:`CheckpointManager` obtained from *ckpt_provider*
-    before every mutating tool invocation.
+    :class:`CheckpointManager` before every mutating tool invocation.
 
     Parameters
     ----------
-    ckpt_provider:
-        Optional async factory that returns a session-scoped
-        :class:`CheckpointManager`.  When *None* or when the factory
-        returns *None*, the callback is a no-op (returns *None*).
+    ckpt_manager:
+        The session-scoped :class:`CheckpointManager`.  When *None*,
+        the callback is a no-op (returns *None*).
 
     Returns
     -------
@@ -93,15 +72,8 @@ def create_checkpoint_callback(
         ``Callable[[BaseTool, dict], Awaitable[str | None]]``.
     """
     async def _cb(tool: object, params: dict) -> str | None:  # noqa: C901
-        if ckpt_provider is None:
+        if ckpt_manager is None:
             return None
-        try:
-            ckpt_mgr = ckpt_provider()
-        except Exception:
-            logger.debug("Checkpoint provider failed — skipping checkpoint.")
-            return None
-        if ckpt_mgr is None:
-            return None  # no active session
 
         try:
             tool_name = getattr(tool, "name", "unknown")
@@ -110,7 +82,7 @@ def create_checkpoint_callback(
                 summarize(**params) if callable(summarize)
                 else str(params)[:80]
             )
-            checkpoint = await ckpt_mgr.create(
+            checkpoint = await ckpt_manager.create(
                 description=f"Before {tool_name}: {summary}",
                 tool_name=tool_name,
                 agent_state=AgentStateSnapshot(

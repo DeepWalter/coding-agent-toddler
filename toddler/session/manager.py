@@ -328,14 +328,62 @@ class StorageManager:
         return result
 
     # ==================================================================
-    # Checkpoint delegates  (Phase 9 will build on these)
+    # Checkpoint delegates
     # ==================================================================
+
+    async def create_checkpoint(
+        self,
+        checkpoint_id: str,
+        session_id: str,
+        sequence_num: int,
+        created_at: datetime,
+        description: str,
+        tool_name: str,
+        git_ref: str | None = None,
+        file_manifest_json: str | None = None,
+        agent_state_json: str | None = None,
+        message_index: int = 0,
+    ) -> None:
+        """Create a checkpoint row in the database."""
+        self._store.create_checkpoint(
+            checkpoint_id=checkpoint_id,
+            session_id=session_id,
+            sequence_num=sequence_num,
+            created_at=created_at,
+            description=description,
+            tool_name=tool_name,
+            git_ref=git_ref,
+            file_manifest_json=file_manifest_json,
+            agent_state_json=agent_state_json,
+            message_index=message_index,
+        )
+
+    async def get_checkpoint(
+        self, checkpoint_id: str,
+    ) -> dict[str, Any] | None:
+        """Return a checkpoint row as a dict, or *None*."""
+        return self._store.get_checkpoint(checkpoint_id)
 
     async def list_checkpoints(
         self, session_id: str,
     ) -> list[dict[str, Any]]:
         """Return all checkpoints for *session_id*, newest first."""
         return self._store.list_checkpoints(session_id)
+
+    async def delete_checkpoint(self, checkpoint_id: str) -> bool:
+        """Delete a single checkpoint.  Returns ``True`` if one was deleted."""
+        return self._store.delete_checkpoint(checkpoint_id)
+
+    async def prune_checkpoints(
+        self, session_id: str, *, keep_latest: int,
+    ) -> int:
+        """Remove old checkpoints, keeping the most recent *keep_latest*.
+
+        Returns the count of deleted checkpoints.
+        """
+        return self._store.prune_checkpoints(
+            session_id, keep_latest=keep_latest,
+        )
 
 
 # ---------------------------------------------------------------------------

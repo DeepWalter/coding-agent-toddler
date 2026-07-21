@@ -15,26 +15,23 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from toddler.agent.events import (
-    AgentError,
     AgentEvent,
     AgentFinished,
-    AgentPaused,
-    PlanProposed,
     TextDelta,
     ToolCallEnd,
-    ToolCallStart,
 )
 from toddler.agent.loop import AgentLoop
-from toddler.agent.state_machine import AgentMode, AgentStateMachine
+from toddler.agent.state_machine import AgentStateMachine
 from toddler.checkpoint import create_checkpoint_callback
 from toddler.checkpoint.manager import CheckpointManager
+from toddler.checkpoint.models import Checkpoint, RollbackResult
 from toddler.config.settings import Settings
 from toddler.context.conversation_context import ConversationContext
 from toddler.context.system_prompt import SystemPromptBuilder
 from toddler.llm.base import BaseLLMProvider
 from toddler.llm.types import ContentBlock, Message, TokenUsage
 from toddler.session.manager import StorageManager
-from toddler.session.models import Conversation, Session
+from toddler.session.models import Session
 from toddler.tools import create_default_registry
 from toddler.tools.executor import ToolExecutor, always_approve
 
@@ -43,7 +40,6 @@ if TYPE_CHECKING:
     from toddler.context.memory import PersistentMemory
     from toddler.context.project_map import ProjectMapper
     from toddler.context.window import ContextWindowManager
-    from toddler.session.store import SQLiteStore
 
 logger = logging.getLogger(__name__)
 
@@ -83,8 +79,6 @@ class SessionCoordinator:
         Manager for persistent sessions.
     llm:
         LLM provider shared with the agent loop and auto-titling.
-    store:
-        SQLite store (already opened) used to persist checkpoints.
     repo_root:
         Absolute path to the working directory.
     project_mapper:
@@ -110,7 +104,6 @@ class SessionCoordinator:
         storage_manager: StorageManager,
         llm: BaseLLMProvider,
         *,
-        store: SQLiteStore | None = None,
         repo_root: Path | None = None,
         project_mapper: ProjectMapper | None = None,
         persistent_memory: PersistentMemory | None = None,
@@ -121,33 +114,41 @@ class SessionCoordinator:
         self._settings = settings
         self._storage_mgr = storage_manager
         self._llm = llm
-        self._store = store
         self._repo_root = repo_root or Path.cwd()
 
-        # --- Build tool system ---
+        # Build checkpointing (session-scoped, set_session called later)
+        self._ckpt_mgr = CheckpointManager(
+            storage_mgr=storage_manager,
+            repo_root=self._repo_root,
+        )
+
+        # Build tool system
         self._registry = create_default_registry()
         self._executor = ToolExecutor(
             self._registry,
             self._settings,
             confirm_cb=always_approve,
+            checkpoint_cb=create_checkpoint_callback(
+                ckpt_manager=self._ckpt_mgr,
+            ),
         )
 
-        # --- Context management components ---
+        # Context management components
         self._project_mapper = project_mapper
         self._persistent_memory = persistent_memory
         self._context_window_mgr = context_window_mgr
         self._conversation_compactor = conversation_compactor
 
-        # --- Pre-build SystemPromptBuilder ---
+        # Pre-build SystemPromptBuilder
         self._prompt_builder = SystemPromptBuilder(
             project_mapper=project_mapper,
             persistent_memory=persistent_memory,
         )
 
-        # --- State machine ---
+        # State machine
         self._sm = state_machine or AgentStateMachine()
 
-        # --- Current session + context (set via resolve()) ---
+        # Current session + context (set via resolve())
         self._session: Session | None = None
         self._ctx: ConversationContext | None = None
         self._agent_impl: AgentLoop | None = None
@@ -181,18 +182,19 @@ class SessionCoordinator:
         )
         await self._ctx.activate(conv)
 
-        self._wire_checkpointing()
+        if self._ckpt_mgr is not None:
+            self._ckpt_mgr.set_session(self._session.id)
         logger.info(f"Session resolved: {self._session.id[:12]}...")
         return self._session
 
     @property
     def session(self) -> Session | None:
-        """The current session, or *None* if :meth:`resolve` hasn't been called."""
+        """The current session, or *None* if :meth:`resolve` hasn't been called."""  # noqa: E501
         return self._session
 
     @property
     def context(self) -> ConversationContext | None:
-        """The current conversation context, or *None* before :meth:`resolve`."""
+        """The current conversation context, or *None* before :meth:`resolve`."""  # noqa: E501
         return self._ctx
 
     @property
@@ -347,7 +349,8 @@ class SessionCoordinator:
             self._session.id,
         )
         await self._ctx.activate(conv)
-        self._wire_checkpointing()
+        if self._ckpt_mgr is not None:
+            self._ckpt_mgr.set_session(self._session.id)
 
     # ==================================================================
     # Persistence
@@ -439,44 +442,36 @@ class SessionCoordinator:
             )
 
     # ==================================================================
-    # Checkpoint wiring (deferred until session resolution)
+    # Checkpoint delegation
     # ==================================================================
 
-    def _wire_checkpointing(self) -> None:
-        """Create the session-scoped :class:`CheckpointManager` and wire it
-        into the :class:`ToolExecutor`.
-
-        Must be called after ``self._session`` has been set.
-        """
-        if self._session is None or self._store is None:
-            return
-
-        ckpt_mgr = CheckpointManager(
-            store=self._store,
-            session_id=self._session.id,
-            repo_root=self._repo_root,
-            storage_manager=self._storage_mgr,
-        )
-
-        def _provider() -> CheckpointManager | None:
-            return ckpt_mgr
-
-        self._executor.set_checkpoint_cb(
-            create_checkpoint_callback(ckpt_provider=_provider),
-        )
-        # Stash the provider for CLI's SlashCommandDispatcher.
-        self._ckpt_provider = _provider
-
     @property
-    def checkpoint_manager_provider(self):
-        """Return the checkpoint manager provider, or *None* if not wired."""
-        return getattr(self, "_ckpt_provider", None)
+    def checkpoint_manager(self) -> CheckpointManager | None:
+        """The checkpoint manager, or *None* if checkpoints are disabled."""
+        return self._ckpt_mgr
+
+    async def rollback_to(self, checkpoint_id: str) -> RollbackResult:
+        """Rollback to a checkpoint — delegates to :class:`CheckpointManager`.
+
+        Raises :class:`ValueError` if checkpoints are disabled.
+        """
+        if self._ckpt_mgr is None:
+            raise ValueError("Checkpoints are not available.")
+        return await self._ckpt_mgr.rollback_to(checkpoint_id)
+
+    async def list_checkpoints(self) -> list[Checkpoint]:
+        """List checkpoints for the current session.
+
+        Raises :class:`ValueError` if checkpoints are disabled.
+        """
+        if self._ckpt_mgr is None:
+            raise ValueError("Checkpoints are not available.")
+        return await self._ckpt_mgr.list_for_session()
 
 
 # ---------------------------------------------------------------------------
 # Text block merging
 # ---------------------------------------------------------------------------
-
 
 def _merge_text_blocks(
     blocks: list[ContentBlock],

@@ -3,7 +3,7 @@
 Coordinates between :class:`~toddler.checkpoint.snapshot.GitSnapshotter`
 (preferred) and :class:`~toddler.checkpoint.snapshot.FileSnapshotter`
 (fallback) for filesystem snapshots, and the
-:class:`~toddler.session.store.SQLiteStore` for persistence.
+:class:`~toddler.session.manager.StorageManager` for persistence.
 
 Rollback restores **both** the filesystem **and** the conversation — messages
 after the checkpoint are truncated.
@@ -29,7 +29,6 @@ from toddler.config.defaults import CHECKPOINT_KEEP_LATEST
 
 if TYPE_CHECKING:
     from toddler.session.manager import StorageManager
-    from toddler.session.store import SQLiteStore
 logger = logging.getLogger(__name__)
 
 
@@ -43,33 +42,35 @@ class CheckpointManager:
 
     Parameters
     ----------
-    store:
-        The SQLite store (already opened) used to persist checkpoints.
-    session_id:
-        The session that all checkpoint operations are scoped to.
+    storage_mgr:
+        The storage manager used to persist checkpoints and manage
+        conversation messages during rollback.
     repo_root:
         Absolute path to the working directory (used for git operations).
-    storage_manager:
-        Optional storage manager reference — needed for
-        :meth:`rollback_to` to truncate conversation messages.  When
-        *None*, rollback will only restore files.
+
+    The session must be set via :meth:`set_session` before any checkpoint
+    operations are invoked.
     """
 
     def __init__(
         self,
-        store: SQLiteStore,
-        session_id: str,
+        storage_mgr: StorageManager,
         repo_root: str | Path,
-        *,
-        storage_manager: StorageManager | None = None,
     ) -> None:
-        self._store = store
-        self._session_id = session_id
+        self._storage_mgr = storage_mgr
+        self._session_id: str | None = None
         self._repo_root = Path(repo_root).resolve()
 
         self._git = GitSnapshotter(self._repo_root)
         self._file = FileSnapshotter()
-        self._storage_mgr = storage_manager
+
+    def set_session(self, session_id: str) -> None:
+        """Set the session that all checkpoint operations are scoped to.
+
+        Must be called before :meth:`create`, :meth:`rollback_to`,
+        :meth:`list_for_session`, :meth:`prune`, or :meth:`delete`.
+        """
+        self._session_id = session_id
 
     # ==================================================================
     # Public API
@@ -127,7 +128,7 @@ class CheckpointManager:
 
         # --- persist checkpoint ---
         created_at = datetime.now(UTC)
-        self._store.create_checkpoint(
+        self._storage_mgr.create_checkpoint(
             checkpoint_id=checkpoint_id,
             session_id=self._session_id,
             sequence_num=seq_num,
@@ -172,7 +173,7 @@ class CheckpointManager:
         ValueError
             If *checkpoint_id* is not found.
         """  # noqa: E501
-        row = self._store.get_checkpoint(checkpoint_id)
+        row = self._storage_mgr.get_checkpoint(checkpoint_id)
         if row is None:
             raise ValueError(
                 f"Checkpoint '{checkpoint_id}' not found."
@@ -265,12 +266,12 @@ class CheckpointManager:
 
     async def list_for_session(self) -> list[Checkpoint]:
         """Return all checkpoints for the current session, newest first."""
-        rows = self._store.list_checkpoints(self._session_id)
+        rows = self._storage_mgr.list_checkpoints(self._session_id)
         return [_row_to_checkpoint(r) for r in rows]
 
     async def get(self, checkpoint_id: str) -> Checkpoint | None:
         """Return a single checkpoint by id, or *None*."""
-        row = self._store.get_checkpoint(checkpoint_id)
+        row = self._storage_mgr.get_checkpoint(checkpoint_id)
         if row is None:
             return None
         return _row_to_checkpoint(row)
@@ -285,10 +286,10 @@ class CheckpointManager:
         Returns the count of deleted checkpoints.
         """
         # Collect which checkpoints will be deleted (for cleanup).
-        all_rows = self._store.list_checkpoints(self._session_id)
+        all_rows = self._storage_mgr.list_checkpoints(self._session_id)
         to_delete = all_rows[keep_latest:]
 
-        deleted = self._store.prune_checkpoints(
+        deleted = self._storage_mgr.prune_checkpoints(
             self._session_id, keep_latest=keep_latest,
         )
 
@@ -309,13 +310,13 @@ class CheckpointManager:
 
     async def delete(self, checkpoint_id: str) -> bool:
         """Delete a single checkpoint and its file-snapshot directory."""
-        row = self._store.get_checkpoint(checkpoint_id)
+        row = self._storage_mgr.get_checkpoint(checkpoint_id)
         if row is not None:
             ck = _row_to_checkpoint(row)
             if ck.file_manifest:
                 await self._file.cleanup(ck.session_id, ck.id)
 
-        return self._store.delete_checkpoint(checkpoint_id)
+        return self._storage_mgr.delete_checkpoint(checkpoint_id)
 
     # ==================================================================
     # Internal helpers
@@ -323,7 +324,7 @@ class CheckpointManager:
 
     def _next_sequence_num(self) -> int:
         """Return the next sequence number for this session."""
-        existing = self._store.list_checkpoints(self._session_id)
+        existing = self._storage_mgr.list_checkpoints(self._session_id)
         if not existing:
             return 1
         return max(r.get("sequence_num", 0) for r in existing) + 1

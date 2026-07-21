@@ -85,11 +85,6 @@ class CLIApp:
             f"Session: {self._coordinator.session.id[:12]}..."
         )
 
-        # Wire checkpoint provider to the slash-command dispatcher.
-        self._cmd_dispatcher.set_checkpoint_manager_provider(
-            self._coordinator.checkpoint_manager_provider,
-        )
-
         self._print_banner()
         self._renderer.info(
             f"Model: {self._settings.model} │ "
@@ -141,9 +136,6 @@ class CLIApp:
         interaction can be resumed later via ``--session``.
         """
         await self._coordinator.resolve(session_id)
-        self._cmd_dispatcher.set_checkpoint_manager_provider(
-            self._coordinator.checkpoint_manager_provider,
-        )
 
         await self._run_agent_turn(query, force_plan=force_plan)
 

@@ -22,7 +22,6 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from toddler.agent.state_machine import AgentStateMachine
-    from toddler.checkpoint import CheckpointManagerProvider
     from toddler.session.coordinator import SessionCoordinator
 
 __all__ = [
@@ -81,15 +80,9 @@ class SlashCommandDispatcher:
     state_machine:
         Used by ``/plan`` to flag plan-pending.
     session_coordinator:
-        Used by ``/session``, ``/clear``, ``/resume``, and
-        ``/conversations`` commands.  When *None*, those commands show a
-        "persistence disabled" message.
-    checkpoint_manager_provider:
-        An async callable that returns a :class:`CheckpointManager` for the
-        current session.  Used by ``/rollback`` and ``/checkpoints``.  We
-        use a factory rather than a direct reference because the checkpoint
-        manager is session-scoped (needs a ``session_id``).  When *None*,
-        checkpoint commands show a "not implemented" message.
+        Used by ``/session``, ``/clear``, ``/resume``,
+        ``/conversations``, ``/rollback``, and ``/checkpoints`` commands.
+        When *None*, those commands show a "persistence disabled" message.
     """
 
     def __init__(
@@ -97,29 +90,13 @@ class SlashCommandDispatcher:
         *,
         state_machine: AgentStateMachine | None = None,
         session_coordinator: SessionCoordinator | None = None,
-        checkpoint_manager_provider: (
-            CheckpointManagerProvider | None
-        ) = None,
     ) -> None:
         self._sm = state_machine
         self._coordinator = session_coordinator
-        self._ckpt_provider = checkpoint_manager_provider
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-
-    def set_checkpoint_manager_provider(
-        self,
-        provider: CheckpointManagerProvider | None,
-    ) -> None:
-        """Set (or clear) the checkpoint manager provider.
-
-        Useful when the checkpoint manager cannot be created until after
-        a session has been resolved (i.e. after
-        :class:`SlashCommandDispatcher` construction).
-        """
-        self._ckpt_provider = provider
 
     async def dispatch(self, text: str) -> CommandResult:
         """Parse and execute a single slash-command string.
@@ -213,12 +190,6 @@ class SlashCommandDispatcher:
 
     async def _cmd_rollback(self, args: str) -> CommandResult:
         """``/rollback <checkpoint_id>`` — rollback to a checkpoint."""
-        if self._ckpt_provider is None:
-            return CommandResult(
-                continue_repl=True,
-                message="Checkpoints are not available (no checkpoint manager configured).",  # noqa: E501
-            )
-
         checkpoint_id = args.strip()
         if not checkpoint_id:
             return CommandResult(
@@ -226,22 +197,14 @@ class SlashCommandDispatcher:
                 message="Usage: /rollback <checkpoint_id>",
             )
 
-        try:
-            ckpt_mgr = self._ckpt_provider()
-        except Exception as exc:
+        if self._coordinator is None:
             return CommandResult(
                 continue_repl=True,
-                message=f"Failed to create checkpoint manager: {exc}",
-            )
-
-        if ckpt_mgr is None:
-            return CommandResult(
-                continue_repl=True,
-                message="No active session — cannot rollback.",
+                message="Checkpoints are not available (no session manager configured).",  # noqa: E501
             )
 
         try:
-            result = await ckpt_mgr.rollback_to(checkpoint_id)
+            result = await self._coordinator.rollback_to(checkpoint_id)
         except ValueError as exc:
             return CommandResult(
                 continue_repl=True,
@@ -281,28 +244,19 @@ class SlashCommandDispatcher:
 
     async def _cmd_checkpoints(self, _args: str) -> CommandResult:
         """``/checkpoints`` — list checkpoints for the current session."""
-        if self._ckpt_provider is None:
+        if self._coordinator is None:
             return CommandResult(
                 continue_repl=True,
-                message="Checkpoints are not available (no checkpoint manager configured).",  # noqa: E501
+                message="Checkpoints are not available (no session manager configured).",  # noqa: E501
             )
 
         try:
-            ckpt_mgr = self._ckpt_provider()
-        except Exception as exc:
+            checkpoints = await self._coordinator.list_checkpoints()
+        except ValueError as exc:
             return CommandResult(
                 continue_repl=True,
-                message=f"Failed to create checkpoint manager: {exc}",
+                message=str(exc),
             )
-
-        if ckpt_mgr is None:
-            return CommandResult(
-                continue_repl=True,
-                message="No active session — no checkpoints to list.",
-            )
-
-        try:
-            checkpoints = await ckpt_mgr.list_for_session()
         except Exception as exc:
             logger.exception("Failed to list checkpoints.")
             return CommandResult(
@@ -440,7 +394,7 @@ class SlashCommandDispatcher:
             f"  {'Messages':<16}  {s.message_count}",
             f"  {'Input tokens':<16}  {s.total_input_tokens}",
             f"  {'Output tokens':<16}  {s.total_output_tokens}",
-            f"  {'Created':<16}  {s.created_at.strftime('%Y-%m-%d %H:%M UTC')}",
+            f"  {'Created':<16}  {s.created_at.strftime('%Y-%m-%d %H:%M UTC')}",  # noqa: E501
         ]
         return CommandResult(
             continue_repl=True,

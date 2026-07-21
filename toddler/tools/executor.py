@@ -87,8 +87,7 @@ class ToolExecutor:
         Async callback invoked when user confirmation is needed.  If
         ``None`` and confirmation would be required, the tool is **denied**.
     checkpoint_cb : CheckpointCallback | None
-        Pre-execution hook for creating checkpoints.  Stubbed in Phase 3;
-        wired to ``CheckpointManager`` in Phase 9.
+        Pre-execution hook for creating checkpoints before mutating tools.
     """
 
     def __init__(
@@ -107,17 +106,6 @@ class ToolExecutor:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-
-    def set_checkpoint_cb(
-        self, cb: CheckpointCallback | None,
-    ) -> None:
-        """Set (or clear) the pre-execution checkpoint callback.
-
-        Useful when the checkpoint manager cannot be created until after
-        a session has been resolved (i.e. after :class:`ToolExecutor`
-        construction).
-        """
-        self._checkpoint_cb = cb
 
     async def execute(self, call: ToolCall) -> ToolResult:
         """Resolve, gate, and run a single tool call.
