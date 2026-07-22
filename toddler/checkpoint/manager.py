@@ -266,12 +266,12 @@ class CheckpointManager:
 
     async def list_for_session(self) -> list[Checkpoint]:
         """Return all checkpoints for the current session, newest first."""
-        rows = self._storage_mgr.list_checkpoints(self._session_id)
+        rows = await self._storage_mgr.list_checkpoints(self._session_id)
         return [_row_to_checkpoint(r) for r in rows]
 
     async def get(self, checkpoint_id: str) -> Checkpoint | None:
         """Return a single checkpoint by id, or *None*."""
-        row = self._storage_mgr.get_checkpoint(checkpoint_id)
+        row = await self._storage_mgr.get_checkpoint(checkpoint_id)
         if row is None:
             return None
         return _row_to_checkpoint(row)
