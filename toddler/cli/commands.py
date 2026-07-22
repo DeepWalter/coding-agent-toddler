@@ -4,13 +4,16 @@ Phase 10: Structured slash-command handling extracted from the inline
 ``_handle_slash_command`` method in :class:`~toddler.cli.app.CLIApp`.
 
 Commands:
-    ``/plan``           — Flag the next message for plan mode.
-    ``/rollback <id>``  — Rollback files + conversation to a checkpoint.
-    ``/checkpoints``    — List checkpoints for the current session.
+    ``/plan``                    — Flag the next message for plan mode.
+    ``/clear [title]``           — Archive conversation and start fresh.
+    ``/resume <conversation_id>``— Resume an archived conversation.
+    ``/conversations``           — List conversations in the current session.
+    ``/rollback <checkpoint_id>``— Rollback files + conversation to a
+        checkpoint.
+    ``/checkpoints``             — List checkpoints for the current session.
     ``/session info|list|switch <id>`` — Session management.
-    ``/help``           — Show available commands.
-    ``/clear``          — Archive conversation and start fresh.
-    ``/quit``, ``/exit``— Exit the REPL.
+    ``/help``                    — Show available commands.
+    ``/quit``, ``/exit``, ``/q`` — Exit the REPL.
 """
 
 from __future__ import annotations

@@ -93,9 +93,7 @@ class CLIApp:
 
         while True:
             try:
-                user_input = await self._input.prompt(
-                    bottom_toolbar=self._repl_toolbar(),
-                )
+                user_input = await self._input.prompt()
             except KeyboardInterrupt:
                 self._renderer.info("Interrupted.  Type /quit to exit.")
                 continue
@@ -261,14 +259,3 @@ class CLIApp:
             self._renderer.info(result.message)
 
         return result.continue_repl
-
-    # ==================================================================
-    # Display helpers
-    # ==================================================================
-
-    def _repl_toolbar(self) -> str:
-        """Build the bottom toolbar string."""
-        return (
-            " Alt+Enter: newline │ Ctrl+D: exit │ "
-            "/plan /clear /resume /conversations /session /help /quit "
-        )

@@ -1,4 +1,4 @@
-"""prompt_toolkit input handler — REPL history, multi-line input, autocomplete."""
+"""prompt_toolkit input handler — REPL history, multi-line input, autocomplete."""  # noqa: E501
 
 from __future__ import annotations
 
@@ -18,13 +18,16 @@ from prompt_toolkit.styles import Style
 
 _SLASH_COMMANDS: dict[str, str] = {
     "/plan": "Enter plan mode — agent researches and proposes a plan",
+    "/clear": "Archive conversation and start fresh — /clear [title]",
+    "/resume": "Resume an archived conversation — /resume <conversation_id>",
+    "/conversations": "List conversations in the current session",
     "/rollback": "Rollback to a checkpoint — /rollback <checkpoint_id>",
     "/checkpoints": "List saved checkpoints for the current session",
     "/session": "Session management — /session info|list|switch <id>",
     "/help": "Show available slash commands",
     "/quit": "Exit the REPL",
     "/exit": "Exit the REPL",
-    "/clear": "Clear the screen",
+    "/q": "Exit the REPL",
 }
 
 
@@ -161,7 +164,8 @@ class InputHandler:
             completer=SlashCommandCompleter(),
             key_bindings=_create_key_bindings(),
             style=_PROMPT_STYLE,
-            multiline=False,  # Enter submits; Alt+Enter / Esc+Enter inserts newline
+            # Enter submits; Alt+Enter / Esc+Enter inserts newline
+            multiline=False,
             message=self._format_prompt(message),
             bottom_toolbar=bottom_toolbar or self._default_toolbar(),
         )
@@ -182,7 +186,7 @@ class InputHandler:
     def _default_toolbar() -> str:
         return (
             " Alt+Enter: newline │ Ctrl+D: exit │ "
-            "/plan /help /session /quit "
+            "/plan /clear /resume /rollback /session /help /quit "
         )
 
     @staticmethod
