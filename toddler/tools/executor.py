@@ -32,9 +32,9 @@ level.  Must return ``True`` to allow execution, ``False`` to deny.
 
 CheckpointCallback = Callable[
     [BaseTool, dict[str, Any]],
-    Awaitable[str | None],
+    str | None,
 ]
-"""Signature for an async pre-execution checkpoint hook.
+"""Signature for a pre-execution checkpoint hook.
 
 Receives the tool and kwargs.  Returns a checkpoint id string, or ``None``
 if checkpointing was skipped / unavailable.
@@ -140,7 +140,7 @@ class ToolExecutor:
         # --- pre-execution checkpoint (stub) ---
         checkpoint_id: str | None = None
         if self._is_mutating(perm) and self._checkpoint_cb is not None:
-            checkpoint_id = await self._checkpoint_cb(tool, params)
+            checkpoint_id = self._checkpoint_cb(tool, params)
 
         # --- execute ---
         try:

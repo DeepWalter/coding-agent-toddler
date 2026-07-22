@@ -76,7 +76,7 @@ class CheckpointManager:
     # Public API
     # ==================================================================
 
-    async def create(
+    def create(
         self,
         *,
         description: str,
@@ -111,7 +111,7 @@ class CheckpointManager:
         manifest: list[FileManifestEntry] | None = None
 
         if self._git.available:
-            git_ref = await self._git.create()
+            git_ref = self._git.create()
             if git_ref is None:
                 logger.warning(
                     "Git snapshot create returned empty — "
@@ -122,7 +122,7 @@ class CheckpointManager:
             files = list(self._repo_root.rglob("*"))
             files = [f for f in files if f.is_file() and not _is_ignored(f)]
             if files:
-                manifest = await self._file.create(
+                manifest = self._file.create(
                     self._session_id, checkpoint_id, files,
                 )
 
@@ -161,7 +161,7 @@ class CheckpointManager:
         )
         return checkpoint
 
-    async def rollback_to(self, checkpoint_id: str) -> RollbackResult:
+    def rollback_to(self, checkpoint_id: str) -> RollbackResult:
         """Restore filesystem state and truncate conversation to *checkpoint_id*.
 
         Returns a :class:`RollbackResult` with details of what was restored.
@@ -186,7 +186,7 @@ class CheckpointManager:
         # --- restore filesystem ---
         if checkpoint.git_ref:
             try:
-                restored_files = await self._git.restore(checkpoint.git_ref)
+                restored_files = self._git.restore(checkpoint.git_ref)
             except Exception as exc:
                 warnings.append(
                     f"Git restore failed ({exc}) — trying file-copy fallback."
@@ -194,7 +194,7 @@ class CheckpointManager:
                 logger.exception("Git restore failed.")
                 # Fall through to file-copy restore if manifest exists.
                 if checkpoint.file_manifest:
-                    restored_files = await self._file.restore(
+                    restored_files = self._file.restore(
                         checkpoint.session_id,
                         checkpoint.id,
                         checkpoint.file_manifest,
@@ -205,7 +205,7 @@ class CheckpointManager:
                         warnings=warnings,
                     )
         elif checkpoint.file_manifest:
-            restored_files = await self._file.restore(
+            restored_files = self._file.restore(
                 checkpoint.session_id,
                 checkpoint.id,
                 checkpoint.file_manifest,
@@ -220,11 +220,11 @@ class CheckpointManager:
         restored_msg_index = checkpoint.message_index
         if self._storage_mgr is not None:
             try:
-                messages = await self._storage_mgr.get_messages(
+                # Delete messages after the checkpoint.
+                self._storage_mgr.truncate_messages(
                     self._session_id,
+                    after_sequence=checkpoint.message_index,
                 )
-                # Keep only messages up to and including message_index.
-                truncated = messages[: checkpoint.message_index + 1]
 
                 # Insert a rollback marker so the user/LLM can see what
                 # happened.
@@ -243,12 +243,14 @@ class CheckpointManager:
                         )
                     ]
                 )
-                truncated.append(marker)
-
-                await self._storage_mgr.replace_messages(
-                    self._session_id, truncated,
+                self._storage_mgr.append_message(
+                    self._session_id,
+                    marker,
+                    conversation_id="",
                 )
-                restored_msg_index = len(truncated) - 1
+                restored_msg_index = (
+                    checkpoint.message_index + 1
+                )
             except Exception as exc:
                 warnings.append(
                     f"Failed to truncate conversation messages: {exc}"
@@ -264,19 +266,19 @@ class CheckpointManager:
             warnings=warnings,
         )
 
-    async def list_for_session(self) -> list[Checkpoint]:
+    def list_for_session(self) -> list[Checkpoint]:
         """Return all checkpoints for the current session, newest first."""
-        rows = await self._storage_mgr.list_checkpoints(self._session_id)
+        rows = self._storage_mgr.list_checkpoints(self._session_id)
         return [_row_to_checkpoint(r) for r in rows]
 
-    async def get(self, checkpoint_id: str) -> Checkpoint | None:
+    def get(self, checkpoint_id: str) -> Checkpoint | None:
         """Return a single checkpoint by id, or *None*."""
-        row = await self._storage_mgr.get_checkpoint(checkpoint_id)
+        row = self._storage_mgr.get_checkpoint(checkpoint_id)
         if row is None:
             return None
         return _row_to_checkpoint(row)
 
-    async def prune(
+    def prune(
         self, *, keep_latest: int = CHECKPOINT_KEEP_LATEST,
     ) -> int:
         """Delete old checkpoints, keeping the most recent *keep_latest*.
@@ -297,7 +299,7 @@ class CheckpointManager:
         for row in to_delete:
             ck = _row_to_checkpoint(row)
             if ck.file_manifest and not ck.git_ref:
-                await self._file.cleanup(
+                self._file.cleanup(
                     ck.session_id, ck.id,
                 )
 
@@ -308,13 +310,13 @@ class CheckpointManager:
             )
         return deleted
 
-    async def delete(self, checkpoint_id: str) -> bool:
+    def delete(self, checkpoint_id: str) -> bool:
         """Delete a single checkpoint and its file-snapshot directory."""
         row = self._storage_mgr.get_checkpoint(checkpoint_id)
         if row is not None:
             ck = _row_to_checkpoint(row)
             if ck.file_manifest:
-                await self._file.cleanup(ck.session_id, ck.id)
+                self._file.cleanup(ck.session_id, ck.id)
 
         return self._storage_mgr.delete_checkpoint(checkpoint_id)
 

@@ -68,10 +68,9 @@ def create_checkpoint_callback(
     Returns
     -------
     CheckpointCallback
-        An async callable matching
-        ``Callable[[BaseTool, dict], Awaitable[str | None]]``.
+        A callable matching ``Callable[[BaseTool, dict], str | None]``.
     """
-    async def _cb(tool: object, params: dict) -> str | None:  # noqa: C901
+    def _cb(tool: object, params: dict) -> str | None:  # noqa: C901
         if ckpt_manager is None:
             return None
 
@@ -82,7 +81,7 @@ def create_checkpoint_callback(
                 summarize(**params) if callable(summarize)
                 else str(params)[:80]
             )
-            checkpoint = await ckpt_manager.create(
+            checkpoint = ckpt_manager.create(
                 description=f"Before {tool_name}: {summary}",
                 tool_name=tool_name,
                 agent_state=AgentStateSnapshot(

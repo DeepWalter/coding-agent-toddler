@@ -173,7 +173,7 @@ class SessionCoordinator:
             When set, resume the session with this ID.  When *None*,
             a fresh session is created.
         """
-        self._session = await self._storage_mgr.get_or_create(session_id)
+        self._session = self._storage_mgr.get_or_create(session_id)
 
         self._ctx = ConversationContext(
             self._storage_mgr,
@@ -181,7 +181,7 @@ class SessionCoordinator:
             window_mgr=self._context_window_mgr,
             compactor=self._conversation_compactor,
         )
-        conv = await self._storage_mgr.get_or_create_active_conversation(
+        conv = self._storage_mgr.get_or_create_active_conversation(
             self._session.id,
         )
         await self._ctx.activate(conv)
@@ -246,7 +246,7 @@ class SessionCoordinator:
             and self._ctx.conversation.message_count == 0
         ):
             try:
-                await self._ckpt_mgr.create(
+                self._ckpt_mgr.create(
                     description="Conversation start",
                     tool_name="conversation_start",
                     agent_state=AgentStateSnapshot(
@@ -301,7 +301,7 @@ class SessionCoordinator:
                 self._ctx.append(assistant_msg)
 
             if usage is not None and self._storage_mgr is not None:
-                await self._storage_mgr.accumulate_tokens(
+                self._storage_mgr.accumulate_tokens(
                     self._session.id, usage,
                 )
 
@@ -335,15 +335,15 @@ class SessionCoordinator:
             # Current conversation is empty — just rename it in-place
             # instead of archiving and creating a new one.
             if title:
-                await self._storage_mgr.update_conversation(conv)
+                self._storage_mgr.update_conversation(conv)
             return
 
         if conv is not None:
-            await self._storage_mgr.archive_conversation(conv.id)
+            self._storage_mgr.archive_conversation(conv.id)
 
         # Always create a fresh conversation — never reuse a stale "active"
         # conversation that may have been left behind by a bug or crash.
-        conv = await self._storage_mgr.create_conversation(
+        conv = self._storage_mgr.create_conversation(
             self._session.id,
         )
         await self._ctx.activate(conv)
@@ -361,11 +361,11 @@ class SessionCoordinator:
 
         # Archive the current conversation so only one is active at a time.
         if self._ctx.conversation is not None:
-            await self._storage_mgr.archive_conversation(
+            self._storage_mgr.archive_conversation(
                 self._ctx.conversation.id,
             )
 
-        conv = await self._storage_mgr.get_conversation(conversation_id)
+        conv = self._storage_mgr.get_conversation(conversation_id)
         if conv is None:
             raise ValueError(
                 f"Conversation '{conversation_id[:16]}...' not found."
@@ -380,7 +380,7 @@ class SessionCoordinator:
 
         Raises :class:`ValueError` if the session is not found.
         """
-        session = await self._storage_mgr.get(session_id)
+        session = self._storage_mgr.get(session_id)
         if session is None:
             raise ValueError(
                 f"Session '{session_id[:16]}...' not found."
@@ -394,7 +394,7 @@ class SessionCoordinator:
             window_mgr=self._context_window_mgr,
             compactor=self._conversation_compactor,
         )
-        conv = await self._storage_mgr.get_or_create_active_conversation(
+        conv = self._storage_mgr.get_or_create_active_conversation(
             self._session.id,
         )
         await self._ctx.activate(conv)
@@ -418,9 +418,9 @@ class SessionCoordinator:
         if self._session is None:
             return
 
-        session = await self._storage_mgr.get(self._session.id)
+        session = self._storage_mgr.get(self._session.id)
         if session is not None and session.message_count == 0:
-            await self._storage_mgr.delete(self._session.id)
+            self._storage_mgr.delete(self._session.id)
 
     # ==================================================================
     # Accessors
@@ -477,13 +477,13 @@ class SessionCoordinator:
             if len(title) > 100:
                 title = title[:97] + "..."
 
-            session = await self._storage_mgr.get(session_id)
+            session = self._storage_mgr.get(session_id)
             if session is None:
                 return
 
             session.title = title if title else None
             session.updated_at = datetime.now(UTC)
-            await self._storage_mgr.update(session)
+            self._storage_mgr.update(session)
             logger.info(f"Auto-titled session {session_id}: {title}")
         except Exception:
             logger.exception(
@@ -499,23 +499,23 @@ class SessionCoordinator:
         """The checkpoint manager, or *None* if checkpoints are disabled."""
         return self._ckpt_mgr
 
-    async def rollback_to(self, checkpoint_id: str) -> RollbackResult:
+    def rollback_to(self, checkpoint_id: str) -> RollbackResult:
         """Rollback to a checkpoint — delegates to :class:`CheckpointManager`.
 
         Raises :class:`ValueError` if checkpoints are disabled.
         """
         if self._ckpt_mgr is None:
             raise ValueError("Checkpoints are not available.")
-        return await self._ckpt_mgr.rollback_to(checkpoint_id)
+        return self._ckpt_mgr.rollback_to(checkpoint_id)
 
-    async def list_checkpoints(self) -> list[Checkpoint]:
+    def list_checkpoints(self) -> list[Checkpoint]:
         """List checkpoints for the current session.
 
         Raises :class:`ValueError` if checkpoints are disabled.
         """
         if self._ckpt_mgr is None:
             raise ValueError("Checkpoints are not available.")
-        return await self._ckpt_mgr.list_for_session()
+        return self._ckpt_mgr.list_for_session()
 
 
 # ---------------------------------------------------------------------------

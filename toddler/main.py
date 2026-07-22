@@ -45,7 +45,7 @@ def main() -> None:
 
     # --- Session listing (no LLM needed — do it early) ---
     if args.list_sessions:
-        asyncio.run(print_sessions(storage_mgr))
+        print_sessions(storage_mgr)
         return
 
     # --- Shared LLM provider ---

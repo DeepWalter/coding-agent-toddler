@@ -70,7 +70,7 @@ class GitSnapshotter:
             self._available = self._probe()
         return self._available
 
-    async def create(self) -> str | None:
+    def create(self) -> str | None:
         """Create a full snapshot of the working tree and staging area.
 
         Returns a commit hash whose tree is the complete worktree state
@@ -179,7 +179,7 @@ class GitSnapshotter:
             logger.exception("Failed to build stash commit.")
             return None
 
-    async def restore(self, ref: str) -> list[str]:
+    def restore(self, ref: str) -> list[str]:
         """Restore the working tree **and** staging area to the state
         captured in *ref*.
 
@@ -216,12 +216,12 @@ class GitSnapshotter:
             logger.debug("Could not create pre-restore safety snapshot.")
 
         before = _list_tracked_files(self._root)
-        await self._restore_paths(ref, ["."])
+        self._restore_paths(ref, ["."])
         after = _list_tracked_files(self._root)
 
         return sorted(set(before) | set(after))
 
-    async def restore_to(self, ref: str, paths: list[str]) -> list[str]:
+    def restore_to(self, ref: str, paths: list[str]) -> list[str]:
         """Restore specific *paths* from *ref* into the working tree
         **and** staging area.
 
@@ -232,14 +232,14 @@ class GitSnapshotter:
         """
         if not paths:
             return []
-        await self._restore_paths(ref, list(paths))
+        self._restore_paths(ref, list(paths))
         return list(paths)
 
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
 
-    async def _restore_paths(self, ref: str, paths: list[str]) -> None:
+    def _restore_paths(self, ref: str, paths: list[str]) -> None:
         """Restore *paths* from snapshot *ref* — the shared restore engine.
 
         Four-phase pipeline used by both :meth:`restore` (paths=``["."]``)
@@ -381,7 +381,7 @@ class FileSnapshotter:
     # Public API
     # ------------------------------------------------------------------
 
-    async def create(
+    def create(
         self,
         session_id: str,
         checkpoint_id: str,
@@ -439,7 +439,7 @@ class FileSnapshotter:
         )
         return manifest
 
-    async def restore(
+    def restore(
         self,
         session_id: str,
         checkpoint_id: str,
@@ -482,7 +482,7 @@ class FileSnapshotter:
         logger.debug(f"File snapshot restored: {len(restored)} files.")
         return restored
 
-    async def cleanup(
+    def cleanup(
         self, session_id: str, checkpoint_id: str,
     ) -> bool:
         """Delete the checkpoint directory and its contents.

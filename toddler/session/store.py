@@ -352,6 +352,27 @@ class SQLiteStore:
             conn.close()
         return int(row[0]) if row else 0
 
+    def truncate_messages(
+        self, session_id: str, *, after_sequence: int,
+    ) -> int:
+        """Delete all messages for *session_id* with ``sequence_num >
+        *after_sequence*``.
+
+        Returns the count of deleted messages.
+        """
+        conn = self._connect()
+        try:
+            cursor = conn.execute(
+                "DELETE FROM messages "
+                "WHERE session_id = ? AND sequence_num > ?",
+                (session_id, after_sequence),
+            )
+            deleted = cursor.rowcount
+            conn.commit()
+        finally:
+            conn.close()
+        return deleted
+
     # ==================================================================
     # Conversation CRUD
     # ==================================================================

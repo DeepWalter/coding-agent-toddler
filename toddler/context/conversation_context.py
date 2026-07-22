@@ -89,7 +89,7 @@ class ConversationContext:
         """Create a new active conversation and activate it."""
         if self._mgr is None:
             return
-        conv = await self._mgr.get_or_create_active_conversation(session_id)
+        conv = self._mgr.get_or_create_active_conversation(session_id)
         await self.activate(conv)
 
     async def _load(self) -> None:
@@ -99,7 +99,7 @@ class ConversationContext:
             return
 
         after_seq = self._conv.compacted_at_seq or -1
-        recent = await self._mgr.get_messages(
+        recent = self._mgr.get_messages(
             session_id=self._conv.session_id,
             conversation_id=self._conv.id,
             after_sequence=after_seq,
@@ -147,7 +147,7 @@ class ConversationContext:
 
         new_msgs = self._messages[self._persisted_count:]
         for msg in new_msgs:
-            await self._mgr.append_message(
+            self._mgr.append_message(
                 self._conv.session_id,
                 msg,
                 conversation_id=self._conv.id,
@@ -160,7 +160,7 @@ class ConversationContext:
         self._conv.message_count += len(new_msgs)
 
         # Persist conversation metadata (title, counters, compaction pointer).
-        await self._mgr.update_conversation(self._conv)
+        self._mgr.update_conversation(self._conv)
 
     # ------------------------------------------------------------------
     # Turn preparation (replaces AgentLoop's inline message building)
@@ -181,7 +181,7 @@ class ConversationContext:
             # Collect prior conversation titles for context.
             prior_titles: list[str] | None = None
             if self._mgr is not None and self._conv is not None:
-                summaries = await self._mgr.get_conversation_summaries(
+                summaries = self._mgr.get_conversation_summaries(
                     self._conv.session_id,
                     exclude_id=self._conv.id,
                 )

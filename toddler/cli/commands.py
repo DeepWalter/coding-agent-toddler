@@ -207,7 +207,7 @@ class SlashCommandDispatcher:
             )
 
         try:
-            result = await self._coordinator.rollback_to(checkpoint_id)
+            result = self._coordinator.rollback_to(checkpoint_id)
         except ValueError as exc:
             return CommandResult(
                 continue_repl=True,
@@ -254,7 +254,7 @@ class SlashCommandDispatcher:
             )
 
         try:
-            checkpoints = await self._coordinator.list_checkpoints()
+            checkpoints = self._coordinator.list_checkpoints()
         except ValueError as exc:
             return CommandResult(
                 continue_repl=True,
@@ -325,7 +325,7 @@ class SlashCommandDispatcher:
             )
 
         mgr = self._coordinator.storage_manager
-        convs = await mgr.list_conversations(self._coordinator.session.id)
+        convs = mgr.list_conversations(self._coordinator.session.id)
         if not convs:
             return CommandResult(
                 continue_repl=True,
@@ -413,7 +413,7 @@ class SlashCommandDispatcher:
                 message="Session persistence is disabled.",
             )
         try:
-            sessions = await self._coordinator.storage_manager.list_all()
+            sessions = self._coordinator.storage_manager.list_all()
         except Exception as exc:
             logger.exception("Failed to list sessions.")
             return CommandResult(

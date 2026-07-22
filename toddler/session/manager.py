@@ -51,7 +51,7 @@ class StorageManager:
     # Session lifecycle
     # ==================================================================
 
-    async def create(
+    def create(
         self,
         *,
         title: str | None = None,
@@ -82,11 +82,11 @@ class StorageManager:
         logger.info(f"Created session {session.id} (mode={mode}).")
         return session
 
-    async def get(self, session_id: str) -> Session | None:
+    def get(self, session_id: str) -> Session | None:
         """Return the session with *session_id*, or *None*."""
         return self._store.get_session(session_id)
 
-    async def get_or_create(
+    def get_or_create(
         self,
         session_id: str | None = None,
         *,
@@ -111,7 +111,7 @@ class StorageManager:
             logger.warning(
                 f"Session {session_id} not found — creating new session."
             )
-        return await self.create(mode=mode, cwd=cwd)
+        return self.create(mode=mode, cwd=cwd)
 
     @staticmethod
     def _warn_cwd_mismatch(session: Session, cwd: str | None) -> None:
@@ -125,18 +125,18 @@ class StorageManager:
                 f"{current_cwd}. Tool calls may fail if paths differ."
             )
 
-    async def list_all(self) -> list[SessionSummary]:
+    def list_all(self) -> list[SessionSummary]:
         """Return all sessions, most-recently-updated first."""
         return self._store.list_sessions()
 
-    async def delete(self, session_id: str) -> bool:
+    def delete(self, session_id: str) -> bool:
         """Delete *session_id* and all its messages / checkpoints.
 
         Returns ``True`` if the session existed.
         """
         return self._store.delete_session(session_id)
 
-    async def update(self, session: Session) -> None:
+    def update(self, session: Session) -> None:
         """Persist changes to *session* (title, mode, metadata, etc.)."""
         session.updated_at = datetime.now(UTC)
         self._store.update_session(session)
@@ -145,7 +145,7 @@ class StorageManager:
     # Token tracking
     # ==================================================================
 
-    async def accumulate_tokens(
+    def accumulate_tokens(
         self, session_id: str, usage: TokenUsage,
     ) -> None:
         """Add *usage* counts to the session's running totals."""
@@ -165,7 +165,7 @@ class StorageManager:
     # Message persistence
     # ==================================================================
 
-    async def append_message(
+    def append_message(
         self,
         session_id: str,
         message: Message,
@@ -219,7 +219,7 @@ class StorageManager:
 
         return stored.sequence_num
 
-    async def get_messages(
+    def get_messages(
         self,
         session_id: str,
         *,
@@ -239,11 +239,22 @@ class StorageManager:
         )
         return [_stored_to_message(s) for s in stored_list]
 
+    def truncate_messages(
+        self, session_id: str, *, after_sequence: int,
+    ) -> int:
+        """Delete messages after *after_sequence* for *session_id*.
+
+        Returns the count of deleted messages.
+        """
+        return self._store.truncate_messages(
+            session_id, after_sequence=after_sequence,
+        )
+
     # ==================================================================
     # Conversation lifecycle
     # ==================================================================
 
-    async def create_conversation(
+    def create_conversation(
         self,
         session_id: str,
         *,
@@ -269,7 +280,7 @@ class StorageManager:
         )
         return conv
 
-    async def get_or_create_active_conversation(
+    def get_or_create_active_conversation(
         self, session_id: str,
     ) -> Conversation:
         """Return the active conversation for *session_id*.
@@ -282,33 +293,33 @@ class StorageManager:
         logger.info(
             f"No active conversation for session {session_id} — creating."
         )
-        return await self.create_conversation(session_id)
+        return self.create_conversation(session_id)
 
-    async def list_conversations(
+    def list_conversations(
         self, session_id: str,
     ) -> list[ConversationSummary]:
         """Return all conversations for *session_id*, newest first."""
         return self._store.list_conversations(session_id)
 
-    async def get_conversation(
+    def get_conversation(
         self, conversation_id: str,
     ) -> Conversation | None:
         """Return the conversation with *conversation_id*, or *None*."""
         return self._store.get_conversation(conversation_id)
 
-    async def update_conversation(self, conv: Conversation) -> None:
+    def update_conversation(self, conv: Conversation) -> None:
         """Persist changes to *conv* (title, compaction pointers, etc.)."""
         conv.updated_at = datetime.now(UTC)
         self._store.update_conversation(conv)
 
-    async def archive_conversation(
+    def archive_conversation(
         self, conversation_id: str,
     ) -> None:
         """Archive *conversation_id* so it's no longer active."""
         self._store.archive_conversation(conversation_id)
         logger.info(f"Archived conversation {conversation_id}.")
 
-    async def get_conversation_summaries(
+    def get_conversation_summaries(
         self, session_id: str, *, exclude_id: str | None = None,
     ) -> list[tuple[int, str]]:
         """Return ``(sequence_num, title)`` tuples for all non-empty
@@ -316,7 +327,7 @@ class StorageManager:
 
         Used for cross-conversation context injection into the system prompt.
         """
-        convs = await self.list_conversations(session_id)
+        convs = self.list_conversations(session_id)
         result: list[tuple[int, str]] = []
         for c in convs:
             if exclude_id is not None and c.id == exclude_id:
@@ -331,7 +342,7 @@ class StorageManager:
     # Checkpoint delegates
     # ==================================================================
 
-    async def create_checkpoint(
+    def create_checkpoint(
         self,
         checkpoint_id: str,
         session_id: str,
@@ -358,23 +369,23 @@ class StorageManager:
             message_index=message_index,
         )
 
-    async def get_checkpoint(
+    def get_checkpoint(
         self, checkpoint_id: str,
     ) -> dict[str, Any] | None:
         """Return a checkpoint row as a dict, or *None*."""
         return self._store.get_checkpoint(checkpoint_id)
 
-    async def list_checkpoints(
+    def list_checkpoints(
         self, session_id: str,
     ) -> list[dict[str, Any]]:
         """Return all checkpoints for *session_id*, newest first."""
         return self._store.list_checkpoints(session_id)
 
-    async def delete_checkpoint(self, checkpoint_id: str) -> bool:
+    def delete_checkpoint(self, checkpoint_id: str) -> bool:
         """Delete a single checkpoint.  Returns ``True`` if one was deleted."""
         return self._store.delete_checkpoint(checkpoint_id)
 
-    async def prune_checkpoints(
+    def prune_checkpoints(
         self, session_id: str, *, keep_latest: int,
     ) -> int:
         """Remove old checkpoints, keeping the most recent *keep_latest*.
@@ -391,9 +402,9 @@ class StorageManager:
 # ---------------------------------------------------------------------------
 
 
-async def print_sessions(mgr: StorageManager) -> None:
+def print_sessions(mgr: StorageManager) -> None:
     """Print a formatted table of all saved sessions to stdout."""
-    sessions = await mgr.list_all()
+    sessions = mgr.list_all()
     if not sessions:
         print("No saved sessions.")
         return
