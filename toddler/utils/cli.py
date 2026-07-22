@@ -70,6 +70,13 @@ def build_argparser() -> argparse.ArgumentParser:
         help="Override the maximum number of agent loop iterations.",
     )
     p.add_argument(
+        "--max-output-lines",
+        type=int,
+        metavar="N",
+        default=None,
+        help="Max lines of streaming output before truncating (0 to disable).",
+    )
+    p.add_argument(
         "--verbose", "-v",
         action="store_true",
         help="Enable debug logging.",

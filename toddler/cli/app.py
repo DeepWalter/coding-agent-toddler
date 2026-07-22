@@ -7,6 +7,9 @@ A thin display+input layer that delegates all business logic to
 from __future__ import annotations
 
 import logging
+from pathlib import Path
+
+from rich.markdown import Markdown
 
 from toddler.agent.events import (
     AgentError,
@@ -57,13 +60,19 @@ class CLIApp:
         self._coordinator = session
         self._renderer = create_renderer(
             streaming=self._settings.streaming_enabled,
+            max_output_lines=self._settings.max_output_lines,
         )
         self._input = InputHandler()
+        self._turn_counter = 0
+        self._output_base = (
+            settings.session_dir / "outputs"
+        )
 
         # Slash-command dispatcher makes direct calls on SessionCoordinator.
         self._cmd_dispatcher = SlashCommandDispatcher(
             state_machine=session.state_machine,
             session_coordinator=session,
+            output_base=self._output_base,
         )
 
     # ==================================================================
@@ -155,7 +164,28 @@ class CLIApp:
         agent event to :class:`Renderer`, which handles streaming vs.
         non-streaming output internally.
         """
-        self._renderer.start()
+        self._turn_counter += 1
+        turn_number = self._turn_counter
+
+        # Compute output path scoped by session + conversation
+        output_path: Path | None = None
+        session = self._coordinator.session
+        ctx = self._coordinator.context
+        if (
+            session is not None
+            and ctx is not None
+            and ctx.conversation is not None
+        ):
+            output_path = (
+                self._output_base
+                / session.id[:12]
+                / ctx.conversation.id[:12]
+                / f"turn-{turn_number:04d}.md"
+            )
+
+        self._renderer.start(
+            turn_number=turn_number, output_path=output_path,
+        )
 
         gen = self._coordinator.process_turn(
             user_input, force_plan=force_plan,
@@ -247,6 +277,19 @@ class CLIApp:
         execution.  Returns ``True`` to continue the REPL, ``False`` to exit.
         """
         result = await self._cmd_dispatcher.dispatch(text)
+
+        # --- Pager display (e.g. /view) ---
+        if result.pager_path:
+            filepath = Path(result.pager_path)
+            if filepath.exists():
+                content = filepath.read_text(encoding="utf-8")
+                with self._renderer.console.pager(styles=True):
+                    self._renderer.console.print(Markdown(content))
+            else:
+                self._renderer.warning(
+                    f"Output file not found: {filepath}"
+                )
+            return True
 
         # --- Display-only sentinels (commands that need CLI rendering) ---
         if result.message == "__HELP__":

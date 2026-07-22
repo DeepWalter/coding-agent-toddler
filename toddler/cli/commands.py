@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -54,11 +55,14 @@ class CommandResult:
     rendered:
         ``True`` when the command handler has already rendered its output
         (so the caller should not add extra formatting).
+    pager_path:
+        When set, the caller opens this file path in a pager.
     """
 
     continue_repl: bool = True
     message: str = ""
     rendered: bool = False
+    pager_path: str = ""
 
 
 # ============================================================================
@@ -86,6 +90,9 @@ class SlashCommandDispatcher:
         Used by ``/session``, ``/clear``, ``/resume``,
         ``/conversations``, ``/rollback``, and ``/checkpoints`` commands.
         When *None*, those commands show a "persistence disabled" message.
+    output_base:
+        Base directory for turn output files.  Used by ``/view`` to
+        locate saved full-turn markdown.
     """
 
     def __init__(
@@ -93,9 +100,13 @@ class SlashCommandDispatcher:
         *,
         state_machine: AgentStateMachine | None = None,
         session_coordinator: SessionCoordinator | None = None,
+        output_base: Path | None = None,
     ) -> None:
         self._sm = state_machine
         self._coordinator = session_coordinator
+        self._output_base = output_base or (
+            Path.home() / ".toddler" / "outputs"
+        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -173,6 +184,44 @@ class SlashCommandDispatcher:
             continue_repl=True,
             message="__HELP__",
             rendered=True,
+        )
+
+    async def _cmd_view(self, args: str) -> CommandResult:
+        """``/view <N>`` — view full turn output in a pager."""
+        turn_str = args.strip()
+        if not turn_str or not turn_str.isdigit():
+            return CommandResult(
+                continue_repl=True,
+                message="Usage: /view <turn_number>",
+            )
+
+        turn_num = int(turn_str)
+        if (
+            self._coordinator is None
+            or self._coordinator.session is None
+            or self._coordinator.context is None
+            or self._coordinator.context.conversation is None
+        ):
+            return CommandResult(
+                continue_repl=True,
+                message="No active session — cannot resolve output path.",
+            )
+
+        sid = self._coordinator.session.id[:12]
+        cid = self._coordinator.context.conversation.id[:12]
+        filepath = (
+            self._output_base / sid / cid / f"turn-{turn_num:04d}.md"
+        )
+
+        if not filepath.exists():
+            return CommandResult(
+                continue_repl=True,
+                message=f"No saved output for turn #{turn_num}.",
+            )
+
+        return CommandResult(
+            continue_repl=True,
+            pager_path=str(filepath),
         )
 
     async def _cmd_plan(self, _args: str) -> CommandResult:
@@ -494,6 +543,7 @@ _COMMAND_TABLE: dict[str, _Handler] = {
     "/q": SlashCommandDispatcher._cmd_quit,
     "/clear": SlashCommandDispatcher._cmd_clear,
     "/help": SlashCommandDispatcher._cmd_help,
+    "/view": SlashCommandDispatcher._cmd_view,
     "/plan": SlashCommandDispatcher._cmd_plan,
     "/resume": SlashCommandDispatcher._cmd_resume,
     "/conversations": SlashCommandDispatcher._cmd_conversations,
@@ -513,6 +563,7 @@ HELP_TEXT = """\
 | Command | Description |
 |---------|-------------|
 | `/plan` | Flag the next message for plan mode (research → propose → execute) |
+| `/view <N>` | View full output from turn N in a pager |
 | `/clear [title]` | Archive current conversation and start a fresh one |
 | `/resume <id>` | Resume a conversation by #N or UUID |
 | `/conversations` | List conversations in the current session |

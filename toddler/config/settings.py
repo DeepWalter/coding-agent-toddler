@@ -83,6 +83,9 @@ class Settings:
     streaming_enabled: bool = field(
         default_factory=lambda: _env_bool("TODDLER_STREAMING", defaults.STREAMING_ENABLED)
     )
+    max_output_lines: int = field(
+        default_factory=lambda: _env_int("TODDLER_MAX_OUTPUT_LINES", defaults.MAX_OUTPUT_LINES)
+    )
 
     # --- Session ---
     session_dir: Path = field(
@@ -118,6 +121,7 @@ class Settings:
             "api_key",
             "streaming_enabled",
             "max_iterations",
+            "max_output_lines",
             "session_dir",
         ]
 

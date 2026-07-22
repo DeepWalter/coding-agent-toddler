@@ -16,6 +16,7 @@ from __future__ import annotations
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from rich.console import Console, Group
@@ -301,6 +302,8 @@ class StreamingRenderer(Renderer):
         A Rich Console instance.
     refresh_per_second:
         Max refresh rate for the Live display (default 10).
+    max_output_lines:
+        Max lines of output before truncating (0 to disable, default 40).
     """
 
     def __init__(
@@ -308,6 +311,7 @@ class StreamingRenderer(Renderer):
         console: Console | None = None,
         *,
         refresh_per_second: float = 10.0,
+        max_output_lines: int = 40,
     ) -> None:
         super().__init__(console)
         self._text = ""
@@ -315,6 +319,9 @@ class StreamingRenderer(Renderer):
         self._tool_order: list[str] = []
         self._min_interval = 1.0 / refresh_per_second
         self._last_update = 0.0
+        self._max_lines = max_output_lines
+        self._turn_number = 0
+        self._output_path: Path | None = None
         self._live = Live(
             self._build_renderable(),
             console=self._console,
@@ -326,16 +333,30 @@ class StreamingRenderer(Renderer):
     # Lifecycle
     # ------------------------------------------------------------------
 
-    def start(self) -> None:
+    def start(
+        self,
+        *,
+        turn_number: int = 0,
+        output_path: Path | None = None,
+    ) -> None:
         """Start the Live display with a clean slate for a new turn.
 
         Toggles the alternate screen buffer to force the terminal to
         clear any stale content left over from a previous entry, then
         starts Live which enters it fresh.
+
+        Parameters
+        ----------
+        turn_number:
+            Current turn number for truncation notice and /view hint.
+        output_path:
+            Path to write full output to when truncation fires.
         """
         self._text = ""
         self._tools.clear()
         self._tool_order.clear()
+        self._turn_number = turn_number
+        self._output_path = output_path
         self._live.start()
         self._refresh(force=True)
 
@@ -346,9 +367,63 @@ class StreamingRenderer(Renderer):
         buffer), stopping Live restores the original terminal content.
         We re-print the final renderable so the completed output remains
         visible in the main screen buffer and scrollback.
+
+        When the accumulated text exceeds :attr:`_max_lines` and an
+        *output_path* was provided, the full text is written to disk,
+        only the first N lines are printed to scrollback, and a clickable
+        truncation notice is appended.
         """
         self._live.stop()
-        self._console.print(self._build_renderable())
+
+        lines = self._text.splitlines()
+        should_truncate = (
+            self._max_lines > 0
+            and len(lines) > self._max_lines
+            and self._output_path is not None
+            and self._turn_number > 0
+        )
+
+        if should_truncate:
+            full_text = self._text
+            assert self._output_path is not None  # narrowed by should_truncate
+            self._output_path.parent.mkdir(parents=True, exist_ok=True)
+            self._output_path.write_text(full_text, encoding="utf-8")
+
+            # Swap in truncated text for scrollback display
+            self._text = "\n".join(lines[: self._max_lines])
+            renderable = self._build_renderable()
+            notice = self._build_truncation_notice(self._output_path)
+            self._console.print(Group(renderable, notice))
+
+            # Restore full text on the instance
+            self._text = full_text
+        else:
+            self._console.print(self._build_renderable())
+
+    def _build_truncation_notice(self, filepath: Path) -> Panel:
+        """Build a clickable truncation notice with OSC 8 file link."""
+        file_uri = f"file://{filepath.resolve()}"
+        turn_str = str(self._turn_number)
+
+        text = Text.assemble(
+            ("Output truncated to ", ""),
+            (str(self._max_lines), "bold yellow"),
+            (" lines.  ", ""),
+            ("Full output: ", ""),
+            (str(filepath), f"link {file_uri}"),
+            ("\nView full output by ", ""),
+            ("click", f"link {file_uri}"),
+            (" or ", ""),
+            ("/view ", ""),
+            (turn_str, "bold cyan"),
+        )
+
+        return Panel(
+            text,
+            title="Truncated",
+            title_align="left",
+            border_style="yellow",
+        )
 
     def pause(self) -> None:
         """Temporarily stop Live for blocking content.
@@ -532,6 +607,7 @@ def create_renderer(
     streaming: bool = False,
     console: Console | None = None,
     refresh_per_second: float = 10.0,
+    max_output_lines: int = 40,
 ) -> Renderer:
     """Create a :class:`Renderer` for the given output mode.
 
@@ -547,10 +623,15 @@ def create_renderer(
     refresh_per_second:
         Max refresh rate for the streaming Live display (default 10).
         Only used when *streaming* is ``True``.
+    max_output_lines:
+        Max lines of output before truncating (0 to disable, default 40).
+        Only used when *streaming* is ``True``.
     """
     if streaming:
         return StreamingRenderer(
-            console=console, refresh_per_second=refresh_per_second,
+            console=console,
+            refresh_per_second=refresh_per_second,
+            max_output_lines=max_output_lines,
         )
     return NonStreamingRenderer(console=console)
 

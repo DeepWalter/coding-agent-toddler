@@ -18,6 +18,7 @@ from prompt_toolkit.styles import Style
 
 _SLASH_COMMANDS: dict[str, str] = {
     "/plan": "Enter plan mode — agent researches and proposes a plan",
+    "/view": "View full output from a turn — /view <turn_number>",
     "/clear": "Archive conversation and start fresh — /clear [title]",
     "/resume": "Resume an archived conversation — /resume <conversation_id>",
     "/conversations": "List conversations in the current session",

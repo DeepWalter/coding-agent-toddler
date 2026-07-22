@@ -22,6 +22,7 @@ CONFIRM_SHELL_DANGEROUS = True
 
 # --- Streaming ---
 STREAMING_ENABLED = True
+MAX_OUTPUT_LINES = 40
 
 # --- Sessions & Data ---
 SESSION_DIR = Path.home() / ".toddler"
