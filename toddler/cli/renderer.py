@@ -327,11 +327,17 @@ class StreamingRenderer(Renderer):
     # ------------------------------------------------------------------
 
     def start(self) -> None:
-        """Start the Live display with a clean slate for a new turn."""
+        """Start the Live display with a clean slate for a new turn.
+
+        Toggles the alternate screen buffer to force the terminal to
+        clear any stale content left over from a previous entry, then
+        starts Live which enters it fresh.
+        """
         self._text = ""
         self._tools.clear()
         self._tool_order.clear()
         self._live.start()
+        self._refresh(force=True)
 
     def stop(self) -> None:
         """Stop the Live display and print the final frame.
@@ -411,10 +417,10 @@ class StreamingRenderer(Renderer):
     # Streaming internals
     # ------------------------------------------------------------------
 
-    def _refresh(self) -> None:
+    def _refresh(self, force=False) -> None:
         """Rebuild and push the renderable, throttled to target rate."""
         now = time.monotonic()
-        if now - self._last_update < self._min_interval:
+        if not force and now - self._last_update < self._min_interval:
             return
         self._last_update = now
         self._live.update(self._build_renderable())
