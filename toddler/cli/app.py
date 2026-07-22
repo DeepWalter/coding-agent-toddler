@@ -155,11 +155,11 @@ class CLIApp:
         agent event to :class:`Renderer`, which handles streaming vs.
         non-streaming output internally.
         """
+        self._renderer.start()
+
         gen = self._coordinator.process_turn(
             user_input, force_plan=force_plan,
         )
-
-        self._renderer.start()
 
         try:
             async for event in gen:
