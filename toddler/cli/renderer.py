@@ -287,10 +287,13 @@ class Renderer(ABC):
 
 
 class StreamingRenderer(Renderer):
-    """Real-time streaming renderer with Rich Live dual-panel display.
+    """Real-time streaming renderer using the alternate screen buffer.
 
     Accumulates text deltas and tool status in memory, refreshing a
-    :class:`~rich.live.Live` display at the target frame rate.
+    :class:`~rich.live.Live` display at the target frame rate.  Uses
+    ``screen=True`` so that intermediate frames never pollute the
+    terminal scrollback — only the final output is printed to the main
+    screen buffer when the turn completes.
 
     Parameters
     ----------
@@ -316,6 +319,7 @@ class StreamingRenderer(Renderer):
             self._build_renderable(),
             console=self._console,
             refresh_per_second=refresh_per_second,
+            screen=True,
         )
 
     # ------------------------------------------------------------------
@@ -323,20 +327,35 @@ class StreamingRenderer(Renderer):
     # ------------------------------------------------------------------
 
     def start(self) -> None:
-        """Start the Live display."""
+        """Start the Live display with a clean slate for a new turn."""
+        self._text = ""
+        self._tools.clear()
+        self._tool_order.clear()
         self._live.start()
 
     def stop(self) -> None:
-        """Stop the Live display, flushing the final frame."""
-        self._live.update(self._build_renderable())
+        """Stop the Live display and print the final frame.
+
+        Because :attr:`_live` uses ``screen=True`` (alternate screen
+        buffer), stopping Live restores the original terminal content.
+        We re-print the final renderable so the completed output remains
+        visible in the main screen buffer and scrollback.
+        """
         self._live.stop()
+        self._console.print(self._build_renderable())
 
     def pause(self) -> None:
-        """Temporarily stop Live for blocking content."""
-        self.stop()
+        """Temporarily stop Live for blocking content.
+
+        Exits the alternate screen buffer (restoring the original terminal)
+        so that blocking content (e.g. confirmation prompt) is displayed
+        on the main screen.  Accumulated text and tool state are preserved
+        for :meth:`resume`.
+        """
+        self._live.stop()
 
     def resume(self) -> None:
-        """Resume Live after :meth:`pause`."""
+        """Resume Live after :meth:`pause` (preserving accumulated state)."""
         self._live.start()
 
     # ------------------------------------------------------------------
