@@ -291,8 +291,12 @@ class SessionCoordinator:
     async def new_conversation(self, title: str | None = None) -> None:
         """Start a new conversation, archiving the current one.
 
-        If *title* is provided, it is set on the current conversation
-        before archiving.
+        If *title* is provided and the current conversation is non-empty,
+        it is set on the current conversation before archiving.
+
+        When the current conversation has no messages it is simply reused
+        (title updated in-place) rather than archived — archiving an empty
+        conversation would only create junk.
         """
         if self._ctx is None:
             return
@@ -301,12 +305,20 @@ class SessionCoordinator:
             self._ctx.set_title(title)
         await self._ctx.save()
 
-        if self._ctx.conversation is not None:
-            await self._storage_mgr.archive_conversation(
-                self._ctx.conversation.id,
-            )
+        conv = self._ctx.conversation
+        if conv is not None and conv.message_count == 0:
+            # Current conversation is empty — just rename it in-place
+            # instead of archiving and creating a new one.
+            if title:
+                await self._storage_mgr.update_conversation(conv)
+            return
 
-        conv = await self._storage_mgr.get_or_create_active_conversation(
+        if conv is not None:
+            await self._storage_mgr.archive_conversation(conv.id)
+
+        # Always create a fresh conversation — never reuse a stale "active"
+        # conversation that may have been left behind by a bug or crash.
+        conv = await self._storage_mgr.create_conversation(
             self._session.id,
         )
         await self._ctx.activate(conv)
@@ -314,16 +326,28 @@ class SessionCoordinator:
     async def resume_conversation(self, conversation_id: str) -> None:
         """Switch to an existing (usually archived) conversation.
 
+        Archives the current conversation before switching so only one
+        conversation is active at a time.
+
         Raises :class:`ValueError` if the conversation is not found.
         """
         if self._ctx is None:
             return
+
+        # Archive the current conversation so only one is active at a time.
+        if self._ctx.conversation is not None:
+            await self._storage_mgr.archive_conversation(
+                self._ctx.conversation.id,
+            )
 
         conv = await self._storage_mgr.get_conversation(conversation_id)
         if conv is None:
             raise ValueError(
                 f"Conversation '{conversation_id[:16]}...' not found."
             )
+
+        # Reactivate the resumed conversation.
+        conv.status = "active"
         await self._ctx.activate(conv)
 
     async def switch_session(self, session_id: str) -> None:
