@@ -22,9 +22,8 @@ from toddler.cli.commands import (
     HELP_TEXT,
     SlashCommandDispatcher,
 )
-from toddler.cli.display import StreamDisplay
 from toddler.cli.input_handler import InputHandler
-from toddler.cli.renderer import Renderer
+from toddler.cli.renderer import create_renderer
 from toddler.config.settings import Settings
 from toddler.session.coordinator import SessionCoordinator
 
@@ -56,7 +55,9 @@ class CLIApp:
     ) -> None:
         self._settings = settings
         self._coordinator = session
-        self._renderer = Renderer()
+        self._renderer = create_renderer(
+            streaming=self._settings.streaming_enabled,
+        )
         self._input = InputHandler()
 
         # Slash-command dispatcher makes direct calls on SessionCoordinator.
@@ -83,7 +84,7 @@ class CLIApp:
             f"Session: {self._coordinator.session.id[:12]}..."
         )
 
-        self._print_banner()
+        self._renderer.banner()
         self._renderer.info(
             f"Model: {self._settings.model} │ "
             f"Streaming: {'on' if self._settings.streaming_enabled else 'off'}"
@@ -152,117 +153,61 @@ class CLIApp:
     ) -> None:
         """Run one complete agent turn — user input through to finish.
 
-        Delegates turn execution to SessionCoordinator and handles
-        display.  In streaming mode a :class:`StreamDisplay` wraps
-        output in Rich Live panels; otherwise the :class:`Renderer`
-        prints directly.
+        Delegates turn execution to SessionCoordinator and routes every
+        agent event to :class:`Renderer`, which handles streaming vs.
+        non-streaming output internally.
         """
-        stream = self._settings.streaming_enabled
-        display = (
-            StreamDisplay(self._renderer.console, refresh_per_second=10)
-            if stream
-            else None
-        )
-
         gen = self._coordinator.process_turn(
             user_input, force_plan=force_plan,
         )
 
-        if display:
-            display.start()
+        self._renderer.start()
 
         try:
             async for event in gen:
                 match event:
-                    case TextDelta(text=text):
-                        if display:
-                            display.append_text(text)
-                        else:
-                            self._renderer.markdown(text)
+                    case TextDelta():
+                        self._renderer.on_text_delta(event)
 
                     case ToolCallStart():
-                        if display:
-                            display.tool_started(
-                                event.tool_id,
-                                event.tool_name,
-                                summary=_format_tool_summary(
-                                    event.tool_name,
-                                    event.partial_input or {},
-                                ),
-                            )
-                        else:
-                            self._renderer.tool_call_start(event)
+                        self._renderer.on_tool_call_start(event)
 
                     case ToolCallDelta():
-                        if display:
-                            display.tool_started(
-                                event.tool_id,
-                                "",
-                                summary=_format_tool_summary(
-                                    "", event.input_delta,
-                                ),
-                            )
+                        self._renderer.on_tool_call_delta(event)
 
                     case ToolCallEnd():
-                        if display:
-                            result_info = event.result
-                            success = (
-                                result_info.success
-                                if result_info else False
-                            )
-                            summary = (
-                                _truncate_result(result_info)
-                                if result_info else ""
-                            )
-                            display.tool_completed(
-                                event.tool_id,
-                                success=success,
-                                summary=summary,
-                            )
-                        else:
-                            self._renderer.tool_call_end(event)
+                        self._renderer.on_tool_call_end(event)
 
                     case AgentPaused():
-                        if display:
-                            display.stop()
-                        self._renderer.agent_paused(event)
+                        self._renderer.pause()
+                        self._renderer.on_agent_paused(event)
                         approved = await self._confirm(event)
                         if approved:
                             await self._coordinator.agent.approve_tool_call()
                         else:
                             await self._coordinator.agent.deny_tool_call()
-                        if display:
-                            display.start()
+                        self._renderer.resume()
 
                     case AgentFinished():
-                        if display:
-                            display.stop()
-                        self._renderer.agent_finished(event)
+                        self._renderer.pause()
+                        self._renderer.on_agent_finished(event)
 
                     case AgentError():
-                        if display:
-                            display.stop()
-                        self._renderer.agent_error(event)
+                        self._renderer.pause()
+                        self._renderer.on_agent_error(event)
                         if not event.recoverable:
                             return
-                        if display:
-                            display.start()
+                        self._renderer.resume()
 
                     case PlanProposed():
-                        if display:
-                            display.stop()
-                        self._renderer.info(
-                            f"Plan proposed: {event.plan.title}"
-                        )
-                        self._renderer.markdown(event.plan.summary)
-                        if display:
-                            display.start()
+                        self._renderer.pause()
+                        self._renderer.on_plan_proposed(event)
+                        self._renderer.resume()
 
                     case _:
                         pass
         finally:
-            if display:
-                display.stop()
+            self._renderer.stop()
 
     # ==================================================================
     # Confirmation prompt
@@ -307,7 +252,8 @@ class CLIApp:
 
         # --- Display-only sentinels (commands that need CLI rendering) ---
         if result.message == "__HELP__":
-            self._print_help()
+            self._renderer.print()
+            self._renderer.markdown(HELP_TEXT)
             return True
 
         # --- Display message if not already rendered ---
@@ -320,58 +266,9 @@ class CLIApp:
     # Display helpers
     # ==================================================================
 
-    def _print_banner(self) -> None:
-        """Print the welcome banner."""
-        from rich.text import Text
-        self._renderer.console.print()
-        self._renderer.console.print(
-            Text("🐣 Toddler", style="bold yellow"),
-            Text(" — coding agent", style="dim"),
-        )
-
-    def _print_help(self) -> None:
-        """Print slash-command help."""
-        self._renderer.console.print()
-        self._renderer.markdown(HELP_TEXT)
-
     def _repl_toolbar(self) -> str:
         """Build the bottom toolbar string."""
         return (
             " Alt+Enter: newline │ Ctrl+D: exit │ "
             "/plan /clear /resume /conversations /session /help /quit "
         )
-
-
-# ---------------------------------------------------------------------------
-# Standalone helpers
-# ---------------------------------------------------------------------------
-
-
-def _format_tool_summary(name: str, params: dict) -> str:
-    """Format a tool name + key parameters for compact display."""
-    if not params and not name:
-        return "…"
-
-    parts: list[str] = []
-    for k, v in params.items():
-        s = str(v)
-        if len(s) > 40:
-            s = s[:37] + "..."
-        parts.append(f"{k}={s}")
-
-    label = name if name else ""
-    args = ", ".join(parts[:2])
-    if args:
-        return f"{label}({args})" if label else args
-    return label
-
-
-def _truncate_result(result) -> str:
-    """Return a short preview of a tool result for the status table."""
-    if result is None:
-        return ""
-    text = result.output if result.success else (result.error or "Error")
-    text = text.replace("\n", " ").strip()
-    if len(text) > 60:
-        text = text[:57] + "..."
-    return text

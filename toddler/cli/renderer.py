@@ -1,11 +1,24 @@
 """Rich-based renderer for streaming markdown, syntax-highlighted code,
-and tool execution status."""
+and tool execution status.
+
+Provides an abstract :class:`Renderer` base with two concrete
+implementations:
+
+- :class:`StreamingRenderer` — Rich ``Live`` dual-panel display
+- :class:`NonStreamingRenderer` — one-shot ``console.print`` output
+
+Use :func:`create_renderer` to instantiate the right subclass for the
+current output mode.
+"""
 
 from __future__ import annotations
 
-import re
+import time
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from rich.console import Console
+from rich.console import Console, Group
 from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -18,13 +31,18 @@ from toddler.agent.events import (
     AgentError,
     AgentFinished,
     AgentPaused,
+    PlanProposed,
     TextDelta,
+    ToolCallDelta,
     ToolCallEnd,
     ToolCallStart,
 )
 
+if TYPE_CHECKING:
+    from toddler.tools.base import ToolResult
+
 # ---------------------------------------------------------------------------
-# Styles / colour palette
+# Styles / colour palette (shared by base and subclasses)
 # ---------------------------------------------------------------------------
 
 _TOOL_INFO = "bold cyan"
@@ -37,32 +55,108 @@ _ACCENT = "bold magenta"
 
 
 # ---------------------------------------------------------------------------
-# Renderer
+# Streaming-mode internals
 # ---------------------------------------------------------------------------
 
 
-class Renderer:
-    """Handles console output for the agent loop.
+@dataclass
+class _ToolRow:
+    """Display state for one tool call in the streaming tools panel."""
 
-    Wraps a :class:`rich.console.Console` and provides methods to render
-    streaming text, tool calls, errors, confirmation prompts, and final
-    summaries in a consistent visual style.
+    name: str
+    status: str   # "running", "success", or "error"
+    summary: str  # short description / result preview
+
+
+_ICON_RUNNING = Text("▶", style="bold yellow")
+_ICON_SUCCESS = Text("✓", style="bold green")
+_ICON_ERROR = Text("✗", style="bold red")
+
+_STATUS_STYLES = {
+    "running": _ICON_RUNNING,
+    "success": _ICON_SUCCESS,
+    "error": _ICON_ERROR,
+}
+
+
+# ---------------------------------------------------------------------------
+# Abstract base
+# ---------------------------------------------------------------------------
+
+
+class Renderer(ABC):
+    """Abstract base for agent output renderers.
+
+    Subclasses implement the four streaming event handlers to provide
+    either real-time streaming output or one-shot printing.
 
     Parameters
     ----------
     console:
-        A Rich Console instance.  When *None*, a default ``stderr`` console
-        is created (``stderr`` avoids interfering with stdout-based piping
-        in one-shot mode).
+        A Rich Console instance.  When *None*, a default ``stderr``
+        console is created.
     """
 
     def __init__(self, console: Console | None = None) -> None:
         self._console = console or Console(stderr=True)
-        self._tool_panel_lines: list[str] = []
+
+    # ------------------------------------------------------------------
+    # Lifecycle (no-ops — override in subclasses that need them)
+    # ------------------------------------------------------------------
+
+    def start(self) -> None:
+        """Start the renderer. No-op by default."""
+        return
+
+    def stop(self) -> None:
+        """Stop the renderer. No-op by default."""
+        return
+
+    def pause(self) -> None:
+        """Temporarily pause for blocking/one-shot content.
+
+        No-op by default.
+        """
+        return
+
+    def resume(self) -> None:
+        """Resume after :meth:`pause`. No-op by default."""
+        return
+
+    def __enter__(self) -> Renderer:
+        self.start()
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self.stop()
+
+    # ------------------------------------------------------------------
+    # Properties
+    # ------------------------------------------------------------------
+
+    @property
+    def console(self) -> Console:
+        """The underlying Rich Console instance."""
+        return self._console
 
     # ------------------------------------------------------------------
     # Top-level rendering helpers
     # ------------------------------------------------------------------
+
+    def print(self, *args, **kwargs) -> None:
+        """Print directly to the console without styling or formatting.
+
+        Delegates to :meth:`rich.console.Console.print`.
+        """
+        self._console.print(*args, **kwargs)
+
+    def banner(self) -> None:
+        """Print the Toddler welcome banner."""
+        self._console.print()
+        self._console.print(
+            Text("🐣 Toddler", style="bold yellow"),
+            Text(" — coding agent", style="dim"),
+        )
 
     def header(self, text: str) -> None:
         """Print a prominent header."""
@@ -86,12 +180,11 @@ class Renderer:
         self._console.print(Text(f"⚠ {text}", style=_TOOL_RUNNING))
 
     # ------------------------------------------------------------------
-    # Markdown rendering
+    # Markdown / code rendering
     # ------------------------------------------------------------------
 
     def markdown(self, text: str) -> None:
         """Render *text* as GitHub-flavoured markdown."""
-        # Rich's Markdown class handles code fences, lists, headings, etc.
         self._console.print(Markdown(text))
 
     def code(self, code: str, language: str = "") -> None:
@@ -104,76 +197,7 @@ class Renderer:
         )
 
     # ------------------------------------------------------------------
-    # Agent event renderers
-    # ------------------------------------------------------------------
-
-    def text_delta(self, event: TextDelta) -> None:
-        """Render a text delta from the agent (non-streaming: print all at once)."""  # noqa: E501
-        self.markdown(event.text)
-
-    def tool_call_start(self, event: ToolCallStart) -> None:
-        """Announce that a tool is being invoked."""
-        label = _format_tool_call(event.tool_name, event.partial_input or {})
-        self._console.print(Text(f"▶ {label}", style=_TOOL_RUNNING))
-
-    def tool_call_end(self, event: ToolCallEnd) -> None:
-        """Render a completed tool call."""
-        result = event.result
-        if result is None:
-            self._console.print(
-                Text(f"  ⚠ {event.tool_name} — no result", style=_TOOL_ERROR)
-            )
-            return
-
-        if result.success:
-            # Truncate large outputs for display.
-            output_preview = _truncate(
-                result.output, max_lines=5, max_chars=300
-            )
-            self._console.print(Text("  ✓ Done", style=_TOOL_SUCCESS))
-            if output_preview.strip():
-                self._console.print(
-                    Text(output_preview, style=_STATUS_MUTED),
-                )
-        else:
-            err_text = result.error or "Unknown error"
-            self._console.print(
-                Text(f"  ✗ {_truncate(err_text, max_lines=3, max_chars=200)}",
-                     style=_TOOL_ERROR),
-            )
-
-    def agent_paused(self, event: AgentPaused) -> None:
-        """Render a confirmation / pause prompt."""
-        choices_str = "/".join(event.choices) if event.choices else "y/n"
-        self._console.print()
-        self._console.print(
-            Panel(
-                Text(event.prompt, style="bold white"),
-                title=f"[{choices_str}]",
-                title_align="left",
-                border_style=_TOOL_RUNNING,
-            )
-        )
-
-    def agent_finished(self, event: AgentFinished) -> None:
-        """Render the final completion message."""
-        self._console.print()
-        if event.usage:
-            self.info(
-                f"Tokens: {event.usage.input_tokens:,} in / "
-                f"{event.usage.output_tokens:,} out"
-            )
-        self.success(f"Done — {event.reason}")
-
-    def agent_error(self, event: AgentError) -> None:
-        """Render a recoverable error."""
-        label = "Recoverable" if event.recoverable else "Fatal"
-        self._console.print(
-            Text(f"⚠ [{label}] {event.message}", style=_TOOL_ERROR)
-        )
-
-    # ------------------------------------------------------------------
-    # Structured output helpers
+    # Structured output
     # ------------------------------------------------------------------
 
     def table(
@@ -198,28 +222,346 @@ class Renderer:
         self._console.print(tr)
 
     # ------------------------------------------------------------------
-    # Live display (streaming mode, Phase 6 — stubbed)
+    # Blocking event handlers (shared by all modes)
     # ------------------------------------------------------------------
 
-    @property
-    def console(self) -> Console:
-        """The underlying Rich Console instance."""
-        return self._console
+    def on_agent_paused(self, event: AgentPaused) -> None:
+        """Render a confirmation / pause prompt."""
+        choices_str = "/".join(event.choices) if event.choices else "y/n"
+        self._console.print()
+        self._console.print(
+            Panel(
+                Text(event.prompt, style="bold white"),
+                title=f"[{choices_str}]",
+                title_align="left",
+                border_style=_TOOL_RUNNING,
+            )
+        )
 
-    def live_context(self) -> Live | None:
-        """Return a Live context manager for streaming updates.
+    def on_agent_finished(self, event: AgentFinished) -> None:
+        """Render the final completion message."""
+        self._console.print()
+        if event.usage:
+            self.info(
+                f"Tokens: {event.usage.input_tokens:,} in / "
+                f"{event.usage.output_tokens:,} out"
+            )
+        self.success(f"Done — {event.reason}")
 
-        Returns *None* in Phase 5 (no streaming display); Phase 6 replaces
-        this with a Rich ``Live`` + ``Layout`` dual-panel setup.
-        """
-        return None
+    def on_agent_error(self, event: AgentError) -> None:
+        """Render a recoverable or fatal error."""
+        label = "Recoverable" if event.recoverable else "Fatal"
+        self._console.print(
+            Text(f"⚠ [{label}] {event.message}", style=_TOOL_ERROR)
+        )
+
+    def on_plan_proposed(self, event: PlanProposed) -> None:
+        """Render a proposed plan."""
+        self.info(f"Plan proposed: {event.plan.title}")
+        self.markdown(event.plan.summary)
+
+    # ------------------------------------------------------------------
+    # Streaming event handlers (abstract)
+    # ------------------------------------------------------------------
+
+    @abstractmethod
+    def on_text_delta(self, event: TextDelta) -> None:
+        """Render a streaming text delta."""
+
+    @abstractmethod
+    def on_tool_call_start(self, event: ToolCallStart) -> None:
+        """Render a tool call that has started executing."""
+
+    @abstractmethod
+    def on_tool_call_delta(self, event: ToolCallDelta) -> None:
+        """Render an incremental tool-input fragment."""
+
+    @abstractmethod
+    def on_tool_call_end(self, event: ToolCallEnd) -> None:
+        """Render a completed tool call."""
+
+
+# ---------------------------------------------------------------------------
+# Streaming implementation
+# ---------------------------------------------------------------------------
+
+
+class StreamingRenderer(Renderer):
+    """Real-time streaming renderer with Rich Live dual-panel display.
+
+    Accumulates text deltas and tool status in memory, refreshing a
+    :class:`~rich.live.Live` display at the target frame rate.
+
+    Parameters
+    ----------
+    console:
+        A Rich Console instance.
+    refresh_per_second:
+        Max refresh rate for the Live display (default 10).
+    """
+
+    def __init__(
+        self,
+        console: Console | None = None,
+        *,
+        refresh_per_second: float = 10.0,
+    ) -> None:
+        super().__init__(console)
+        self._text = ""
+        self._tools: dict[str, _ToolRow] = {}
+        self._tool_order: list[str] = []
+        self._min_interval = 1.0 / refresh_per_second
+        self._last_update = 0.0
+        self._live = Live(
+            self._build_renderable(),
+            console=self._console,
+            refresh_per_second=refresh_per_second,
+        )
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    def start(self) -> None:
+        """Start the Live display."""
+        self._live.start()
+
+    def stop(self) -> None:
+        """Stop the Live display, flushing the final frame."""
+        self._live.update(self._build_renderable())
+        self._live.stop()
+
+    def pause(self) -> None:
+        """Temporarily stop Live for blocking content."""
+        self.stop()
+
+    def resume(self) -> None:
+        """Resume Live after :meth:`pause`."""
+        self._live.start()
+
+    # ------------------------------------------------------------------
+    # Streaming event handlers
+    # ------------------------------------------------------------------
+
+    def on_text_delta(self, event: TextDelta) -> None:
+        """Accumulate text and throttle-refresh the Live display."""
+        self._text += event.text
+        self._refresh()
+
+    def on_tool_call_start(self, event: ToolCallStart) -> None:
+        """Add a running row to the tools panel."""
+        summary = _format_tool_table_summary(
+            event.tool_name, event.partial_input or {},
+        )
+        self._tools[event.tool_id] = _ToolRow(
+            name=event.tool_name, status="running", summary=summary,
+        )
+        if event.tool_id not in self._tool_order:
+            self._tool_order.append(event.tool_id)
+        self._refresh()
+
+    def on_tool_call_delta(self, event: ToolCallDelta) -> None:
+        """Update the tool row's input summary."""
+        summary = _format_tool_table_summary("", event.input_delta)
+        if event.tool_id not in self._tools:
+            self._tools[event.tool_id] = _ToolRow(
+                name="", status="running", summary=summary,
+            )
+            if event.tool_id not in self._tool_order:
+                self._tool_order.append(event.tool_id)
+        else:
+            self._tools[event.tool_id].summary = summary
+        self._refresh()
+
+    def on_tool_call_end(self, event: ToolCallEnd) -> None:
+        """Mark the tool row success or error and refresh."""
+        result = event.result
+        if event.tool_id in self._tools:
+            if result is None:
+                self._tools[event.tool_id].status = "error"
+            elif result.success:
+                self._tools[event.tool_id].status = "success"
+            else:
+                self._tools[event.tool_id].status = "error"
+            self._tools[event.tool_id].summary = (
+                _truncate_tool_result(result)
+            )
+        self._refresh()
+
+    # ------------------------------------------------------------------
+    # Streaming internals
+    # ------------------------------------------------------------------
+
+    def _refresh(self) -> None:
+        """Rebuild and push the renderable, throttled to target rate."""
+        now = time.monotonic()
+        if now - self._last_update < self._min_interval:
+            return
+        self._last_update = now
+        self._live.update(self._build_renderable())
+
+    def _build_renderable(self) -> Group:
+        """Build the dual-panel output: Output (markdown) + Tools (table)."""
+        md = (
+            Markdown(self._text)
+            if self._text
+            else Markdown("*Waiting for response…*")
+        )
+        output_panel = Panel(
+            md,
+            title="Output",
+            title_align="left",
+            border_style="blue",
+        )
+
+        if not self._tools:
+            return Group(output_panel)
+
+        table = Table(show_header=True, box=None, padding=(0, 1))
+        table.add_column("St", width=2, justify="center")
+        table.add_column("Tool", style="bold cyan")
+        table.add_column("Summary", style="dim", max_width=60)
+
+        for tool_id in self._tool_order:
+            row = self._tools.get(tool_id)
+            if row is None:
+                continue
+            icon = _STATUS_STYLES[row.status]
+            table.add_row(icon, row.name, row.summary)
+
+        tools_panel = Panel(
+            table,
+            title="Tools",
+            title_align="left",
+            border_style="dim",
+        )
+        return Group(output_panel, tools_panel)
+
+# ---------------------------------------------------------------------------
+# Non-streaming implementation
+# ---------------------------------------------------------------------------
+
+
+class NonStreamingRenderer(Renderer):
+    """One-shot renderer that prints output directly via
+    :meth:`~rich.console.Console.print`.
+    """
+
+    # ------------------------------------------------------------------
+    # Streaming event handlers (one-shot)
+    # ------------------------------------------------------------------
+
+    def on_text_delta(self, event: TextDelta) -> None:
+        """Print the text delta as markdown immediately."""
+        self.markdown(event.text)
+
+    def on_tool_call_start(self, event: ToolCallStart) -> None:
+        """Announce the tool call with a one-line print."""
+        label = _format_tool_call(
+            event.tool_name, event.partial_input or {},
+        )
+        self._console.print(Text(f"▶ {label}", style=_TOOL_RUNNING))
+
+    def on_tool_call_delta(self, event: ToolCallDelta) -> None:
+        """No-op — deltas only arrive during streaming LLM calls."""
+
+    def on_tool_call_end(self, event: ToolCallEnd) -> None:
+        """Print the tool result (or error) inline."""
+        result = event.result
+
+        if result is None:
+            self._console.print(
+                Text(
+                    f"  ⚠ {event.tool_name} — no result",
+                    style=_TOOL_ERROR,
+                ),
+            )
+            return
+
+        if result.success:
+            output_preview = _truncate(
+                result.output, max_lines=5, max_chars=300,
+            )
+            self._console.print(Text("  ✓ Done", style=_TOOL_SUCCESS))
+            if output_preview.strip():
+                self._console.print(
+                    Text(output_preview, style=_STATUS_MUTED),
+                )
+        else:
+            err_text = result.error or "Unknown error"
+            self._console.print(
+                Text(
+                    f"  ✗ {_truncate(err_text, max_lines=3, max_chars=200)}",
+                    style=_TOOL_ERROR,
+                ),
+            )
+
+
+# ---------------------------------------------------------------------------
+# Factory
+# ---------------------------------------------------------------------------
+
+
+def create_renderer(
+    *,
+    streaming: bool = False,
+    console: Console | None = None,
+    refresh_per_second: float = 10.0,
+) -> Renderer:
+    """Create a :class:`Renderer` for the given output mode.
+
+    Parameters
+    ----------
+    streaming:
+        When ``True``, return a :class:`StreamingRenderer` with Rich Live
+        dual-panel output.  When ``False`` (default), return a
+        :class:`NonStreamingRenderer` with one-shot printing.
+    console:
+        A Rich Console instance.  When *None*, a default ``stderr``
+        console is created.
+    refresh_per_second:
+        Max refresh rate for the streaming Live display (default 10).
+        Only used when *streaming* is ``True``.
+    """
+    if streaming:
+        return StreamingRenderer(
+            console=console, refresh_per_second=refresh_per_second,
+        )
+    return NonStreamingRenderer(console=console)
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-_CODE_FENCE_RE = re.compile(r"^```(\w*)")
+def _format_tool_table_summary(name: str, params: dict) -> str:
+    """Format a tool name + key params for the streaming tools table."""
+    if not params and not name:
+        return "…"
+
+    parts: list[str] = []
+    for k, v in params.items():
+        s = str(v)
+        if len(s) > 40:
+            s = s[:37] + "..."
+        parts.append(f"{k}={s}")
+
+    label = name if name else ""
+    args = ", ".join(parts[:2])
+    if args:
+        return f"{label}({args})" if label else args
+    return label
+
+
+def _truncate_tool_result(result: ToolResult | None) -> str:
+    """Return a short preview of a ToolResult for the tools table."""
+    if result is None:
+        return ""
+    text = result.output if result.success else (result.error or "Error")
+    text = text.replace("\n", " ").strip()
+    if len(text) > 60:
+        text = text[:57] + "..."
+    return text
 
 
 def _guess_language(code: str) -> str:
@@ -257,7 +599,6 @@ def _truncate(text: str, max_lines: int = 5, max_chars: int = 300) -> str:
 
 def _format_tool_call(name: str, params: dict) -> str:
     """Format a tool name + key parameters for display."""
-    # Shorten common long params.
     short: dict[str, str] = {}
     for k, v in params.items():
         s = str(v)
