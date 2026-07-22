@@ -247,7 +247,7 @@ class SessionCoordinator:
         ):
             try:
                 self._ckpt_mgr.create(
-                    description="Conversation start",
+                    description=f"Start of conversation {self._ctx.conversation.sequence_num}",  # noqa: E501
                     tool_name="conversation_start",
                     agent_state=AgentStateSnapshot(
                         mode="execute", iteration=0,
@@ -365,11 +365,21 @@ class SessionCoordinator:
                 self._ctx.conversation.id,
             )
 
-        conv = self._storage_mgr.get_conversation(conversation_id)
-        if conv is None:
-            raise ValueError(
-                f"Conversation '{conversation_id[:16]}...' not found."
+        # Resolve by sequence number (#N) or UUID.
+        if conversation_id.isdigit():
+            conv = self._storage_mgr.get_conversation_by_sequence(
+                self._session.id, int(conversation_id),
             )
+            if conv is None:
+                raise ValueError(
+                    f"Conversation #{conversation_id} not found."
+                )
+        else:
+            conv = self._storage_mgr.get_conversation(conversation_id)
+            if conv is None:
+                raise ValueError(
+                    f"Conversation '{conversation_id[:16]}...' not found."
+                )
 
         # Reactivate the resumed conversation.
         conv.status = "active"

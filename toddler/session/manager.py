@@ -265,13 +265,13 @@ class StorageManager:
 
         Returns the new :class:`Conversation`.
         """
-        # Get the next global sequence_num from session messages.
-        current_count = self._store.get_message_count(session_id)
+        # Assign the next sequential number for this session (1, 2, 3…).
+        next_seq = self._store.get_max_conversation_seq(session_id) + 1
         conv = Conversation(
             id=uuid.uuid4().hex,
             session_id=session_id,
             title=title,
-            sequence_num=current_count,
+            sequence_num=next_seq,
             status=status,
         )
         self._store.create_conversation(conv)
@@ -306,6 +306,18 @@ class StorageManager:
     ) -> Conversation | None:
         """Return the conversation with *conversation_id*, or *None*."""
         return self._store.get_conversation(conversation_id)
+
+    def get_conversation_by_sequence(
+        self, session_id: str, sequence_num: int,
+    ) -> Conversation | None:
+        """Return a conversation by session + sequence number, or *None*."""
+        return self._store.get_conversation_by_sequence(
+            session_id, sequence_num,
+        )
+
+    def get_max_conversation_seq(self, session_id: str) -> int:
+        """Return the highest conversation sequence number for *session_id*."""
+        return self._store.get_max_conversation_seq(session_id)
 
     def update_conversation(self, conv: Conversation) -> None:
         """Persist changes to *conv* (title, compaction pointers, etc.)."""
@@ -374,6 +386,14 @@ class StorageManager:
     ) -> dict[str, Any] | None:
         """Return a checkpoint row as a dict, or *None*."""
         return self._store.get_checkpoint(checkpoint_id)
+
+    def get_checkpoint_by_sequence(
+        self, session_id: str, sequence_num: int,
+    ) -> dict[str, Any] | None:
+        """Return a checkpoint row by session + sequence number, or *None*."""
+        return self._store.get_checkpoint_by_sequence(
+            session_id, sequence_num,
+        )
 
     def list_checkpoints(
         self, session_id: str,

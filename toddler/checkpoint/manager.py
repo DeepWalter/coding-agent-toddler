@@ -173,11 +173,21 @@ class CheckpointManager:
         ValueError
             If *checkpoint_id* is not found.
         """  # noqa: E501
-        row = self._storage_mgr.get_checkpoint(checkpoint_id)
-        if row is None:
-            raise ValueError(
-                f"Checkpoint '{checkpoint_id}' not found."
+        # Resolve by sequence number (#N) or UUID.
+        if checkpoint_id.isdigit():
+            row = self._storage_mgr.get_checkpoint_by_sequence(
+                self._session_id, int(checkpoint_id),
             )
+            if row is None:
+                raise ValueError(
+                    f"Checkpoint #{checkpoint_id} not found."
+                )
+        else:
+            row = self._storage_mgr.get_checkpoint(checkpoint_id)
+            if row is None:
+                raise ValueError(
+                    f"Checkpoint '{checkpoint_id[:16]}...' not found."
+                )
 
         checkpoint = _row_to_checkpoint(row)
         warnings: list[str] = []
@@ -236,7 +246,7 @@ class CheckpointManager:
                             type="text",
                             text=(
                                 f"⚡ **Rolled back to checkpoint "
-                                f"`{checkpoint_id[:12]}`**\n\n"
+                                f"#{checkpoint.sequence_num}**\n\n"
                                 f"Description: {checkpoint.description}\n"
                                 f"Restored {len(restored_files)} file(s)."
                             ),

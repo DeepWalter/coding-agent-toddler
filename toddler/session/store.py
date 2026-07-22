@@ -420,6 +420,22 @@ class SQLiteStore:
             conn.close()
         return self._row_to_conversation(row) if row else None
 
+    def get_conversation_by_sequence(
+        self, session_id: str, sequence_num: int,
+    ) -> Conversation | None:
+        """Return a conversation for *session_id* + *sequence_num*, or *None*."""
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT * FROM conversations "
+                "WHERE session_id = ? AND sequence_num = ? "
+                "ORDER BY created_at ASC LIMIT 1",
+                (session_id, sequence_num),
+            ).fetchone()
+        finally:
+            conn.close()
+        return self._row_to_conversation(row) if row else None
+
     def get_active_conversation(
         self, session_id: str,
     ) -> Conversation | None:
@@ -454,6 +470,19 @@ class SQLiteStore:
         finally:
             conn.close()
         return [self._row_to_conversation_summary(r) for r in rows]
+
+    def get_max_conversation_seq(self, session_id: str) -> int:
+        """Return the highest conversation ``sequence_num`` for *session_id*, or 0."""  # noqa: E501
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT COALESCE(MAX(sequence_num), 0) "
+                "FROM conversations WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+        return int(row[0]) if row else 0
 
     def update_conversation(self, conv: Conversation) -> bool:
         """Persist changes to *conv*.  Returns ``True`` if a row was updated."""  # noqa: E501
@@ -587,6 +616,21 @@ class SQLiteStore:
         finally:
             conn.close()
         return [dict(r) for r in rows]
+
+    def get_checkpoint_by_sequence(
+        self, session_id: str, sequence_num: int,
+    ) -> dict[str, Any] | None:
+        """Return a checkpoint row for *session_id* + *sequence_num*, or *None*."""
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT * FROM checkpoints "
+                "WHERE session_id = ? AND sequence_num = ?",
+                (session_id, sequence_num),
+            ).fetchone()
+        finally:
+            conn.close()
+        return dict(row) if row else None
 
     def delete_checkpoint(self, checkpoint_id: str) -> bool:
         """Delete a single checkpoint.  Returns ``True`` if one was deleted."""

@@ -197,7 +197,7 @@ class SlashCommandDispatcher:
         if not checkpoint_id:
             return CommandResult(
                 continue_repl=True,
-                message="Usage: /rollback <checkpoint_id>",
+                message="Usage: /rollback <checkpoint_id or #N>",
             )
 
         if self._coordinator is None:
@@ -231,9 +231,14 @@ class SlashCommandDispatcher:
                 if result.warnings
                 else ""
             )
+            ck_label = (
+                f"#{checkpoint_id}"
+                if checkpoint_id.isdigit()
+                else f"`{checkpoint_id[:12]}...`"
+            )
             return CommandResult(
                 continue_repl=True,
-                message=f"✅ Rolled back to checkpoint `{checkpoint_id[:12]}...`.\n{files}{warnings}",  # noqa: E501
+                message=f"✅ Rolled back to checkpoint {ck_label}.\n{files}{warnings}",  # noqa: E501
             )
         return CommandResult(
             continue_repl=True,
@@ -274,17 +279,19 @@ class SlashCommandDispatcher:
             )
 
         lines: list[str] = [
-            f"{'#':>4}  {'ID':<14}  {'Created':<20}  {'Tool':<20}  {'Description'}",  # noqa: E501
-            f"{'─'*4}  {'─'*14}  {'─'*20}  {'─'*20}  {'─'*40}",
+            f"{'#':>4}  {'Created':<20}  {'Tool':<20}  {'Description'}",
+            f"{'─'*4}  {'─'*20}  {'─'*20}  {'─'*40}",
         ]
         for ck in checkpoints:
-            cid = ck.id[:12]
             ts = ck.created_at.strftime("%Y-%m-%d %H:%M")
             tool = (ck.tool_name or "")[:19]
             desc = (ck.description or "")[:40]
             lines.append(
-                f"{ck.sequence_num:>4}  {cid:<14}  {ts:<20}  {tool:<20}  {desc}"  # noqa: E501
+                f"{ck.sequence_num:>4}  {ts:<20}  {tool:<20}  {desc}"  # noqa: E501
             )
+
+        lines.append("")
+        lines.append("Use /rollback #N to restore a checkpoint.")
 
         return CommandResult(
             continue_repl=True,
@@ -297,7 +304,7 @@ class SlashCommandDispatcher:
         if not conv_id:
             return CommandResult(
                 continue_repl=True,
-                message="Usage: /resume <conversation_id>",
+                message="Usage: /resume <conversation_id or #N>",
             )
         if self._coordinator is None:
             return CommandResult(
@@ -340,17 +347,16 @@ class SlashCommandDispatcher:
         )
 
         lines: list[str] = [
-            f"{'':>1}  {'ID':<34}  {'Title':<40}  {'Msgs':>5}  {'Age':<10}",
-            f"{'─'*1}  {'─'*34}  {'─'*40}  {'─'*5}  {'─'*10}",
+            f"{'':>1} {'#':>4}  {'Title':<36}  {'Msgs':>5}  {'Age':<10}",
+            f"{'─'*1} {'─'*4}  {'─'*36}  {'─'*5}  {'─'*10}",
         ]
         for c in convs:
             marker = "*" if c.id == active_id else " "
-            sid = c.id[:32]
-            title = (c.display_title or "—")[:39]
+            title = (c.display_title or "—")[:35]
             lines.append(
-                f"{marker:<1}  {sid:<34}  {title:<40}  {c.message_count:>5}  {c.age:<10}"  # noqa: E501
+                f"{marker:<1} {c.sequence_num:>4}  {title:<36}  {c.message_count:>5}  {c.age:<10}"  # noqa: E501
             )
-        lines.append(f"{'─'*1}  {'─'*34}  {'─'*40}  {'─'*5}  {'─'*10}")
+        lines.append(f"{'─'*1} {'─'*4}  {'─'*36}  {'─'*5}  {'─'*10}")
         lines.append("* = active conversation")
 
         return CommandResult(
@@ -508,9 +514,9 @@ HELP_TEXT = """\
 |---------|-------------|
 | `/plan` | Flag the next message for plan mode (research → propose → execute) |
 | `/clear [title]` | Archive current conversation and start a fresh one |
-| `/resume <id>` | Resume a previously archived conversation |
+| `/resume <id>` | Resume a conversation by #N or UUID |
 | `/conversations` | List conversations in the current session |
-| `/rollback <id>` | Rollback to a checkpoint (restores files + conversation) |
+| `/rollback <id>` | Rollback to a checkpoint by #N or UUID |
 | `/checkpoints` | List all checkpoints for the current session |
 | `/session info` | Show current session details |
 | `/session list` | List all saved sessions |
