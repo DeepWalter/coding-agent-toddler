@@ -24,7 +24,11 @@ from toddler.agent.loop import AgentLoop
 from toddler.agent.state_machine import AgentStateMachine
 from toddler.checkpoint import create_checkpoint_callback
 from toddler.checkpoint.manager import CheckpointManager
-from toddler.checkpoint.models import Checkpoint, RollbackResult
+from toddler.checkpoint.models import (
+    AgentStateSnapshot,
+    Checkpoint,
+    RollbackResult,
+)
 from toddler.config.settings import Settings
 from toddler.context.conversation_context import ConversationContext
 from toddler.context.system_prompt import SystemPromptBuilder
@@ -234,8 +238,29 @@ class SessionCoordinator:
 
         mode_hint = self._sm.get_mode_hint()
 
+        # --- Create conversation-start checkpoint (first turn only) ---
+        if (
+            self._ckpt_mgr is not None
+            and self._ctx is not None
+            and self._ctx.conversation is not None
+            and self._ctx.conversation.message_count == 0
+        ):
+            try:
+                await self._ckpt_mgr.create(
+                    description="Conversation start",
+                    tool_name="conversation_start",
+                    agent_state=AgentStateSnapshot(
+                        mode="execute", iteration=0,
+                    ),
+                    message_index=-1,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to create conversation-start checkpoint."
+                )
+
         stream = self._settings.streaming_enabled
-        gen = self._agent.run(
+        gen = self.agent.run(
             user_input,
             max_iterations=self._settings.max_iterations,
             stream=stream,
