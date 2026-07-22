@@ -407,7 +407,8 @@ class SQLiteStore:
         try:
             row = conn.execute(
                 "SELECT * FROM conversations "
-                "WHERE session_id = ? AND status = 'active'",
+                "WHERE session_id = ? AND status = 'active' "
+                "ORDER BY created_at DESC",
                 (session_id,),
             ).fetchone()
         finally:
@@ -418,7 +419,7 @@ class SQLiteStore:
         self,
         session_id: str,
     ) -> list[ConversationSummary]:
-        """Return all conversations for *session_id*, newest first."""
+        """Return all conversations for *session_id*, oldest first."""
         conn = self._connect()
         try:
             rows = conn.execute(
@@ -426,7 +427,7 @@ class SQLiteStore:
                           message_count, created_at, updated_at
                    FROM conversations
                    WHERE session_id = ?
-                   ORDER BY updated_at DESC""",
+                   ORDER BY created_at ASC""",
                 (session_id,),
             ).fetchall()
         finally:

@@ -350,6 +350,7 @@ class SlashCommandDispatcher:
             lines.append(
                 f"{marker:<1}  {sid:<34}  {title:<40}  {c.message_count:>5}  {c.age:<10}"  # noqa: E501
             )
+        lines.append(f"{'─'*1}  {'─'*34}  {'─'*40}  {'─'*5}  {'─'*10}")
         lines.append("* = active conversation")
 
         return CommandResult(
