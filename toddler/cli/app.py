@@ -217,7 +217,8 @@ class CLIApp:
                         self._renderer.resume()
 
                     case AgentFinished():
-                        self._renderer.pause()
+                        await self._renderer.wait_for_dismiss()
+                        self._renderer.stop()
                         self._renderer.on_agent_finished(event)
 
                     case AgentError():

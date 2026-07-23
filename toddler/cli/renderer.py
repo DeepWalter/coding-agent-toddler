@@ -13,6 +13,8 @@ current output mode.
 
 from __future__ import annotations
 
+import asyncio
+import sys
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -105,7 +107,7 @@ class Renderer(ABC):
     # Lifecycle (no-ops — override in subclasses that need them)
     # ------------------------------------------------------------------
 
-    def start(self) -> None:
+    def start(self, turn_number: int = 0, output_path: Path | None = None) -> None:
         """Start the renderer. No-op by default."""
         return
 
@@ -122,6 +124,15 @@ class Renderer(ABC):
 
     def resume(self) -> None:
         """Resume after :meth:`pause`. No-op by default."""
+        return
+
+    async def wait_for_dismiss(self) -> None:
+        """Wait for user to dismiss the output before continuing.
+
+        No-op by default.  :class:`StreamingRenderer` overrides this to
+        show a prompt on the alternate screen and block until the user
+        presses Enter.
+        """
         return
 
     def __enter__(self) -> Renderer:
@@ -322,6 +333,8 @@ class StreamingRenderer(Renderer):
         self._max_lines = max_output_lines
         self._turn_number = 0
         self._output_path: Path | None = None
+        self._stopped = False
+        self._dismiss_prompt = False
         self._live = Live(
             self._build_renderable(),
             console=self._console,
@@ -357,6 +370,8 @@ class StreamingRenderer(Renderer):
         self._tool_order.clear()
         self._turn_number = turn_number
         self._output_path = output_path
+        self._stopped = False
+        self._dismiss_prompt = False
         self._live.start()
         self._refresh(force=True)
 
@@ -372,7 +387,14 @@ class StreamingRenderer(Renderer):
         *output_path* was provided, the full text is written to disk,
         only the first N lines are printed to scrollback, and a clickable
         truncation notice is appended.
+
+        Idempotent — subsequent calls after the first are no-ops so that
+        ``finally`` blocks can safely call ``stop()`` even when the
+        caller already stopped the renderer explicitly.
         """
+        if self._stopped:
+            return
+        self._stopped = True
         self._live.stop()
 
         lines = self._text.splitlines()
@@ -438,6 +460,21 @@ class StreamingRenderer(Renderer):
     def resume(self) -> None:
         """Resume Live after :meth:`pause` (preserving accumulated state)."""
         self._live.start()
+
+    async def wait_for_dismiss(self) -> None:
+        """Show a dismiss prompt on the alternate screen and wait for Enter.
+
+        The prompt text is baked into the Live renderable so it appears
+        on the alternate screen alongside the streaming output.  This
+        method blocks until the user presses Enter, then clears the
+        prompt and returns so the caller can call :meth:`stop` to
+        transition to the main screen.
+        """
+        self._dismiss_prompt = True
+        self._refresh(force=True)
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, sys.stdin.readline)
+        self._dismiss_prompt = False
 
     # ------------------------------------------------------------------
     # Streaming event handlers
@@ -514,28 +551,35 @@ class StreamingRenderer(Renderer):
             border_style="blue",
         )
 
-        if not self._tools:
-            return Group(output_panel)
+        elements: list = [output_panel]
 
-        table = Table(show_header=True, box=None, padding=(0, 1))
-        table.add_column("St", width=2, justify="center")
-        table.add_column("Tool", style="bold cyan")
-        table.add_column("Summary", style="dim", max_width=60)
+        if self._tools:
+            table = Table(show_header=True, box=None, padding=(0, 1))
+            table.add_column("St", width=2, justify="center")
+            table.add_column("Tool", style="bold cyan")
+            table.add_column("Summary", style="dim", max_width=60)
 
-        for tool_id in self._tool_order:
-            row = self._tools.get(tool_id)
-            if row is None:
-                continue
-            icon = _STATUS_STYLES[row.status]
-            table.add_row(icon, row.name, row.summary)
+            for tool_id in self._tool_order:
+                row = self._tools.get(tool_id)
+                if row is None:
+                    continue
+                icon = _STATUS_STYLES[row.status]
+                table.add_row(icon, row.name, row.summary)
 
-        tools_panel = Panel(
-            table,
-            title="Tools",
-            title_align="left",
-            border_style="dim",
-        )
-        return Group(output_panel, tools_panel)
+            tools_panel = Panel(
+                table,
+                title="Tools",
+                title_align="left",
+                border_style="dim",
+            )
+            elements.append(tools_panel)
+
+        if self._dismiss_prompt:
+            elements.append(
+                Text("\nPress Enter to continue…", style="dim italic")
+            )
+
+        return Group(*elements)
 
 # ---------------------------------------------------------------------------
 # Non-streaming implementation
