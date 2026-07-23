@@ -55,7 +55,7 @@ def _map_finish_reason(raw: str | None) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Provider
+# OpenAI Compatible Provider
 # ---------------------------------------------------------------------------
 
 
@@ -142,7 +142,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
     # Streaming path
     # ==================================================================
 
-    async def _generate_streaming(  # noqa: C901
+    async def _generate_streaming(
         self,
         messages: list[Message],
         tools: list[dict],
@@ -174,9 +174,10 @@ class OpenAICompatibleProvider(BaseLLMProvider):
             )
             return
 
-        # Accumulators — OpenAI streams deltas, we accumulate across chunks.
-        text_buf = ""
-        tool_bufs: dict[int, dict] = {}  # index → {id, name, arguments_str}
+        # Track seen tool indices → tool_id so argument deltas can be
+        # tagged with the correct tool_id (OpenAI only sends the id in the
+        # first chunk for each tool call).
+        seen_ids: dict[int, str] = {}
 
         try:
             async for chunk in stream:
@@ -188,7 +189,6 @@ class OpenAICompatibleProvider(BaseLLMProvider):
 
                 # -- text deltas ----------------------------------------------
                 if delta is not None and delta.content:
-                    text_buf += delta.content
                     yield StreamEvent(
                         type="text_delta", data={"text": delta.content}
                     )
@@ -196,30 +196,12 @@ class OpenAICompatibleProvider(BaseLLMProvider):
                 # -- tool-call deltas -----------------------------------------
                 if delta is not None and delta.tool_calls:
                     for evt in self._process_tool_call_deltas(
-                        delta.tool_calls, tool_bufs
+                        delta.tool_calls, seen_ids
                     ):
                         yield evt
 
                 # -- finish ---------------------------------------------------
                 if finish_reason is not None:
-                    # Flush accumulated text.
-                    if text_buf:
-                        yield StreamEvent(
-                            type="text_done", data={"text": text_buf}
-                        )
-
-                    # Flush completed tool calls.
-                    for buf in tool_bufs.values():
-                        parsed = self._parse_json_safe(buf["arguments"])
-                        yield StreamEvent(
-                            type="tool_use_done",
-                            data={
-                                "tool_id": buf["id"],
-                                "tool_name": buf["name"],
-                                "input": parsed,
-                            },
-                        )
-
                     usage = self._extract_usage(chunk)
                     yield StreamEvent(
                         type="message_stop",
@@ -368,44 +350,41 @@ class OpenAICompatibleProvider(BaseLLMProvider):
 
     @staticmethod
     def _process_tool_call_deltas(
-        tc_deltas: list, tool_bufs: dict[int, dict]
+        tc_deltas: list, seen_ids: dict[int, str]
     ) -> list[StreamEvent]:
-        """Process a batch of tool-call deltas from one streaming chunk.
+        """Forward tool-call deltas from one streaming chunk as events.
 
-        Updates *tool_bufs* in place and returns any new
-        :class:`StreamEvent` items to yield.
+        Updates *seen_ids* in place (mapping OpenAI's chunk index → tool_id)
+        so argument deltas can be tagged with the correct tool_id even when
+        the id is only present in the first chunk.
         """
         events: list[StreamEvent] = []
 
         for tc in tc_deltas:
             idx: int = tc.index
-            if idx not in tool_bufs:
-                tool_bufs[idx] = {"id": "", "name": "", "arguments": ""}
 
-            buf = tool_bufs[idx]
-
+            # Capture tool_id from the first chunk where it appears.
             if tc.id:
-                buf["id"] = tc.id
+                seen_ids[idx] = tc.id
+            tool_id = seen_ids.get(idx, "")
 
             if tc.function:
-                if tc.function.name:
-                    buf["name"] = tc.function.name
+                if tc.function.name and tool_id:
                     events.append(
                         StreamEvent(
                             type="tool_use_start",
                             data={
-                                "tool_id": buf["id"],
-                                "tool_name": buf["name"],
+                                "tool_id": tool_id,
+                                "tool_name": tc.function.name,
                             },
                         )
                     )
                 if tc.function.arguments:
-                    buf["arguments"] += tc.function.arguments
                     events.append(
                         StreamEvent(
                             type="tool_use_delta",
                             data={
-                                "tool_id": buf["id"],
+                                "tool_id": tool_id,
                                 "input_delta": {
                                     "arguments_fragment": tc.function.arguments
                                 },
@@ -438,16 +417,6 @@ class OpenAICompatibleProvider(BaseLLMProvider):
             input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
             output_tokens=getattr(usage, "completion_tokens", 0) or 0,
         )
-
-    @staticmethod
-    def _parse_json_safe(raw: str) -> dict:
-        """Parse *raw* as JSON, returning ``{}`` on any failure."""
-        if not raw:
-            return {}
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError:
-            return {}
 
     @staticmethod
     def _format_error(exc: Exception) -> str:

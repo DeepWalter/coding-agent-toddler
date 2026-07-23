@@ -188,15 +188,6 @@ class StreamHandler:
                     if evt is not None:
                         yield evt
 
-                case "tool_use_done":
-                    # The provider sends tool_use_done when a tool call's
-                    # input JSON is complete.  Finalize the incremental
-                    # parser and update our state — but we do NOT yield
-                    # ToolCallEnd here.  Execution happens in the agent
-                    # loop, which is responsible for yielding ToolCallEnd
-                    # with the result.
-                    self._on_tool_done(event.data)
-
                 case "message_stop":
                     self.stop_reason = event.data.get("stop_reason")
                     self.usage = event.data.get("usage")
@@ -211,9 +202,6 @@ class StreamHandler:
 
                 case "message_start":
                     pass  # No-op — stream lifecycle tracking if needed later.
-
-                case "text_done":
-                    pass  # Internal — already have all text in _text_buf.
 
                 case _:
                     logger.debug(f"Unhandled StreamEvent type: {event.type}")
@@ -303,23 +291,6 @@ class StreamHandler:
 
         partial = pt.parser.feed(fragment)
         return ToolCallDelta(tool_id=tool_id, input_delta=partial)
-
-    def _on_tool_done(self, data: dict) -> None:
-        """Handle a ``tool_use_done`` StreamEvent.
-
-        Seeds the parser with the provider's fully-parsed input so
-        :meth:`assemble_message` gets the complete data.
-        """
-        final_tool_id = data.get("tool_id", "")
-        final_input = data.get("input", {})
-
-        pt = self._resolve_tool(final_tool_id)
-        if pt is not None and final_input:
-            # Seed the parser with the final parsed input so
-            # assemble_message() gets the complete data.
-            raw = json.dumps(final_input, ensure_ascii=False)
-            pt.parser._buffer = raw  # noqa: SLF001
-            pt.parser._parsed = final_input  # noqa: SLF001
 
     # ------------------------------------------------------------------
     # Tool resolution

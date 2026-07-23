@@ -118,10 +118,8 @@ class StreamEvent:
 
     ===================  =========================================
     ``text_delta``       ``{"text": "..."}``
-    ``text_done``        ``{"text": "full accumulated text"}``
     ``tool_use_start``   ``{"tool_id": ..., "tool_name": ...}``
     ``tool_use_delta``   ``{"tool_id": ..., "input_delta": {...}}``
-    ``tool_use_done``    ``{"tool_id": ..., "tool_name": ..., "input": {...}}``
     ``message_start``    ``{}``
     ``message_stop``     ``{"stop_reason": ..., "usage": TokenUsage}``
     ``error``            ``{"message": ..., "status_code": ...}``
@@ -130,10 +128,8 @@ class StreamEvent:
 
     type: Literal[
         "text_delta",
-        "text_done",
         "tool_use_start",
         "tool_use_delta",
-        "tool_use_done",
         "message_start",
         "message_stop",
         "error",
