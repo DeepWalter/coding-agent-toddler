@@ -244,7 +244,7 @@ def executor(registry, settings) -> ToolExecutor:
 def conv_ctx() -> ConversationContext:
     """Bare ConversationContext for tests (no backing session)."""
     return ConversationContext(
-        session_mgr=None,
+        storage_mgr=None,
         prompt_builder=SystemPromptBuilder(),
     )
 
