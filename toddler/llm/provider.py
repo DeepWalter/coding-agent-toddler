@@ -67,7 +67,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
     settings:
         Resolved :class:`~toddler.config.settings.Settings` object that
         carries ``api_key``, ``base_url``, ``model``, and
-        ``context_window``.
+        ``max_context_length``.
     http_client:
         Optional shared ``httpx.AsyncClient``.  When *None* a default
         client is created internally.
@@ -92,8 +92,8 @@ class OpenAICompatibleProvider(BaseLLMProvider):
     # ------------------------------------------------------------------
 
     @property
-    def context_window(self) -> int:
-        return self._settings.context_window
+    def max_context_length(self) -> int:
+        return self._settings.max_context_length
 
     # ------------------------------------------------------------------
     # generate — the core API

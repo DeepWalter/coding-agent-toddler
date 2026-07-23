@@ -25,8 +25,8 @@ class BaseLLMProvider(ABC):
 
     @property
     @abstractmethod
-    def context_window(self) -> int:
-        """Maximum context window size in tokens for the active model."""
+    def max_context_length(self) -> int:
+        """Maximum context length in tokens for the active model."""
         ...
 
     # ------------------------------------------------------------------

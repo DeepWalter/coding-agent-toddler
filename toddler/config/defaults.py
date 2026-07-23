@@ -5,7 +5,7 @@ from pathlib import Path
 # --- LLM Provider ---
 DEFAULT_MODEL = "deepseek-v4-pro"
 DEFAULT_BASE_URL = "https://api.deepseek.com"
-DEFAULT_CONTEXT_WINDOW = 128_000
+DEFAULT_MAX_CONTEXT_LENGTH = 128_000
 
 # --- Agent Loop ---
 DEFAULT_MAX_ITERATIONS = 50

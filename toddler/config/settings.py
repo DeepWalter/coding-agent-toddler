@@ -53,8 +53,8 @@ class Settings:
     api_key: str = field(
         default_factory=lambda: _env("DEEPSEEK_API_KEY", "")
     )
-    context_window: int = field(
-        default_factory=lambda: _env_int("TODDLER_CONTEXT_WINDOW", defaults.DEFAULT_CONTEXT_WINDOW)
+    max_context_length: int = field(
+        default_factory=lambda: _env_int("TODDLER_MAX_CONTEXT_LENGTH", defaults.DEFAULT_MAX_CONTEXT_LENGTH)
     )
 
     # --- Agent ---

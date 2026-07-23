@@ -43,7 +43,7 @@ class ContextWindowManager:
         exceed 80 % of the context window.
     output_headroom:
         Tokens reserved for the model's next response.  The effective
-        "full" ceiling is ``context_window - output_headroom``.
+        "full" ceiling is ``max_context_length - output_headroom``.
     """
 
     def __init__(
@@ -64,7 +64,7 @@ class ContextWindowManager:
     @property
     def context_limit(self) -> int:
         """The model's advertised context window size (tokens)."""
-        return self._llm.context_window
+        return self._llm.max_context_length
 
     @property
     def effective_limit(self) -> int:

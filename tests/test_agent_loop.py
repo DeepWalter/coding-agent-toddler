@@ -52,7 +52,7 @@ class MockLLMProvider(BaseLLMProvider):
         self.messages_history: list[list[Message]] = []
 
     @property
-    def context_window(self) -> int:
+    def max_context_length(self) -> int:
         return 128_000
 
     async def generate(
