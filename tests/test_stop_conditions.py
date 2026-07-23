@@ -3,7 +3,7 @@
 import pytest
 
 from toddler.agent.stop_conditions import StopConditionChecker
-from toddler.llm.types import TokenUsage
+from toddler.llm import TokenUsage
 
 
 class TestStopConditionChecker:

@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from toddler.llm.types import TokenUsage
+from toddler.llm import TokenUsage
 
 # ---------------------------------------------------------------------------
 # Stop reason

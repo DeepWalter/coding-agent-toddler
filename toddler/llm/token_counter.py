@@ -8,10 +8,12 @@ to pass the model string.
 from __future__ import annotations
 
 import json
+from typing import TYPE_CHECKING
 
 import tiktoken
 
-from toddler.llm.types import Message
+if TYPE_CHECKING:
+    from toddler.llm.messages import Message
 
 # ---------------------------------------------------------------------------
 # Model → tiktoken encoding mapping

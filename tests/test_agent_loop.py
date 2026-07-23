@@ -25,7 +25,7 @@ from toddler.config.settings import Settings
 from toddler.context.conversation_context import ConversationContext
 from toddler.context.system_prompt import SystemPromptBuilder
 from toddler.llm.base import BaseLLMProvider
-from toddler.llm.types import ContentBlock, LLMResponse, Message, StreamEvent, TokenUsage
+from toddler.llm import ContentBlock, LLMResponse, Message, StreamEvent, TokenUsage
 from toddler.tools.base import BaseTool, Permission, ToolResult
 from toddler.tools.executor import ToolExecutor
 from toddler.tools.registry import ToolRegistry

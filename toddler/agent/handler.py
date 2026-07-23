@@ -1,6 +1,6 @@
 """StreamHandler — consumes StreamEvent items, yields AgentEvent objects.
 
-Wraps the raw :class:`~toddler.llm.types.StreamEvent` iterator from the
+Wraps the raw :class:`~toddler.llm.StreamEvent` iterator from the
 LLM provider and aggregates text + tool-call deltas into higher-level
 :class:`~toddler.agent.events.AgentEvent` objects for the CLI layer.
 
@@ -23,7 +23,7 @@ from toddler.agent.events import (
     ToolCallDelta,
     ToolCallStart,
 )
-from toddler.llm.types import ContentBlock, Message, StreamEvent, TokenUsage
+from toddler.llm import ContentBlock, Message, StreamEvent, TokenUsage
 
 logger = logging.getLogger(__name__)
 

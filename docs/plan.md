@@ -79,7 +79,7 @@ toddler/
 
 ## Key Data Models
 
-### Message/LLM Types (`llm/types.py`)
+### Message/LLM Types (`llm/messages.py`, `llm/responses.py`)
 
 ```python
 @dataclass
@@ -626,7 +626,8 @@ PLAN_MODE_MIN_WORDS = 200
 
 ### Step 1.2 — LLM Types
 
-- [x] `llm/types.py` — `ContentBlock`, `Message`, `StreamEvent`, `TokenUsage`, `LLMResponse`
+- [x] `llm/messages.py` — `ContentBlock`, `Message`
+- [x] `llm/responses.py` — `StreamEvent`, `TokenUsage`, `LLMResponse`
 
 ### Step 1.3 — Agent Events
 

@@ -2,7 +2,7 @@
 ConversationSummary, StoredMessage.
 
 These are the persistence-layer dataclasses for the SQLite-backed
-store.  They are deliberately separate from :mod:`toddler.llm.types` to keep
+store.  They are deliberately separate from :mod:`toddler.llm.messages` to keep
 the wire-format and storage concerns decoupled.
 """
 
@@ -222,7 +222,7 @@ class ConversationSummary:
 class StoredMessage:
     """A single message row as stored in the ``messages`` table.
 
-    The ``content_json`` field holds the serialised list[:class:`~toddler.llm.types.ContentBlock`] - use
+    The ``content_json`` field holds the serialised list[:class:`~toddler.llm.ContentBlock`] - use
     :meth:`~toddler.session.manager._serialize_content` / :meth:`~toddler.session.manager._deserialize_content`
     to go between Python objects and the database representation.
     """  # noqa: E501

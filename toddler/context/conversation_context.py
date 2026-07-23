@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from toddler.llm.types import Message
+from toddler.llm import Message
 
 if TYPE_CHECKING:
     from toddler.context.compaction import ConversationCompactor

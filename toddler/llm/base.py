@@ -8,8 +8,11 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING
 
-from toddler.llm.types import LLMResponse, Message, StreamEvent
+if TYPE_CHECKING:
+    from toddler.llm.messages import Message
+    from toddler.llm.responses import LLMResponse, StreamEvent
 
 
 class BaseLLMProvider(ABC):

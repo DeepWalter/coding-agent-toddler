@@ -28,7 +28,7 @@ from toddler.agent.events import (
 )
 from toddler.agent.handler import StreamHandler
 from toddler.agent.stop_conditions import StopConditionChecker
-from toddler.llm.types import ContentBlock, Message, TokenUsage
+from toddler.llm import ContentBlock, Message, TokenUsage
 from toddler.tools.base import Permission, ToolCall, ToolResult
 
 if TYPE_CHECKING:

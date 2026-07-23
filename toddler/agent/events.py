@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from toddler.llm.types import TokenUsage
+    from toddler.llm import TokenUsage
     from toddler.tools.base import ToolResult
 
 

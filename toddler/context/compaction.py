@@ -11,10 +11,10 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
-from toddler.llm.types import Message
+from toddler.llm import Message
 
 if TYPE_CHECKING:
-    from toddler.llm.base import BaseLLMProvider
+    from toddler.llm import BaseLLMProvider
 
 logger = logging.getLogger(__name__)
 

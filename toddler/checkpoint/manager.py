@@ -238,7 +238,7 @@ class CheckpointManager:
 
                 # Insert a rollback marker so the user/LLM can see what
                 # happened.
-                from toddler.llm.types import ContentBlock, Message
+                from toddler.llm import ContentBlock, Message
 
                 marker = Message.user(
                     [

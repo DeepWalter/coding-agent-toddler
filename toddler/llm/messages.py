@@ -1,4 +1,4 @@
-"""Core LLM data models — Message, ContentBlock, StreamEvent, TokenUsage."""
+"""LLM provider input models — ContentBlock and Message."""
 
 from __future__ import annotations
 
@@ -6,8 +6,11 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Literal, Self
 
+__all__ = ["ContentBlock", "Message"]
+
+
 # ---------------------------------------------------------------------------
-# Content blocks — the building blocks of messages
+# ContentBlock — the building block of messages
 # ---------------------------------------------------------------------------
 
 
@@ -28,8 +31,10 @@ class ContentBlock:
     # text payload
     text: str | None = None
 
-    # tool_use payload
+    # shared tool payload
     tool_id: str | None = None
+
+    # tool_use payload
     tool_name: str | None = None
     tool_input: dict | None = None
 
@@ -75,7 +80,21 @@ class ContentBlock:
 
 @dataclass
 class Message:
-    """A conversation turn — one role + a list of ContentBlocks."""
+    """An entry in the LLM conversation history.
+
+    Each message pairs a ``role`` with a list of :class:`ContentBlock`
+    items and a :class:`~datetime.datetime` timestamp.
+
+    Roles follow the OpenAI Chat Completions convention:
+
+    - ``system``  — high-level instructions injected at the start of the
+      conversation to steer the model's behaviour.
+    - ``user`` — input from the human (or a proxy acting on their behalf).
+    - ``assistant`` — LLM-generated replies, including text and tool-use
+      requests.
+    - ``tool`` — results returned by tools after an assistant's tool-use
+      request.  Must carry the same ``tool_id`` that the assistant used.
+    """
 
     role: Literal["system", "user", "assistant", "tool"]
     content: list[ContentBlock]
@@ -103,76 +122,3 @@ class Message:
         return "".join(
             b.text for b in self.content if b.type == "text" and b.text
         )
-
-
-# ---------------------------------------------------------------------------
-# Streaming events (normalised across providers)
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class StreamEvent:
-    """One normalised streaming event from the LLM backend.
-
-    Event types and their expected ``data`` keys:
-
-    ===================  =========================================
-    ``text_delta``       ``{"text": "..."}``
-    ``tool_use_start``   ``{"tool_id": ..., "tool_name": ...}``
-    ``tool_use_delta``   ``{"tool_id": ..., "input_delta": {...}}``
-    ``message_start``    ``{}``
-    ``message_stop``     ``{"stop_reason": ..., "usage": TokenUsage}``
-    ``error``            ``{"message": ..., "status_code": ...}``
-    ===================  =========================================
-    """
-
-    type: Literal[
-        "text_delta",
-        "tool_use_start",
-        "tool_use_delta",
-        "message_start",
-        "message_stop",
-        "error",
-    ]
-    data: dict = field(default_factory=dict)
-
-
-# ---------------------------------------------------------------------------
-# Token usage
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class TokenUsage:
-    """Token counts for a single API call."""
-
-    input_tokens: int = 0
-    output_tokens: int = 0
-    cache_read_tokens: int = 0
-    cache_creation_tokens: int = 0
-
-    @property
-    def total(self) -> int:
-        return self.input_tokens + self.output_tokens
-
-    def __add__(self, other: Self) -> Self:
-        return TokenUsage(
-            input_tokens=self.input_tokens + other.input_tokens,
-            output_tokens=self.output_tokens + other.output_tokens,
-            cache_read_tokens=self.cache_read_tokens + other.cache_read_tokens,
-            cache_creation_tokens=self.cache_creation_tokens + other.cache_creation_tokens,  # noqa: E501
-        )
-
-
-# ---------------------------------------------------------------------------
-# LLM Response (non-streaming)
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class LLMResponse:
-    """A complete (non-streamed) response from the LLM."""
-
-    messages: list[Message]
-    stop_reason: Literal["end_turn", "tool_use", "max_tokens", "stop_sequence"]
-    usage: TokenUsage

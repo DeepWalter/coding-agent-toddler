@@ -1,8 +1,8 @@
 """OpenAI-compatible LLM provider — DeepSeek, OpenAI, local models.
 
-Implements :class:`BaseLLMProvider` using the ``openai`` SDK.  Supports
-streaming, tool calling, and message conversion between Toddler's internal
-format and the OpenAI chat-completion wire format.
+Implements :class:`BaseLLMProvider` via the ``openai`` SDK.  Handles
+streaming, tool calling, and converting between Toddler's internal
+message format and the OpenAI wire format.
 
 Works with any OpenAI-compatible endpoint:
 - DeepSeek (``https://api.deepseek.com``)
@@ -21,14 +21,9 @@ import httpx
 from openai import NOT_GIVEN, AsyncOpenAI, NotGiven
 
 from toddler.llm.base import BaseLLMProvider
+from toddler.llm.messages import ContentBlock, Message
+from toddler.llm.responses import LLMResponse, StreamEvent, TokenUsage
 from toddler.llm.token_counter import TokenCounter
-from toddler.llm.types import (
-    ContentBlock,
-    LLMResponse,
-    Message,
-    StreamEvent,
-    TokenUsage,
-)
 
 if TYPE_CHECKING:
     from toddler.config.settings import Settings
@@ -108,12 +103,15 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         temperature: float = 0.0,
         stream: bool = True,
     ) -> AsyncIterator[StreamEvent] | LLMResponse:
+        openai_messages = self._messages_to_openai(messages)
+        openai_tools = self._tools_param(tools)
+
         if stream:
             return self._generate_streaming(
-                messages, tools, max_tokens, temperature
+                openai_messages, openai_tools, max_tokens, temperature
             )
         return await self._generate_non_streaming(
-            messages, tools, max_tokens, temperature
+            openai_messages, openai_tools, max_tokens, temperature
         )
 
     # ------------------------------------------------------------------
@@ -144,16 +142,12 @@ class OpenAICompatibleProvider(BaseLLMProvider):
 
     async def _generate_streaming(
         self,
-        messages: list[Message],
-        tools: list[dict],
+        openai_messages: list[dict],
+        openai_tools: list[dict] | NotGiven,
         max_tokens: int,
         temperature: float,
     ) -> AsyncIterator[StreamEvent]:
         """Yield :class:`StreamEvent` items from an SSE stream."""
-
-        openai_messages = self._messages_to_openai(messages)
-        openai_tools = self._tools_param(tools)
-
         yield StreamEvent(type="message_start", data={})
 
         try:
@@ -223,15 +217,12 @@ class OpenAICompatibleProvider(BaseLLMProvider):
 
     async def _generate_non_streaming(
         self,
-        messages: list[Message],
-        tools: list[dict],
+        openai_messages: list[dict],
+        openai_tools: list[dict] | NotGiven,
         max_tokens: int,
         temperature: float,
     ) -> LLMResponse:
         """Return a single :class:`LLMResponse` (no streaming)."""
-
-        openai_messages = self._messages_to_openai(messages)
-        openai_tools = self._tools_param(tools)
 
         try:
             response = await self._client.chat.completions.create(
