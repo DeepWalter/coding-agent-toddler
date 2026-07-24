@@ -191,52 +191,49 @@ class CLIApp:
             user_input, force_plan=force_plan,
         )
 
-        try:
-            async for event in gen:
-                match event:
-                    case TextDelta():
-                        self._renderer.on_text_delta(event)
+        async for event in gen:
+            match event:
+                case TextDelta():
+                    self._renderer.on_text_delta(event)
 
-                    case ToolCallStart():
-                        self._renderer.on_tool_call_start(event)
+                case ToolCallStart():
+                    self._renderer.on_tool_call_start(event)
 
-                    case ToolCallDelta():
-                        self._renderer.on_tool_call_delta(event)
+                case ToolCallDelta():
+                    self._renderer.on_tool_call_delta(event)
 
-                    case ToolCallEnd():
-                        self._renderer.on_tool_call_end(event)
+                case ToolCallEnd():
+                    self._renderer.on_tool_call_end(event)
 
-                    case AgentPaused():
-                        self._renderer.pause()
-                        self._renderer.on_agent_paused(event)
-                        approved = await self._confirm(event)
-                        if approved:
-                            await self._coordinator.agent.approve_tool_call()
-                        else:
-                            await self._coordinator.agent.deny_tool_call()
-                        self._renderer.resume()
+                case AgentPaused():
+                    self._renderer.pause()
+                    self._renderer.on_agent_paused(event)
+                    approved = await self._confirm(event)
+                    if approved:
+                        await self._coordinator.agent.approve_tool_call()
+                    else:
+                        await self._coordinator.agent.deny_tool_call()
+                    self._renderer.resume()
 
-                    case AgentFinished():
-                        await self._renderer.wait_for_dismiss()
-                        self._renderer.stop()
-                        self._renderer.on_agent_finished(event)
+                case AgentFinished():
+                    self._renderer.stop()
+                    self._renderer.flush_to_console()
+                    self._renderer.on_agent_finished(event)
 
-                    case AgentError():
-                        self._renderer.pause()
-                        self._renderer.on_agent_error(event)
-                        if not event.recoverable:
-                            return
-                        self._renderer.resume()
+                case AgentError():
+                    self._renderer.pause()
+                    self._renderer.on_agent_error(event)
+                    if not event.recoverable:
+                        return
+                    self._renderer.resume()
 
-                    case PlanProposed():
-                        self._renderer.pause()
-                        self._renderer.on_plan_proposed(event)
-                        self._renderer.resume()
+                case PlanProposed():
+                    self._renderer.pause()
+                    self._renderer.on_plan_proposed(event)
+                    self._renderer.resume()
 
-                    case _:
-                        pass
-        finally:
-            self._renderer.stop()
+                case _:
+                    pass
 
     # ==================================================================
     # Confirmation prompt

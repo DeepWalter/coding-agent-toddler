@@ -13,7 +13,6 @@ current output mode.
 
 from __future__ import annotations
 
-import asyncio
 import sys
 import time
 from abc import ABC, abstractmethod
@@ -107,7 +106,9 @@ class Renderer(ABC):
     # Lifecycle (no-ops — override in subclasses that need them)
     # ------------------------------------------------------------------
 
-    def start(self, turn_number: int = 0, output_path: Path | None = None) -> None:
+    def start(
+        self, turn_number: int = 0, output_path: Path | None = None  # noqa: ARG002
+    ) -> None:
         """Start the renderer. No-op by default."""
         return
 
@@ -126,12 +127,12 @@ class Renderer(ABC):
         """Resume after :meth:`pause`. No-op by default."""
         return
 
-    async def wait_for_dismiss(self) -> None:
-        """Wait for user to dismiss the output before continuing.
+    def flush_to_console(self) -> None:
+        """Flush accumulated output to the main console scrollback.
 
         No-op by default.  :class:`StreamingRenderer` overrides this to
-        show a prompt on the alternate screen and block until the user
-        presses Enter.
+        print the final assembled renderable after the alternate screen
+        has been exited.
         """
         return
 
@@ -376,51 +377,21 @@ class StreamingRenderer(Renderer):
         self._refresh(force=True)
 
     def stop(self) -> None:
-        """Stop the Live display and print the final frame.
+        """Show a dismiss prompt on the alternate screen, wait for Enter,
+        then stop the Live display.
 
-        Because :attr:`_live` uses ``screen=True`` (alternate screen
-        buffer), stopping Live restores the original terminal content.
-        We re-print the final renderable so the completed output remains
-        visible in the main screen buffer and scrollback.
-
-        When the accumulated text exceeds :attr:`_max_lines` and an
-        *output_path* was provided, the full text is written to disk,
-        only the first N lines are printed to scrollback, and a clickable
-        truncation notice is appended.
-
-        Idempotent — subsequent calls after the first are no-ops so that
-        ``finally`` blocks can safely call ``stop()`` even when the
-        caller already stopped the renderer explicitly.
+        Idempotent — subsequent calls after the first are no-ops.
         """
         if self._stopped:
             return
+
+        self._dismiss_prompt = True
+        self._refresh(force=True)
+        sys.stdin.readline()
+        self._dismiss_prompt = False
+
         self._stopped = True
         self._live.stop()
-
-        lines = self._text.splitlines()
-        should_truncate = (
-            self._max_lines > 0
-            and len(lines) > self._max_lines
-            and self._output_path is not None
-            and self._turn_number > 0
-        )
-
-        if should_truncate:
-            full_text = self._text
-            assert self._output_path is not None  # narrowed by should_truncate
-            self._output_path.parent.mkdir(parents=True, exist_ok=True)
-            self._output_path.write_text(full_text, encoding="utf-8")
-
-            # Swap in truncated text for scrollback display
-            self._text = "\n".join(lines[: self._max_lines])
-            renderable = self._build_renderable()
-            notice = self._build_truncation_notice(self._output_path)
-            self._console.print(Group(renderable, notice))
-
-            # Restore full text on the instance
-            self._text = full_text
-        else:
-            self._console.print(self._build_renderable())
 
     def _build_truncation_notice(self, filepath: Path) -> Panel:
         """Build a clickable truncation notice with OSC 8 file link."""
@@ -461,20 +432,42 @@ class StreamingRenderer(Renderer):
         """Resume Live after :meth:`pause` (preserving accumulated state)."""
         self._live.start()
 
-    async def wait_for_dismiss(self) -> None:
-        """Show a dismiss prompt on the alternate screen and wait for Enter.
+    def flush_to_console(self) -> None:
+        """Print the final assembled output to the main console scrollback.
 
-        The prompt text is baked into the Live renderable so it appears
-        on the alternate screen alongside the streaming output.  This
-        method blocks until the user presses Enter, then clears the
-        prompt and returns so the caller can call :meth:`stop` to
-        transition to the main screen.
+        When the accumulated text exceeds :attr:`_max_lines` and an
+        *output_path* was provided, the full text is written to disk,
+        only the first N lines are printed to scrollback, and a clickable
+        truncation notice is appended.
+
+        Call after :meth:`stop` has exited the alternate screen so the
+        output lands in the terminal scrollback rather than on the
+        alternate screen.
         """
-        self._dismiss_prompt = True
-        self._refresh(force=True)
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, sys.stdin.readline)
-        self._dismiss_prompt = False
+        lines = self._text.splitlines()
+        should_truncate = (
+            self._max_lines > 0
+            and len(lines) > self._max_lines
+            and self._output_path is not None
+            and self._turn_number > 0
+        )
+
+        if should_truncate:
+            full_text = self._text
+            assert self._output_path is not None  # narrowed by should_truncate
+            self._output_path.parent.mkdir(parents=True, exist_ok=True)
+            self._output_path.write_text(full_text, encoding="utf-8")
+
+            # Swap in truncated text for scrollback display
+            self._text = "\n".join(lines[: self._max_lines])
+            renderable = self._build_renderable()
+            notice = self._build_truncation_notice(self._output_path)
+            self._console.print(Group(renderable, notice))
+
+            # Restore full text on the instance
+            self._text = full_text
+        else:
+            self._console.print(self._build_renderable())
 
     # ------------------------------------------------------------------
     # Streaming event handlers
