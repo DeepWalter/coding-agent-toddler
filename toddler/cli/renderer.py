@@ -736,56 +736,59 @@ class StreamingRenderer(Renderer):
     def _wait_for_dismiss(self) -> None:
         """Block until Enter, allowing ``↑``/``↓`` to scroll the output.
 
-        Disables only canonical mode and echo on stdin so that arrow-key
-        sequences can be read byte-by-byte.  Output processing flags
-        (notably ``OPOST``) are left untouched so that Rich's
+        Disables echo on stdin so typed characters don't appear on screen
+        and cause a flicker when the alternate screen is restored.  When the
+        content exceeds the panel height limit, also disables canonical mode
+        so arrow-key sequences can be read byte-by-byte.  Output processing
+        flags (notably ``OPOST``) are left untouched so that Rich's
         :class:`~rich.live.Live` display continues to render correctly.
-
-        When the content fits within the panel height limit (or height
-        limiting is disabled), falls back to a simple ``sys.stdin.readline``.
         """
-        if not (
+        scrollable = (
             self._max_panel_height > 0
             and self._total_content_height > self._max_panel_height
-        ):
-            sys.stdin.readline()
-            return
+        )
 
         fd = sys.stdin.fileno()
         old = termios.tcgetattr(fd)
         try:
             new = termios.tcgetattr(fd)
-            # Disable canonical mode (line buffering) and echo only;
-            # keep OPOST and all other output flags intact so that
-            # Rich's alternate-screen rendering is unaffected.
-            new[3] &= ~(termios.ICANON | termios.ECHO)  # lflag
-            new[6][termios.VMIN] = 1   # cc: read blocks for at least 1 byte
-            new[6][termios.VTIME] = 0  # cc: no inter-byte timeout
+            new[3] &= ~termios.ECHO  # lflag: never echo typed characters
+            if scrollable:
+                new[3] &= ~termios.ICANON  # disable line buffering
+                new[6][termios.VMIN] = 1   # cc: read blocks for ≥1 byte
+                new[6][termios.VTIME] = 0  # cc: no inter-byte timeout
             termios.tcsetattr(fd, termios.TCSANOW, new)
 
-            while True:
-                self._refresh(force=True)
-                r, _, _ = select.select([sys.stdin], [], [], 0.1)
-                if not r:
-                    continue
-                ch = os.read(fd, 1)
-                if ch == b"\x1b":
-                    # Check for arrow-key / page-up/down sequences.
-                    r2, _, _ = select.select([sys.stdin], [], [], 0.01)
-                    if r2:
-                        seq = os.read(fd, 2)
-                        if seq == b"[A":          # ↑
-                            self._scroll_up()
-                        elif seq == b"[B":        # ↓
-                            self._scroll_down()
-                        elif seq == b"[5":        # Page Up
-                            self._scroll_up(lines=5)
-                        elif seq == b"[6":        # Page Down
-                            self._scroll_down(lines=5)
-                elif ch in (b"\r", b"\n", b"q", b"Q", b"\x03"):
-                    break
+            if scrollable:
+                self._wait_for_dismiss_scrollable(fd)
+            else:
+                sys.stdin.readline()
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+    def _wait_for_dismiss_scrollable(self, fd: int) -> None:
+        """Read loop that handles arrow-key scrolling until dismiss."""
+        while True:
+            self._refresh(force=True)
+            r, _, _ = select.select([sys.stdin], [], [], 0.1)
+            if not r:
+                continue
+            ch = os.read(fd, 1)
+            if ch == b"\x1b":
+                # Check for arrow-key / page-up/down sequences.
+                r2, _, _ = select.select([sys.stdin], [], [], 0.01)
+                if r2:
+                    seq = os.read(fd, 2)
+                    if seq == b"[A":          # ↑
+                        self._scroll_up()
+                    elif seq == b"[B":        # ↓
+                        self._scroll_down()
+                    elif seq == b"[5":        # Page Up
+                        self._scroll_up(lines=5)
+                    elif seq == b"[6":        # Page Down
+                        self._scroll_down(lines=5)
+            elif ch in (b"\r", b"\n", b"q", b"Q", b"\x03"):
+                break
 
 # ---------------------------------------------------------------------------
 # Non-streaming implementation
