@@ -61,6 +61,7 @@ class CLIApp:
         self._renderer = create_renderer(
             streaming=self._settings.streaming_enabled,
             max_output_lines=self._settings.max_output_lines,
+            max_output_panel_height=self._settings.max_output_panel_height,
         )
         self._input = InputHandler()
         self._turn_counter = 0

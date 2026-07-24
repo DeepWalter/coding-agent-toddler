@@ -23,6 +23,7 @@ CONFIRM_SHELL_DANGEROUS = True
 # --- Streaming ---
 STREAMING_ENABLED = True
 MAX_OUTPUT_LINES = 40
+MAX_OUTPUT_PANEL_HEIGHT = 20  # 0 = unlimited (no clipping)
 
 # --- Sessions & Data ---
 SESSION_DIR = Path.home() / ".toddler"

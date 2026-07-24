@@ -77,6 +77,13 @@ def build_argparser() -> argparse.ArgumentParser:
         help="Max lines of streaming output before truncating (0 to disable).",
     )
     p.add_argument(
+        "--max-output-panel-height",
+        type=int,
+        metavar="N",
+        default=None,
+        help="Max height of the output panel in lines (0 to disable).",
+    )
+    p.add_argument(
         "--verbose", "-v",
         action="store_true",
         help="Enable debug logging.",

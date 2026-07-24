@@ -13,17 +13,21 @@ current output mode.
 
 from __future__ import annotations
 
+import os
+import select
 import sys
+import termios
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from rich.console import Console, Group
+from rich.console import Console, Group, RenderableType
 from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
+from rich.segment import Segment, SegmentLines
 from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
@@ -316,6 +320,11 @@ class StreamingRenderer(Renderer):
         Max refresh rate for the Live display (default 10).
     max_output_lines:
         Max lines of output before truncating (0 to disable, default 40).
+    max_output_panel_height:
+        Max height of the output panel in lines.  When > 0 and the
+        rendered markdown exceeds this height, the panel clips to show
+        only the latest (bottom) content.  Set to 0 to disable.
+        During the dismiss prompt, arrow keys scroll the clipped content.
     """
 
     def __init__(
@@ -324,6 +333,7 @@ class StreamingRenderer(Renderer):
         *,
         refresh_per_second: float = 10.0,
         max_output_lines: int = 40,
+        max_output_panel_height: int = 0,
     ) -> None:
         super().__init__(console)
         self._text = ""
@@ -332,6 +342,9 @@ class StreamingRenderer(Renderer):
         self._min_interval = 1.0 / refresh_per_second
         self._last_update = 0.0
         self._max_lines = max_output_lines
+        self._max_panel_height = max_output_panel_height
+        self._scroll_offset: int = 0
+        self._total_content_height: int = 0
         self._turn_number = 0
         self._output_path: Path | None = None
         self._stopped = False
@@ -369,6 +382,8 @@ class StreamingRenderer(Renderer):
         self._text = ""
         self._tools.clear()
         self._tool_order.clear()
+        self._scroll_offset = 0
+        self._total_content_height = 0
         self._turn_number = turn_number
         self._output_path = output_path
         self._stopped = False
@@ -381,17 +396,24 @@ class StreamingRenderer(Renderer):
         then stop the Live display.
 
         Idempotent — subsequent calls after the first are no-ops.
+
+        When the output panel height limit is active and content exceeds
+        it, ``↑`` / ``↓`` arrow keys scroll the output before dismissing.
         """
         if self._stopped:
             return
 
+        self._scroll_offset = 0
         self._dismiss_prompt = True
         self._refresh(force=True)
-        sys.stdin.readline()
+        self._wait_for_dismiss()
         self._dismiss_prompt = False
 
         self._stopped = True
         self._live.stop()
+        # Disable panel-height clipping so that flush_to_console()
+        # renders the full markdown into the terminal scrollback.
+        self._max_panel_height = 0
 
     def _build_truncation_notice(self, filepath: Path) -> Panel:
         """Build a clickable truncation notice with OSC 8 file link."""
@@ -530,6 +552,96 @@ class StreamingRenderer(Renderer):
         self._last_update = now
         self._live.update(self._build_renderable())
 
+    # ------------------------------------------------------------------
+    # Output panel height limiting
+    # ------------------------------------------------------------------
+
+    def _render_md_to_lines(
+        self, md: Markdown
+    ) -> list[list[Segment]]:
+        """Render *md* and return its styled segment lines.
+
+        Uses ``console.render_lines`` with the current console width so
+        that word-wrapping is accounted for in the line count.
+        """
+        width = self._console.width - 4  # allow for panel border + padding
+        options = self._console.options.update_width(max(1, width))
+        return list(self._console.render_lines(md, options))
+
+    def _clip_output_panel(self, md: Markdown) -> RenderableType:
+        """Return a renderable clipped to ``_max_panel_height`` lines.
+
+        When the markdown height fits within the limit the original
+        ``Markdown`` object is returned unchanged.  Otherwise the
+        rendered segment lines are sliced to show the visible window
+        (respecting ``_scroll_offset``) and wrapped in
+        :class:`~rich.segment.SegmentLines`.
+        """
+        if self._max_panel_height <= 0:
+            return md
+
+        all_lines = self._render_md_to_lines(md)
+        total = len(all_lines)
+        self._total_content_height = total
+
+        if total <= self._max_panel_height:
+            return md
+
+        # Reserve room for scroll indicators (up to 2 lines).
+        available = self._max_panel_height
+        has_above = False
+        has_below = False
+
+        # During streaming, always pin to the bottom (ignore offset).
+        scroll = self._scroll_offset if self._dismiss_prompt else 0
+
+        # Calculate visible range — we want the *end* of the content
+        # when scroll offset is 0 (default / streaming bottom-follow).
+        end = total - scroll
+        start = max(0, end - available)
+        # Adjust end if we started from 0 and there are fewer lines than
+        # available in the first scroll position.
+        end = min(start + available, total)
+
+        has_above = start > 0
+        has_below = end < total
+
+        # If indicators are shown, reduce the content slice accordingly.
+        indicator_lines = int(has_above) + int(has_below)
+        if indicator_lines and end - start + indicator_lines > available:
+            if has_above and has_below:
+                start += 1
+                end -= 1
+            elif has_above:
+                start += indicator_lines
+            else:
+                end -= indicator_lines
+
+        visible = all_lines[start:end]
+
+        # Defensive: if the visible window is empty (shouldn't happen),
+        # fall back to showing the raw markdown.
+        if not visible:
+            return md
+
+        # Build the result with scroll indicators.
+        parts: list[RenderableType] = []
+        if has_above:
+            parts.append(
+                Text("↑ … more above", style="dim italic", justify="center")
+            )
+        parts.append(SegmentLines(visible, new_lines=True))
+        if has_below:
+            parts.append(
+                Text("↓ … more below", style="dim italic", justify="center")
+            )
+
+        return Group(*parts)
+
+    # ------------------------------------------------------------------
+    # Build renderable
+    # ------------------------------------------------------------------
+
     def _build_renderable(self) -> Group:
         """Build the dual-panel output: Output (markdown) + Tools (table)."""
         md = (
@@ -537,8 +649,9 @@ class StreamingRenderer(Renderer):
             if self._text
             else Markdown("*Waiting for response…*")
         )
+        clipped = self._clip_output_panel(md)
         output_panel = Panel(
-            md,
+            clipped,
             title="Output",
             title_align="left",
             border_style="blue",
@@ -568,11 +681,86 @@ class StreamingRenderer(Renderer):
             elements.append(tools_panel)
 
         if self._dismiss_prompt:
-            elements.append(
-                Text("\nPress Enter to continue…", style="dim italic")
-            )
+            if self._total_content_height > self._max_panel_height > 0:
+                hint = "\n↑↓ to scroll • Enter to continue…"
+            else:
+                hint = "\nPress Enter to continue…"
+            elements.append(Text(hint, style="dim italic"))
 
         return Group(*elements)
+
+    # ------------------------------------------------------------------
+    # Dismiss prompt with scroll support
+    # ------------------------------------------------------------------
+
+    def _scroll_up(self, lines: int = 1) -> None:
+        """Scroll the output panel view upward (show older content)."""
+        max_offset = max(
+            0, self._total_content_height - self._max_panel_height
+        )
+        self._scroll_offset = min(
+            self._scroll_offset + lines, max_offset
+        )
+
+    def _scroll_down(self, lines: int = 1) -> None:
+        """Scroll the output panel view downward (show newer content)."""
+        self._scroll_offset = max(self._scroll_offset - lines, 0)
+
+    def _wait_for_dismiss(self) -> None:
+        """Block until Enter, allowing ``↑``/``↓`` to scroll the output.
+
+        Disables only canonical mode and echo on stdin so that arrow-key
+        sequences can be read byte-by-byte.  Output processing flags
+        (notably ``OPOST``) are left untouched so that Rich's
+        :class:`~rich.live.Live` display continues to render correctly.
+
+        When the content fits within the panel height limit (or height
+        limiting is disabled), falls back to a simple ``sys.stdin.readline``.
+        """
+        if not (
+            self._max_panel_height > 0
+            and self._total_content_height > self._max_panel_height
+        ):
+            sys.stdin.readline()
+            return
+
+        fd = sys.stdin.fileno()
+        old = termios.tcgetattr(fd)
+        try:
+            new = termios.tcgetattr(fd)
+            # Disable canonical mode (line buffering) and echo only;
+            # keep OPOST and all other output flags intact so that
+            # Rich's alternate-screen rendering is unaffected.
+            new[3] &= ~(termios.ICANON | termios.ECHO)  # lflag
+            new[6][termios.VMIN] = 1   # cc: read blocks for at least 1 byte
+            new[6][termios.VTIME] = 0  # cc: no inter-byte timeout
+            termios.tcsetattr(fd, termios.TCSANOW, new)
+
+            while True:
+                self._refresh(force=True)
+                r, _, _ = select.select([sys.stdin], [], [], 0.1)
+                if not r:
+                    continue
+                ch = os.read(fd, 1)
+                if ch == b"\x1b":
+                    # Check for arrow-key / page-up/down sequences.
+                    r2, _, _ = select.select([sys.stdin], [], [], 0.01)
+                    if r2:
+                        seq = os.read(fd, 2)
+                        if seq == b"[A":          # ↑
+                            self._scroll_up()
+                        elif seq == b"[B":        # ↓
+                            self._scroll_down()
+                        elif seq == b"[5":        # Page Up
+                            self._scroll_up(lines=5)
+                        elif seq == b"[6":        # Page Down
+                            self._scroll_down(lines=5)
+                elif ch in (b"\r", b"\n", b"q", b"Q"):
+                    break
+                elif ch == b"\x03":  # Ctrl+C
+                    break
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
 # ---------------------------------------------------------------------------
 # Non-streaming implementation
@@ -645,6 +833,7 @@ def create_renderer(
     console: Console | None = None,
     refresh_per_second: float = 10.0,
     max_output_lines: int = 40,
+    max_output_panel_height: int = 0,
 ) -> Renderer:
     """Create a :class:`Renderer` for the given output mode.
 
@@ -663,12 +852,19 @@ def create_renderer(
     max_output_lines:
         Max lines of output before truncating (0 to disable, default 40).
         Only used when *streaming* is ``True``.
+    max_output_panel_height:
+        Max height of the output panel in lines.  When > 0 and the
+        rendered markdown exceeds this height, the live display clips
+        to show only the latest content and arrow-key scrolling is
+        enabled during dismiss.  Set to 0 to disable (default 0).
+        Only used when *streaming* is ``True``.
     """
     if streaming:
         return StreamingRenderer(
             console=console,
             refresh_per_second=refresh_per_second,
             max_output_lines=max_output_lines,
+            max_output_panel_height=max_output_panel_height,
         )
     return NonStreamingRenderer(console=console)
 

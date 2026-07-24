@@ -86,6 +86,11 @@ class Settings:
     max_output_lines: int = field(
         default_factory=lambda: _env_int("TODDLER_MAX_OUTPUT_LINES", defaults.MAX_OUTPUT_LINES)
     )
+    max_output_panel_height: int = field(
+        default_factory=lambda: _env_int(
+            "TODDLER_MAX_OUTPUT_PANEL_HEIGHT", defaults.MAX_OUTPUT_PANEL_HEIGHT
+        )
+    )
 
     # --- Session ---
     session_dir: Path = field(
@@ -122,6 +127,7 @@ class Settings:
             "streaming_enabled",
             "max_iterations",
             "max_output_lines",
+            "max_output_panel_height",
             "session_dir",
         ]
 
