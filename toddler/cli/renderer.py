@@ -345,15 +345,6 @@ class StreamingRenderer(Renderer):
         # Saved panel height so start() can restore it each turn.
         self._configured_max_panel_height: int = max_output_panel_height
 
-        # -- fixed resources ----------------------------------------------
-        # Rich Live display targeting the alternate screen.
-        self._live = Live(
-            self._build_renderable(),
-            console=self._console,
-            refresh_per_second=refresh_per_second,
-            screen=True,
-        )
-
         # -- throttling ---------------------------------------------------
         # Last time.monotonic() timestamp when the display refreshed.
         self._last_update: float = 0.0
@@ -381,6 +372,15 @@ class StreamingRenderer(Renderer):
         self._dismiss_prompt: bool = False
         # Error messages accumulated during the turn.
         self._errors: list[str] = []
+
+        # -- fixed resources ----------------------------------------------
+        # Rich Live display targeting the alternate screen.
+        self._live = Live(
+            self._build_renderable(),
+            console=self._console,
+            refresh_per_second=refresh_per_second,
+            screen=True,
+        )
 
     # ------------------------------------------------------------------
     # Lifecycle
