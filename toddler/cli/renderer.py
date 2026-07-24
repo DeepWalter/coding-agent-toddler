@@ -336,26 +336,51 @@ class StreamingRenderer(Renderer):
         max_output_panel_height: int = 0,
     ) -> None:
         super().__init__(console)
-        self._text = ""
-        self._tools: dict[str, _ToolRow] = {}
-        self._tool_order: list[str] = []
-        self._min_interval = 1.0 / refresh_per_second
-        self._last_update = 0.0
-        self._max_lines = max_output_lines
-        self._max_panel_height = max_output_panel_height
-        self._scroll_offset: int = 0
-        self._total_content_height: int = 0
-        self._turn_number = 0
-        self._output_path: Path | None = None
-        self._stopped = False
-        self._dismiss_prompt = False
-        self._errors: list[str] = []
+
+        # -- configuration (immutable after init) -------------------------
+        # Min seconds between Live refreshes (throttle).
+        self._min_interval: float = 1.0 / refresh_per_second
+        # Max output lines before truncating (0 = disabled).
+        self._max_lines: int = max_output_lines
+        # Saved panel height so start() can restore it each turn.
+        self._configured_max_panel_height: int = max_output_panel_height
+
+        # -- fixed resources ----------------------------------------------
+        # Rich Live display targeting the alternate screen.
         self._live = Live(
             self._build_renderable(),
             console=self._console,
             refresh_per_second=refresh_per_second,
             screen=True,
         )
+
+        # -- throttling ---------------------------------------------------
+        # Last time.monotonic() timestamp when the display refreshed.
+        self._last_update: float = 0.0
+
+        # -- per-turn mutable state (reset in start()) --------------------
+        # Accumulated markdown text for the current turn.
+        self._text: str = ""
+        # Tool rows keyed by tool call ID.
+        self._tools: dict[str, _ToolRow] = {}
+        # Tool call IDs in arrival order (for stable table ordering).
+        self._tool_order: list[str] = []
+        # Current panel height limit; zeroed by stop(), restored by start().
+        self._max_panel_height: int = max_output_panel_height
+        # Current scroll position during the dismiss prompt.
+        self._scroll_offset: int = 0
+        # Total rendered content height in lines (set during last render).
+        self._total_content_height: int = 0
+        # Current turn number (for truncation notice and /view hint).
+        self._turn_number: int = 0
+        # Path to write full output when truncation fires.
+        self._output_path: Path | None = None
+        # Guard so stop() is idempotent.
+        self._stopped: bool = False
+        # Whether the dismiss prompt is currently active.
+        self._dismiss_prompt: bool = False
+        # Error messages accumulated during the turn.
+        self._errors: list[str] = []
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -385,6 +410,7 @@ class StreamingRenderer(Renderer):
         self._tool_order.clear()
         self._scroll_offset = 0
         self._total_content_height = 0
+        self._max_panel_height = self._configured_max_panel_height
         self._turn_number = turn_number
         self._output_path = output_path
         self._stopped = False
