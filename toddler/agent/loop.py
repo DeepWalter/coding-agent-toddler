@@ -215,6 +215,14 @@ class AgentLoop:
 
             stop_checker.add_tokens(usage)
 
+            # Append every non-empty assistant response to the conversation
+            # history so that tool-call/tool-result pairs are always persisted
+            # (the coordinator no longer reconstructs this from events).
+            # Skip empty messages — they can occur on streaming errors where
+            # the handler assembled no text and no tool calls.
+            if assistant_msg.content:
+                messages.append(assistant_msg)
+
             # -- handle stop reason ---
             sr = StopConditionChecker.from_llm_stop_reason(stop_reason)
             if sr is not None:
@@ -236,8 +244,6 @@ class AgentLoop:
                         usage=usage,
                     )
                     return
-
-                messages.append(assistant_msg)
 
                 tool_result_blocks: list[ContentBlock] = []
 

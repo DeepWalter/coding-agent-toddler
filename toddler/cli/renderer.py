@@ -349,6 +349,7 @@ class StreamingRenderer(Renderer):
         self._output_path: Path | None = None
         self._stopped = False
         self._dismiss_prompt = False
+        self._errors: list[str] = []
         self._live = Live(
             self._build_renderable(),
             console=self._console,
@@ -388,6 +389,7 @@ class StreamingRenderer(Renderer):
         self._output_path = output_path
         self._stopped = False
         self._dismiss_prompt = False
+        self._errors.clear()
         self._live.start()
         self._refresh(force=True)
 
@@ -540,6 +542,20 @@ class StreamingRenderer(Renderer):
             )
         self._refresh()
 
+    def on_agent_error(self, event: AgentError) -> None:
+        """Accumulate error for inline display in the output panel.
+
+        Recoverable errors are accumulated and shown during the dismiss
+        prompt so they remain visible on the alternate screen.
+        Non-recoverable / fatal errors also print immediately via the
+        base implementation (the caller is expected to have called
+        :meth:`pause` first to exit the alternate screen).
+        """
+        label = "Recoverable" if event.recoverable else "Fatal"
+        self._errors.append(f"⚠ [{label}] {event.message}")
+        if not event.recoverable:
+            super().on_agent_error(event)
+
     # ------------------------------------------------------------------
     # Streaming internals
     # ------------------------------------------------------------------
@@ -680,6 +696,17 @@ class StreamingRenderer(Renderer):
             )
             elements.append(tools_panel)
 
+        if self._errors:
+            for err in self._errors[-3:]:  # show last 3 errors at most
+                elements.append(
+                    Panel(
+                        Text(err, style="bold red"),
+                        title="Error",
+                        title_align="left",
+                        border_style="red",
+                    )
+                )
+
         if self._dismiss_prompt:
             if self._total_content_height > self._max_panel_height > 0:
                 hint = "\n↑↓ to scroll • Enter to continue…"
@@ -755,9 +782,7 @@ class StreamingRenderer(Renderer):
                             self._scroll_up(lines=5)
                         elif seq == b"[6":        # Page Down
                             self._scroll_down(lines=5)
-                elif ch in (b"\r", b"\n", b"q", b"Q"):
-                    break
-                elif ch == b"\x03":  # Ctrl+C
+                elif ch in (b"\r", b"\n", b"q", b"Q", b"\x03"):
                     break
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)

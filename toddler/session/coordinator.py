@@ -17,8 +17,6 @@ from typing import TYPE_CHECKING
 from toddler.agent.events import (
     AgentEvent,
     AgentFinished,
-    TextDelta,
-    ToolCallEnd,
 )
 from toddler.agent.loop import AgentLoop
 from toddler.agent.state_machine import AgentStateMachine
@@ -32,7 +30,7 @@ from toddler.checkpoint.models import (
 from toddler.config.settings import Settings
 from toddler.context.conversation_context import ConversationContext
 from toddler.context.system_prompt import SystemPromptBuilder
-from toddler.llm import BaseLLMProvider, ContentBlock, Message, TokenUsage
+from toddler.llm import BaseLLMProvider, TokenUsage
 from toddler.session.manager import StorageManager
 from toddler.session.models import Session
 from toddler.tools import create_default_registry
@@ -266,46 +264,25 @@ class SessionCoordinator:
             mode=mode_hint,
         )
 
-        # Collect assistant response for persistence.
-        assistant_blocks: list[ContentBlock] = []
         usage: TokenUsage | None = None
 
         async for event in gen:
             match event:
-                case TextDelta(text=text) if text:
-                    assistant_blocks.append(ContentBlock.text_block(text))
-
-                case ToolCallEnd():
-                    assistant_blocks.append(
-                        ContentBlock.tool_use_block(
-                            event.tool_id,
-                            event.tool_name,
-                            event.input,
-                        )
-                    )
-
                 case AgentFinished():
                     usage = event.usage
-
                 case _:
                     pass
 
             yield event
 
-        # --- Persist the assistant response ---
-        if self._ctx is not None and assistant_blocks:
-            merged = _merge_text_blocks(assistant_blocks)
-            if merged:
-                assistant_msg = Message.assistant(merged)
-                self._ctx.append(assistant_msg)
-
+        # --- Persist deltas after the turn completes ---
+        # AgentLoop has already appended the assistant message(s) and tool
+        # result(s) to the context — no need to reconstruct from events.
+        if self._ctx is not None:
             if usage is not None and self._storage_mgr is not None:
                 self._storage_mgr.accumulate_tokens(
                     self._session.id, usage,
                 )
-
-        # --- Persist deltas after the turn completes ---
-        if self._ctx is not None:
             await self._ctx.save()
 
     # ==================================================================
@@ -525,37 +502,3 @@ class SessionCoordinator:
         if self._ckpt_mgr is None:
             raise ValueError("Checkpoints are not available.")
         return self._ckpt_mgr.list_for_session()
-
-
-# ---------------------------------------------------------------------------
-# Text block merging
-# ---------------------------------------------------------------------------
-
-def _merge_text_blocks(
-    blocks: list[ContentBlock],
-) -> list[ContentBlock]:
-    """Merge consecutive text blocks into one to keep stored forms clean.
-
-    Tool use blocks are left in place — only adjacent text blocks are
-    coalesced.
-    """
-    if not blocks:
-        return []
-
-    merged: list[ContentBlock] = []
-    buf: list[str] = []
-
-    def _flush_buf() -> None:
-        if buf:
-            merged.append(ContentBlock.text_block("".join(buf)))
-            buf.clear()
-
-    for b in blocks:
-        if b.type == "text" and b.text:
-            buf.append(b.text)
-        else:
-            _flush_buf()
-            merged.append(b)
-
-    _flush_buf()
-    return merged

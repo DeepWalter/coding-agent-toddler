@@ -222,11 +222,17 @@ class CLIApp:
                     self._renderer.on_agent_finished(event)
 
                 case AgentError():
-                    self._renderer.pause()
-                    self._renderer.on_agent_error(event)
-                    if not event.recoverable:
+                    if event.recoverable:
+                        # Accumulate error for inline display during
+                        # the dismiss prompt (StreamingRenderer), or
+                        # print directly (NonStreamingRenderer).
+                        self._renderer.on_agent_error(event)
+                    else:
+                        # Non-recoverable — exit alternate screen and
+                        # print to the main console before returning.
+                        self._renderer.pause()
+                        self._renderer.on_agent_error(event)
                         return
-                    self._renderer.resume()
 
                 case PlanProposed():
                     self._renderer.pause()
