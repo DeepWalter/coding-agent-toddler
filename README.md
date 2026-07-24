@@ -77,6 +77,13 @@ toddler/
   with multi-conversation support and resumption.
 - **Streaming** — Real-time token output via Rich with animated tool-call status.
 
+## Roadmap
+
+- [ ] **Web frontend** — browser-based GUI with a split-pane layout: file
+  viewer/editor on the left, agent console with scrollback on the right.
+  Will coexist with the CLI via a `tod serve` command and share the same
+  agent backend and session database.
+
 ## Development
 
 Always use the project virtual environment:
