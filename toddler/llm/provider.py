@@ -18,7 +18,9 @@ from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 
 import httpx
-from openai import NOT_GIVEN, AsyncOpenAI, NotGiven
+from openai import NOT_GIVEN, NotGiven
+
+from toddler.llm._async_openai import AsyncOpenAI
 
 from toddler.llm.base import BaseLLMProvider
 from toddler.llm.messages import ContentBlock, Message
