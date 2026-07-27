@@ -21,8 +21,9 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
+from rich import box
 from rich.console import Console, Group, RenderableType
 from rich.live import Live
 from rich.markdown import Markdown
@@ -83,6 +84,19 @@ _STATUS_STYLES = {
     "success": _ICON_SUCCESS,
     "error": _ICON_ERROR,
 }
+
+
+# ---------------------------------------------------------------------------
+# Public types
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ConfirmResult:
+    """Outcome of a confirmation prompt (tool approval, plan approval)."""
+
+    decision: Literal["approve", "deny", "feedback"]
+    feedback: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -278,6 +292,33 @@ class Renderer(ABC):
         self.markdown(event.plan.summary)
 
     # ------------------------------------------------------------------
+    # Confirmation (abstract)
+    # ------------------------------------------------------------------
+
+    @abstractmethod
+    async def confirm(
+        self,
+        prompt: str,
+        choices: list[str],
+        *,
+        allow_feedback: bool = False,
+    ) -> ConfirmResult:
+        """Prompt the user to confirm an action.
+
+        Parameters
+        ----------
+        prompt:
+            Title shown above the choices.
+        choices:
+            List of choice labels (e.g. ``["approve", "deny"]``).  When
+            *allow_feedback* is True, a ``"feedback"`` entry provides a
+            free-text input row.
+        allow_feedback:
+            When True, the user can type free-text feedback instead of
+            selecting a predefined choice.
+        """
+
+    # ------------------------------------------------------------------
     # Streaming event handlers (abstract)
     # ------------------------------------------------------------------
 
@@ -372,6 +413,14 @@ class StreamingRenderer(Renderer):
         self._dismiss_prompt: bool = False
         # Error messages accumulated during the turn.
         self._errors: list[str] = []
+
+        # -- confirmation state (set when confirm() is active) --------------
+        self._confirming: bool = False
+        self._confirm_prompt: str = ""
+        self._confirm_choices: list[str] = []
+        self._confirm_selection: int = 0
+        self._confirm_buf: str = ""
+        self._confirm_input_mode: bool = False
 
         # -- fixed resources ----------------------------------------------
         # Rich Live display targeting the alternate screen.
@@ -518,6 +567,183 @@ class StreamingRenderer(Renderer):
             self._text = full_text
         else:
             self._console.print(self._build_renderable())
+
+    # ------------------------------------------------------------------
+    # Confirmation (in-alt-screen, raw termios)
+    # ------------------------------------------------------------------
+
+    async def confirm(  # noqa: C901
+        self,
+        prompt: str,
+        choices: list[str],
+        *,
+        allow_feedback: bool = False,  # noqa: ARG002
+    ) -> ConfirmResult:
+        """Display an interactive confirmation table inside the Live display.
+
+        Uses raw termios I/O so the prompt stays in the alternate screen.
+        Tab / Shift+Tab / arrows navigate rows; Enter selects; printable
+        characters accumulate into a feedback buffer when the Feedback row
+        is focused.
+        """
+        # -- Store confirmation state ---------------------------------
+        self._confirming = True
+        self._confirm_prompt = prompt
+        self._confirm_choices = list(choices)
+        self._confirm_selection = 0
+        self._confirm_buf = ""
+        self._confirm_input_mode = False
+
+        # -- Resolve special indices ----------------------------------
+        feedback_index = next(
+            (
+                i
+                for i, c in enumerate(choices)
+                if c.lower() == "feedback"
+            ),
+            -1,
+        )
+        deny_index = next(
+            (
+                i
+                for i, c in enumerate(choices)
+                if c.lower() in ("deny", "no", "reject")
+            ),
+            len(choices) - 1,
+        )
+
+        # -- Raw termios setup ----------------------------------------
+        fd = sys.stdin.fileno()
+        old = termios.tcgetattr(fd)
+
+        # Locals mutated by _navigate() and the read loop.
+        buf: str = ""
+        saved_buf: str = ""
+        input_mode: bool = False
+
+        def _navigate(new_index: int) -> None:
+            """Move selection, saving/restoring feedback buffer."""
+            nonlocal buf, saved_buf, input_mode
+            prev = self._confirm_selection
+            # Save buffer when leaving Feedback row
+            if prev == feedback_index and buf:
+                saved_buf = buf
+            elif prev != feedback_index:
+                saved_buf = ""
+            self._confirm_selection = new_index
+            # Restore buffer when arriving at Feedback row
+            if new_index == feedback_index:
+                buf = saved_buf
+                input_mode = bool(buf)
+            else:
+                buf = ""
+                input_mode = False
+            # Sync to instance so _build_confirm_table() sees changes
+            self._confirm_buf = buf
+            self._confirm_input_mode = input_mode
+
+        try:
+            new = termios.tcgetattr(fd)
+            new[3] &= ~termios.ECHO   # no echo
+            new[3] &= ~termios.ICANON  # non-canonical (raw bytes)
+            new[6][termios.VMIN] = 1   # read blocks for ≥1 byte
+            new[6][termios.VTIME] = 0  # no inter-byte timeout
+            termios.tcsetattr(fd, termios.TCSANOW, new)
+
+            # -- Read loop --------------------------------------------
+            while True:
+                self._refresh(force=True)
+                r, _, _ = select.select([sys.stdin], [], [], 0.1)
+                if not r:
+                    continue
+
+                ch = os.read(fd, 1)
+
+                # ── Escape sequences ─────────────────────────────
+                if ch == b"\x1b":
+                    r2, _, _ = select.select([sys.stdin], [], [], 0.01)
+                    if r2:
+                        seq = os.read(fd, 2)
+                        if seq == b"[A":  # Up
+                            _navigate(max(0, self._confirm_selection - 1))
+                        elif seq == b"[B":  # Down
+                            _navigate(
+                                min(
+                                    len(choices) - 1,
+                                    self._confirm_selection + 1,
+                                )
+                            )
+                        elif seq == b"[Z":  # Shift+Tab
+                            _navigate(
+                                (self._confirm_selection - 1)
+                                % len(choices)
+                            )
+                    else:
+                        # Lone Escape — clear buffer, stay on Feedback
+                        if input_mode:
+                            input_mode = False
+                            buf = ""
+                            saved_buf = ""
+                            self._confirm_buf = ""
+                            self._confirm_input_mode = False
+                    continue
+
+                # ── Tab ──────────────────────────────────────────
+                if ch == b"\t":
+                    _navigate(
+                        (self._confirm_selection + 1) % len(choices)
+                    )
+                    continue
+
+                # ── Enter ────────────────────────────────────────
+                if ch in (b"\r", b"\n"):
+                    break
+
+                # ── Backspace ────────────────────────────────────
+                if ch == b"\x7f":
+                    if input_mode and buf:
+                        buf = buf[:-1]
+                        saved_buf = buf
+                        self._confirm_buf = buf
+                    continue
+
+                # ── Ctrl+C ───────────────────────────────────────
+                if ch == b"\x03":
+                    self._confirm_selection = deny_index
+                    buf = ""
+                    self._confirm_buf = ""
+                    self._confirm_input_mode = False
+                    break
+
+                # ── Printable characters ─────────────────────────
+                if (
+                    0x20 <= ord(ch) <= 0x7E
+                    and self._confirm_selection == feedback_index
+                ):
+                    if not input_mode:
+                        input_mode = True
+                    ch_str = ch.decode("ascii", errors="replace")
+                    buf += ch_str
+                    saved_buf = buf
+                    self._confirm_buf = buf
+                    self._confirm_input_mode = True
+
+            # -- Build result ------------------------------------------
+            idx = self._confirm_selection
+            selected = choices[idx] if 0 <= idx < len(choices) else "deny"
+            if selected.lower() == "feedback" and buf:
+                return ConfirmResult(
+                    decision="feedback", feedback=buf,
+                )
+            elif selected.lower() in ("approve", "yes", "y", "ok"):
+                return ConfirmResult(decision="approve")
+            else:
+                return ConfirmResult(decision="deny")
+
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+            self._confirming = False
+            self._refresh(force=True)
 
     # ------------------------------------------------------------------
     # Streaming event handlers
@@ -681,6 +907,55 @@ class StreamingRenderer(Renderer):
         return Group(*parts)
 
     # ------------------------------------------------------------------
+    # Confirmation table
+    # ------------------------------------------------------------------
+
+    def _build_confirm_table(self) -> Panel:
+        """Build the interactive confirmation table rendered during
+        :meth:`confirm`."""
+        table = Table(show_header=False, box=box.SIMPLE, padding=(0, 2))
+        table.add_column(width=40)
+
+        feedback_index = next(
+            (
+                i
+                for i, c in enumerate(self._confirm_choices)
+                if c.lower() == "feedback"
+            ),
+            -1,
+        )
+
+        for i, choice in enumerate(self._confirm_choices):
+            focused = i == self._confirm_selection
+            style = "reverse" if focused else ""
+
+            if i == feedback_index:
+                buf = self._confirm_buf
+                if focused and self._confirm_input_mode:
+                    row_text = Text(
+                        "▸ Feedback: " + buf + "▏", style=style,
+                    )
+                elif buf:
+                    row_text = Text("  Feedback: " + buf, style=style)
+                elif focused:
+                    row_text = Text("▸ Feedback: ▏", style=style)
+                else:
+                    row_text = Text("  Feedback: ▏", style=style)
+            else:
+                cursor = "▸ " if focused else "  "
+                row_text = Text(cursor + choice.capitalize(), style=style)
+
+            table.add_row(row_text)
+
+        hint = "Tab to move · Enter to select"
+        return Panel(
+            Group(table, Text(hint, style="dim italic")),
+            title=self._confirm_prompt,
+            title_align="left",
+            border_style="yellow",
+        )
+
+    # ------------------------------------------------------------------
     # Build renderable
     # ------------------------------------------------------------------
 
@@ -732,6 +1007,9 @@ class StreamingRenderer(Renderer):
                         border_style="red",
                     )
                 )
+
+        if self._confirming:
+            elements.append(self._build_confirm_table())
 
         if self._dismiss_prompt:
             if self._total_content_height > self._max_panel_height > 0:
@@ -874,6 +1152,73 @@ class NonStreamingRenderer(Renderer):
                     style=_TOOL_ERROR,
                 ),
             )
+
+    # ------------------------------------------------------------------
+    # Confirmation (console-based, for non-streaming mode)
+    # ------------------------------------------------------------------
+
+    async def confirm(
+        self,
+        prompt: str,
+        choices: list[str],
+        *,
+        allow_feedback: bool = False,
+    ) -> ConfirmResult:
+        """Prompt the user to confirm via the main console.
+
+        In non-streaming mode there's no alternate screen to stay in, so
+        we use a plain :meth:`~rich.console.Console.input` prompt with
+        key hints.
+        """
+        labels = [c.capitalize() for c in choices]
+        hint = " / ".join(
+            f"[{c[0].upper()}]{c[1:]}" for c in choices
+        )
+        self._console.print()
+        self._console.print(
+            Panel(
+                Text(prompt, style="bold white"),
+                title=hint,
+                title_align="left",
+                border_style=_TOOL_RUNNING,
+            )
+        )
+
+        self._console.print(
+            Text(
+                "Choices: " + ", ".join(labels),
+                style=_STATUS_MUTED,
+            )
+        )
+
+        try:
+            answer = self._console.input("> ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return ConfirmResult(decision="deny")
+
+        # Match against known labels
+        for choice in choices:
+            if answer == choice.lower() or (
+                len(answer) == 1 and choice.lower().startswith(answer)
+            ):
+                if choice.lower() == "feedback" and allow_feedback:
+                    try:
+                        fb = self._console.input(
+                            "Feedback: ",
+                        ).strip()
+                    except (EOFError, KeyboardInterrupt):
+                        return ConfirmResult(decision="deny")
+                    if fb:
+                        return ConfirmResult(
+                            decision="feedback", feedback=fb,
+                        )
+                    return ConfirmResult(decision="deny")
+                elif choice.lower() in ("approve", "yes", "y", "ok"):
+                    return ConfirmResult(decision="approve")
+                else:
+                    return ConfirmResult(decision="deny")
+
+        return ConfirmResult(decision="deny")
 
 
 # ---------------------------------------------------------------------------

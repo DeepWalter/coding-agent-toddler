@@ -207,14 +207,14 @@ class CLIApp:
                     self._renderer.on_tool_call_end(event)
 
                 case AgentPaused():
-                    self._renderer.pause()
-                    self._renderer.on_agent_paused(event)
-                    approved = await self._confirm(event)
-                    if approved:
+                    result = await self._renderer.confirm(
+                        prompt=event.prompt,
+                        choices=event.choices or ["approve", "deny"],
+                    )
+                    if result.decision == "approve":
                         await self._coordinator.agent.approve_tool_call()
                     else:
                         await self._coordinator.agent.deny_tool_call()
-                    self._renderer.resume()
 
                 case AgentFinished():
                     self._renderer.stop()
@@ -241,35 +241,6 @@ class CLIApp:
 
                 case _:
                     pass
-
-    # ==================================================================
-    # Confirmation prompt
-    # ==================================================================
-
-    async def _confirm(self, event: AgentPaused) -> bool:
-        """Ask the user to confirm a paused action.
-
-        The default for an empty input is "deny" (safe default).
-        """
-        choices = event.choices or ["y", "n"]
-        deny_kw = ("deny", "n", "no", "reject")
-        default = next(
-            (c for c in choices if c.lower() in deny_kw), choices[-1]
-        )
-
-        try:
-            answer = await self._input.prompt(
-                message=f"  [{'/'.join(choices)}] ({default}): ",
-                bottom_toolbar=None,
-            )
-        except (KeyboardInterrupt, EOFError):
-            return False
-
-        if answer is None or answer.strip() == "":
-            answer = default
-
-        return (answer.strip().lower().startswith("y")
-                or answer.strip().lower() in {"approve", "a"})
 
     # ==================================================================
     # Slash command dispatch
