@@ -235,9 +235,54 @@ class CLIApp:
                         return
 
                 case PlanProposed():
-                    self._renderer.pause()
+                    # Explore phase already stopped the renderer.
+                    # Display plan on the main console and collect
+                    # user decision before unblocking the coordinator.
                     self._renderer.on_plan_proposed(event)
-                    self._renderer.resume()
+                    self._renderer.print()
+                    try:
+                        answer = (
+                            self._renderer.console.input(
+                                "[bold]Approve?[/] "
+                                "[(a)pprove / (d)eny / (f)eedback]: "
+                            )
+                            .strip()
+                            .lower()
+                        )
+                    except (EOFError, KeyboardInterrupt):
+                        answer = "d"
+
+                    if answer.startswith("a"):
+                        await self._coordinator.approve_plan()
+                        # Restart renderer for execution phase.
+                        self._renderer.start(
+                            turn_number=turn_number,
+                            output_path=output_path,
+                        )
+                    elif answer.startswith("f"):
+                        try:
+                            feedback = (
+                                self._renderer.console.input(
+                                    "Feedback: "
+                                )
+                                .strip()
+                            )
+                        except (EOFError, KeyboardInterrupt):
+                            feedback = ""
+                        await self._coordinator.reject_plan(
+                            feedback=feedback,
+                        )
+                        if feedback:
+                            # Feedback loop: restart renderer for
+                            # new explore phase.
+                            self._renderer.start(
+                                turn_number=turn_number,
+                                output_path=output_path,
+                            )
+                    else:
+                        await self._coordinator.reject_plan()
+                        # Renderer stays stopped; coordinator will
+                        # yield AgentFinished("Plan rejected").
 
                 case _:
                     pass

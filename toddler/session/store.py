@@ -105,12 +105,8 @@ CREATE TABLE IF NOT EXISTS conversations (
 _CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_messages_session "
     "ON messages(session_id, sequence_num);",
-    "CREATE INDEX IF NOT EXISTS idx_messages_conversation "
-    "ON messages(conversation_id, sequence_num);",
     "CREATE INDEX IF NOT EXISTS idx_checkpoints_session "
     "ON checkpoints(session_id, sequence_num);",
-    "CREATE INDEX IF NOT EXISTS idx_conversations_session "
-    "ON conversations(session_id, status);",
 ]
 
 # ======================================================================

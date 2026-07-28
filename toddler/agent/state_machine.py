@@ -206,11 +206,24 @@ class Plan:
     def from_json(cls, raw: str) -> Plan | None:
         """Parse a JSON string into a :class:`Plan`.
 
+        Strips markdown code fences (`` ```json `` / `` ``` ``) if present,
+        then parses the inner JSON.
+
         Returns ``None`` when parsing fails so callers can feed the error
         back to the LLM rather than crashing.
         """
+        # Strip markdown code fences if present.
+        json_str = raw.strip()
+        if json_str.startswith("```"):
+            first_nl = json_str.find("\n")
+            if first_nl != -1:
+                json_str = json_str[first_nl + 1:]
+            if json_str.endswith("```"):
+                json_str = json_str[:-3]
+        json_str = json_str.strip()
+
         try:
-            data = json.loads(raw)
+            data = json.loads(json_str)
         except json.JSONDecodeError as exc:
             logger.warning(f"Failed to parse plan JSON: {exc}")
             return None

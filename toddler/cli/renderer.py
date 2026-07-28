@@ -287,9 +287,12 @@ class Renderer(ABC):
         )
 
     def on_plan_proposed(self, event: PlanProposed) -> None:
-        """Render a proposed plan."""
-        self.info(f"Plan proposed: {event.plan.title}")
-        self.markdown(event.plan.summary)
+        """Render a proposed plan for user review.
+
+        Shows the full plan — title, summary, steps, risks, rationale,
+        and estimated files touched — as formatted markdown.
+        """
+        self.markdown(event.plan.format_for_display())
 
     # ------------------------------------------------------------------
     # Confirmation (abstract)
