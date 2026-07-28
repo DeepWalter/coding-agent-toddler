@@ -1,9 +1,11 @@
 """Core agent loop — the tool-calling orchestration engine.
 
-Phase 4 implemented the basic non-streaming loop.  Phase 6 adds streaming
-support: the agent now calls the LLM with ``stream=True`` by default and
-uses :class:`~toddler.agent.handler.StreamHandler` to process the
-real-time token stream, yielding :class:`AgentEvent` objects as they arrive.
+Supports both streaming and non-streaming modes via
+:class:`~toddler.agent.handler.BaseHandler` implementations — use
+:func:`~toddler.agent.handler.create_handler` to get the right handler
+for the current mode.  The loop yields :class:`AgentEvent` objects as
+they arrive (real-time in streaming mode, or batched from the full
+response in non-streaming mode).
 
 The loop receives a single :class:`~toddler.context.ConversationContext`
 instance that handles system prompt assembly, context window tracking,
@@ -22,16 +24,16 @@ from toddler.agent.events import (
     AgentEvent,
     AgentFinished,
     AgentPaused,
-    TextDelta,
     ToolCallEnd,
     ToolCallStart,
 )
-from toddler.agent.handler import StreamHandler
+from toddler.agent.handler import create_handler
 from toddler.agent.stop_conditions import StopConditionChecker
 from toddler.llm import ContentBlock, Message, TokenUsage
 from toddler.tools.base import Permission, ToolCall, ToolResult
 
 if TYPE_CHECKING:
+    from toddler.agent.handler import BaseHandler
     from toddler.config.settings import Settings
     from toddler.context.conversation_context import ConversationContext
     from toddler.llm.base import BaseLLMProvider
@@ -39,6 +41,26 @@ if TYPE_CHECKING:
     from toddler.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+def _extract_tool_calls(msg: Message) -> list[ToolCall]:
+    """Pull every ``tool_use`` block out of *msg* as :class:`ToolCall`."""
+    calls: list[ToolCall] = []
+    for block in msg.content:
+        if block.type == "tool_use":
+            calls.append(
+                ToolCall(
+                    tool_id=block.tool_id or "",
+                    tool_name=block.tool_name or "",
+                    parameters=block.tool_input or {},
+                )
+            )
+    return calls
 
 
 # ---------------------------------------------------------------------------
@@ -151,6 +173,7 @@ class AgentLoop:
             max_iterations=max_iter,
             token_budget=token_budget,
         )
+        handler = create_handler(stream=stream)
 
         # --- main loop ---
         while True:
@@ -170,39 +193,16 @@ class AgentLoop:
                 f"(stream={stream})"
             )
 
-            if stream:
-                # ── streaming path ───────────────────────────────────
-                async for event in self._call_llm_streaming(
-                    messages, tools,
-                ):
-                    yield event
-                assistant_msg = self._stream_handler.assemble_message()
-                stop_reason = (
-                    self._stream_handler.stop_reason or "end_turn"
-                )
-                usage = self._stream_handler.usage or TokenUsage()
-            else:
-                # ── non-streaming path ───────────────────────────────
-                try:
-                    assistant_msg, stop_reason, usage = (
-                        await self._call_llm_non_streaming(
-                            messages, tools,
-                        )
-                    )
-                except Exception as exc:
-                    logger.exception("LLM call failed")
-                    yield AgentError(
-                        message=str(exc), recoverable=True,
-                    )
-                    yield AgentFinished(
-                        reason=f"LLM error: {exc}", usage=None,
-                    )
-                    return
+            llm_result: dict[str, Message | None | str | TokenUsage] = {}
+            async for event in self._call_llm(
+                messages, tools, stream=stream,
+                handler=handler, llm_result=llm_result,
+            ):
+                yield event
 
-                # Yield text (all at once in non-streaming mode).
-                text = assistant_msg.text
-                if text:
-                    yield TextDelta(text=text)
+            assistant_msg = llm_result["assistant_msg"]
+            stop_reason = llm_result["stop_reason"]
+            usage = llm_result["usage"]
 
             # If the LLM call itself failed fatally, assistant_msg will be
             # None and we should stop.
@@ -231,7 +231,7 @@ class AgentLoop:
 
             # -- tool_use: execute and feed back ---
             if stop_reason == "tool_use":
-                tool_calls = self._extract_tool_calls(assistant_msg)
+                tool_calls = _extract_tool_calls(assistant_msg)
 
                 if not tool_calls:
                     logger.warning(
@@ -246,57 +246,10 @@ class AgentLoop:
                     return
 
                 tool_result_blocks: list[ContentBlock] = []
-
-                for call in tool_calls:
-                    yield ToolCallStart(
-                        tool_id=call.tool_id,
-                        tool_name=call.tool_name,
-                        partial_input=call.parameters,
-                    )
-
-                    # --- permission gating ---
-                    # Create the approval event *before* yielding
-                    # AgentPaused so that external code can call
-                    # approve/deny immediately without a race.
-                    if self._needs_confirmation_for(call):
-                        self._approval_event = asyncio.Event()
-                        self._approval_granted = False
-
-                        tool = self._registry.get(call.tool_name)
-                        summary = (
-                            tool.summarize_call(**call.parameters)
-                            if tool
-                            else f"{call.tool_name}(...)"
-                        )
-                        yield AgentPaused(
-                            prompt=f"Allow {summary}?",
-                            choices=["approve", "deny"],
-                        )
-
-                    result = await self._execute_with_gating(call)
-
-                    yield ToolCallEnd(
-                        tool_id=call.tool_id,
-                        tool_name=call.tool_name,
-                        input=call.parameters,
-                        result=result,
-                    )
-
-                    # Build tool_result block for the LLM — errors are
-                    # marked with ``is_error=True`` so the model knows to
-                    # adapt rather than retry the same failing call.
-                    output_text = (
-                        result.output
-                        if result.success
-                        else result.error or "Unknown error"
-                    )
-                    tool_result_blocks.append(
-                        ContentBlock.tool_result_block(
-                            call.tool_id,
-                            output_text,
-                            is_error=not result.success,
-                        )
-                    )
+                async for event in self._execute_tool_calls(
+                    tool_calls, tool_result_blocks,
+                ):
+                    yield event
 
                 messages.append(Message.tool(tool_result_blocks))
 
@@ -343,55 +296,103 @@ class AgentLoop:
     # LLM calling helpers
     # ==================================================================
 
-    async def _call_llm_streaming(
-        self, messages: list[Message], tools: list[dict],
+    async def _call_llm(
+        self, messages: list[Message], tools: list[dict], *,
+        stream: bool, handler: BaseHandler, llm_result: dict,
     ) -> AsyncIterator[AgentEvent]:
-        """Stream LLM response, yielding events in real time.
+        """Call the LLM and yield :class:`AgentEvent` items in real time.
 
-        Stores the :class:`StreamHandler` as ``self._stream_handler`` so
-        the caller can retrieve the assembled message, stop reason, and
-        token usage after the iteration completes.
+        Delegates response processing to *handler*.  On success,
+        *llm_result* is populated via :meth:`handler.get_final_result`;
+        on failure the dict is set with ``assistant_msg=None`` and an
+        error stop reason.
         """
-        stream_iter = await self._llm.generate(
-            messages,
-            tools,
-            max_tokens=self._settings.max_tokens_per_response,
-            temperature=self._settings.temperature,
-            stream=True,
-        )
-
-        self._stream_handler = StreamHandler()
+        handler.clear()
         try:
-            async for event in self._stream_handler.process(stream_iter):
+            response = await self._llm.generate(
+                messages,
+                tools,
+                max_tokens=self._settings.max_tokens_per_response,
+                temperature=self._settings.temperature,
+                stream=stream,
+            )
+            async for event in handler.process(response):
                 yield event
+            llm_result.update(handler.get_final_result())
         except Exception as exc:
-            logger.exception("Streaming iteration failed")
-            yield AgentError(message=str(exc), recoverable=False)
+            logger.exception("LLM call failed")
+            yield AgentError(message=str(exc), recoverable=True)
+            llm_result["assistant_msg"] = None
+            llm_result["stop_reason"] = f"LLM error: {exc}"
+            llm_result["usage"] = TokenUsage()
 
-    async def _call_llm_non_streaming(
-        self, messages: list[Message], tools: list[dict],
-    ) -> tuple[Message, str, TokenUsage]:
-        """Call LLM in non-streaming mode and return the assembled state.
+    # ==================================================================
+    # Tool execution
+    # ==================================================================
 
-        Returns ``(assistant_msg, stop_reason, usage)``.  The caller is
-        responsible for yielding :class:`TextDelta` for any text content
-        and for handling exceptions.
+    async def _execute_tool_calls(
+        self, tool_calls: list[ToolCall],
+        tool_result_blocks: list[ContentBlock],
+    ) -> AsyncIterator[AgentEvent]:
+        """Execute *tool_calls* with permission gating, yielding events.
+
+        Yields :class:`ToolCallStart`, :class:`AgentPaused` (when
+        confirmation is needed), and :class:`ToolCallEnd` for each call.
+        Appends a :class:`ContentBlock` to *tool_result_blocks* for each
+        completed call — the caller then feeds them back to the LLM.
         """
-        response = await self._llm.generate(
-            messages,
-            tools,
-            max_tokens=self._settings.max_tokens_per_response,
-            temperature=self._settings.temperature,
-            stream=False,
-        )
+        tool_result_blocks.clear()
 
-        assistant_msg = (
-            response.messages[0]
-            if response.messages
-            else Message.assistant()
-        )
+        for call in tool_calls:
+            yield ToolCallStart(
+                tool_id=call.tool_id,
+                tool_name=call.tool_name,
+                partial_input=call.parameters,
+            )
 
-        return assistant_msg, response.stop_reason, response.usage
+            # --- permission gating ---
+            # Create the approval event *before* yielding AgentPaused so
+            # that external code can call approve/deny immediately without
+            # a race.
+            if self._needs_confirmation_for(call):
+                self._approval_event = asyncio.Event()
+                self._approval_granted = False
+
+                tool = self._registry.get(call.tool_name)
+                summary = (
+                    tool.summarize_call(**call.parameters)
+                    if tool
+                    else f"{call.tool_name}(...)"
+                )
+                yield AgentPaused(
+                    prompt=f"Allow {summary}?",
+                    choices=["approve", "deny"],
+                )
+
+            result = await self._execute_with_gating(call)
+
+            yield ToolCallEnd(
+                tool_id=call.tool_id,
+                tool_name=call.tool_name,
+                input=call.parameters,
+                result=result,
+            )
+
+            # Build tool_result block for the LLM — errors are marked with
+            # ``is_error=True`` so the model knows to adapt rather than
+            # retry the same failing call.
+            output_text = (
+                result.output
+                if result.success
+                else result.error or "Unknown error"
+            )
+            tool_result_blocks.append(
+                ContentBlock.tool_result_block(
+                    call.tool_id,
+                    output_text,
+                    is_error=not result.success,
+                )
+            )
 
     # ==================================================================
     # Internal helpers
@@ -464,18 +465,3 @@ class AgentLoop:
             return False  # executor will produce the error
         perm = tool.get_permission(**call.parameters)
         return self._needs_confirmation(perm)
-
-    @staticmethod
-    def _extract_tool_calls(msg: Message) -> list[ToolCall]:
-        """Pull every ``tool_use`` block out of *msg* as :class:`ToolCall`."""
-        calls: list[ToolCall] = []
-        for block in msg.content:
-            if block.type == "tool_use":
-                calls.append(
-                    ToolCall(
-                        tool_id=block.tool_id or "",
-                        tool_name=block.tool_name or "",
-                        parameters=block.tool_input or {},
-                    )
-                )
-        return calls

@@ -1,8 +1,9 @@
-"""StreamHandler — consumes StreamEvent items, yields AgentEvent objects.
+"""LLM response handlers — convert provider output into AgentEvent streams.
 
-Wraps the raw :class:`~toddler.llm.StreamEvent` iterator from the
-LLM provider and aggregates text + tool-call deltas into higher-level
-:class:`~toddler.agent.events.AgentEvent` objects for the CLI layer.
+Provides a :class:`BaseHandler` ABC with two implementations:
+:class:`StreamHandler` for real-time token streams and
+:class:`NonStreamHandler` for complete responses.  The
+:func:`create_handler` factory returns the right one for the current mode.
 
 Uses :class:`IncrementalJSONParser` to parse streaming tool-call
 arguments so the display can show partial JSON as it builds up.
@@ -12,9 +13,10 @@ from __future__ import annotations
 
 import json
 import logging
+from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from toddler.agent.events import (
     AgentError,
@@ -23,9 +25,56 @@ from toddler.agent.events import (
     ToolCallDelta,
     ToolCallStart,
 )
-from toddler.llm import ContentBlock, Message, StreamEvent, TokenUsage
+from toddler.llm import ContentBlock, Message, TokenUsage
+
+if TYPE_CHECKING:
+    from toddler.llm.responses import LLMResponse, StreamEvent
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Base handler
+# =============================================================================
+
+
+class BaseHandler(ABC):
+    """Abstract base for handlers that convert LLM output into AgentEvents.
+
+    Each concrete handler understands one kind of LLM response — streaming
+    (:class:`~toddler.llm.StreamEvent` iterator) or non-streaming
+    (:class:`~toddler.llm.LLMResponse`) — and provides a uniform interface
+    so the agent loop never needs to branch on ``stream``.
+    """
+
+    @abstractmethod
+    async def process(
+        self,
+        response: AsyncIterator[StreamEvent] | LLMResponse,
+    ) -> AsyncIterator[AgentEvent]:
+        """Convert *response* into :class:`AgentEvent` items in real time.
+
+        Parameters
+        ----------
+        response:
+            Either an async iterator of :class:`StreamEvent` (streaming) or a
+            complete :class:`LLMResponse` (non-streaming).
+        """
+        ...
+
+    @abstractmethod
+    def get_final_result(self) -> dict[str, Message | None | str | TokenUsage]:
+        """Return the assembled result dict.
+
+        Keys are ``assistant_msg``, ``stop_reason``, ``usage``.
+        Only valid after :meth:`process` has been fully consumed.
+        """
+        ...
+
+    @abstractmethod
+    def clear(self) -> None:
+        """Reset all internal state so the handler can be reused."""
+        ...
 
 
 # =============================================================================
@@ -113,14 +162,12 @@ class _PartialTool:
 # =============================================================================
 
 
-class StreamHandler:
+class StreamHandler(BaseHandler):
     """Consumes :class:`StreamEvent` items from the LLM provider and yields
     :class:`~toddler.agent.events.AgentEvent` objects for the agent loop.
 
     Maintains internal accumulators for text and tool calls, using
     :class:`IncrementalJSONParser` for streaming tool-call arguments.
-    After the stream completes, the assembled state is available via
-    :attr:`stop_reason`, :attr:`usage`, and :meth:`assemble_message`.
 
     Usage::
 
@@ -129,9 +176,7 @@ class StreamHandler:
             yield agent_event
 
         # After the stream ends:
-        msg = handler.assemble_message()
-        reason = handler.stop_reason
-        tokens = handler.usage
+        assistant_msg, stop_reason, usage = handler.get_final_result()
     """
 
     def __init__(self) -> None:
@@ -139,37 +184,33 @@ class StreamHandler:
         self._tools: dict[str, _PartialTool] = {}  # tool_id → state
         self._tool_order: list[str] = []  # insertion order of tool_ids
 
-        # Set by message_stop / error events during processing.
+        # Set by message_stop events during processing.
         self.stop_reason: str | None = None
         self.usage: TokenUsage | None = None
-        self._error_message: str | None = None
 
     # ------------------------------------------------------------------
-    # Public read-only properties
+    # Reuse
     # ------------------------------------------------------------------
 
-    @property
-    def accumulated_text(self) -> str:
-        """All text accumulated from the streaming response so far."""
-        return self._text_buf
-
-    @property
-    def has_error(self) -> bool:
-        """True if the stream encountered an error."""
-        return self._error_message is not None
+    def clear(self) -> None:
+        """Reset all internal state so the handler can be reused."""
+        self._text_buf = ""
+        self._tools.clear()
+        self._tool_order.clear()
+        self.stop_reason = None
+        self.usage = None
 
     # ------------------------------------------------------------------
     # Core processing
     # ------------------------------------------------------------------
 
-    async def process(  # noqa: C901
+    async def process(
         self, stream: AsyncIterator[StreamEvent],
     ) -> AsyncIterator[AgentEvent]:
         """Consume *stream* and yield :class:`AgentEvent` objects.
 
-        The caller should iterate until exhaustion; afterwards
-        :attr:`stop_reason`, :attr:`usage`, and :meth:`assemble_message`
-        are available.
+        The caller should iterate until exhaustion; afterwards call
+        :meth:`get_final_result` to get the assembled state.
         """
         async for event in stream:
             match event.type:
@@ -193,11 +234,11 @@ class StreamHandler:
                     self.usage = event.data.get("usage")
 
                 case "error":
-                    self._error_message = event.data.get(
+                    error_msg = event.data.get(
                         "message", "Unknown streaming error"
                     )
                     yield AgentError(
-                        message=self._error_message, recoverable=True,
+                        message=error_msg, recoverable=True,
                     )
 
                 case "message_start":
@@ -210,7 +251,7 @@ class StreamHandler:
     # Assembled output
     # ------------------------------------------------------------------
 
-    def assemble_message(self) -> Message:
+    def _assemble_message(self) -> Message:
         """Build the completed assistant :class:`Message` from accumulated data.
 
         Returns a message with text content (if any) and tool-use blocks
@@ -233,6 +274,18 @@ class StreamHandler:
             )
 
         return Message.assistant(blocks)
+
+    def get_final_result(self) -> dict[str, Message | None | str | TokenUsage]:
+        """Return the assembled result dict."""
+        return {
+            "assistant_msg": self._assemble_message(),
+            "stop_reason": (
+                self.stop_reason
+                if self.stop_reason is not None
+                else "end_turn"
+            ),
+            "usage": self.usage or TokenUsage(),
+        }
 
     # ------------------------------------------------------------------
     # Tool-call tracking helpers
@@ -276,12 +329,12 @@ class StreamHandler:
         """Handle a ``tool_use_delta`` StreamEvent.
 
         Feeds the arguments fragment into the incremental parser and
-        yields a :class:`ToolCallDelta` with the current best-effort parse.
+        returns a :class:`ToolCallDelta` with the current best-effort parse.
         """
         tool_id = data.get("tool_id", "")
         input_delta = data.get("input_delta", {})
 
-        pt = self._resolve_tool(tool_id)
+        pt = self._tools.get(tool_id)
         if pt is None:
             return None
 
@@ -292,10 +345,79 @@ class StreamHandler:
         partial = pt.parser.feed(fragment)
         return ToolCallDelta(tool_id=tool_id, input_delta=partial)
 
+
+# =============================================================================
+# Non-streaming handler
+# =============================================================================
+
+
+class NonStreamHandler(BaseHandler):
+    """Wraps a complete :class:`LLMResponse` in the handler interface.
+
+    Yields a single :class:`TextDelta` (if the response has text), then
+    exposes the assembled result via :meth:`get_final_result`.
+
+    Usage::
+
+        handler = NonStreamHandler()
+        async for agent_event in handler.process(response):
+            yield agent_event
+
+        # After processing:
+        assistant_msg, stop_reason, usage = handler.get_final_result()
+    """
+
+    def __init__(self) -> None:
+        self._assistant_msg: Message | None = None
+        self._stop_reason: str = "end_turn"
+        self._usage: TokenUsage = TokenUsage()
+
     # ------------------------------------------------------------------
-    # Tool resolution
+    # BaseHandler implementation
     # ------------------------------------------------------------------
 
-    def _resolve_tool(self, tool_id: str) -> _PartialTool | None:
-        """Find a :class:`_PartialTool` by its ``tool_id``."""
-        return self._tools.get(tool_id)
+    def clear(self) -> None:
+        """Reset internal state for reuse."""
+        self._assistant_msg = None
+        self._stop_reason = "end_turn"
+        self._usage = TokenUsage()
+
+    async def process(
+        self, response: LLMResponse,
+    ) -> AsyncIterator[AgentEvent]:
+        """Convert *response* into agent events.
+
+        Yields a single :class:`TextDelta` if the response contained text.
+        """
+        self._assistant_msg = (
+            response.messages[0]
+            if response.messages
+            else Message.assistant()
+        )
+        self._stop_reason = response.stop_reason
+        self._usage = response.usage
+        text = self._assistant_msg.text
+        if text:
+            yield TextDelta(text=text)
+
+    def get_final_result(self) -> dict[str, Message | None | str | TokenUsage]:
+        """Return the assembled result dict."""
+        return {
+            "assistant_msg": self._assistant_msg,
+            "stop_reason": self._stop_reason,
+            "usage": self._usage,
+        }
+
+
+# =============================================================================
+# Factory
+# =============================================================================
+
+
+def create_handler(*, stream: bool) -> BaseHandler:
+    """Create the right handler for the given streaming mode.
+
+    Returns a :class:`StreamHandler` when *stream* is ``True``, otherwise a
+    :class:`NonStreamHandler`.
+    """
+    return StreamHandler() if stream else NonStreamHandler()

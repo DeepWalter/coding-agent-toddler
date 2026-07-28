@@ -11,7 +11,13 @@ from toddler.agent.events import (
     ToolCallEnd,
     ToolCallStart,
 )
-from toddler.agent.handler import IncrementalJSONParser, StreamHandler
+from toddler.agent.handler import (
+    BaseHandler,
+    IncrementalJSONParser,
+    NonStreamHandler,
+    StreamHandler,
+    create_handler,
+)
 from toddler.agent.loop import AgentLoop
 from toddler.agent.stop_conditions import StopConditionChecker, StopReason
 
@@ -21,7 +27,9 @@ __all__ = [
     "AgentFinished",
     "AgentLoop",
     "AgentPaused",
+    "BaseHandler",
     "IncrementalJSONParser",
+    "NonStreamHandler",
     "PlanProposed",
     "StopConditionChecker",
     "StopReason",
@@ -30,4 +38,5 @@ __all__ = [
     "ToolCallDelta",
     "ToolCallEnd",
     "ToolCallStart",
+    "create_handler",
 ]
