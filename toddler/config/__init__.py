@@ -1,10 +1,7 @@
 """Configuration layer for Toddler."""
 
 from toddler.config.defaults import (
-    AUTO_APPROVE_READ,
     CHECKPOINT_KEEP_LATEST,
-    CONFIRM_SHELL_DANGEROUS,
-    CONFIRM_WRITE,
     DEFAULT_BASE_URL,
     DEFAULT_COMPACTION_THRESHOLD,
     DEFAULT_MAX_CONTEXT_LENGTH,
@@ -28,10 +25,7 @@ from toddler.config.settings import Settings, settings
 __all__ = [
     "Settings",
     "settings",
-    "AUTO_APPROVE_READ",
     "CHECKPOINT_KEEP_LATEST",
-    "CONFIRM_SHELL_DANGEROUS",
-    "CONFIRM_WRITE",
     "DEFAULT_BASE_URL",
     "DEFAULT_COMPACTION_THRESHOLD",
     "DEFAULT_MAX_CONTEXT_LENGTH",

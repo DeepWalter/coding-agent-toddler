@@ -15,11 +15,6 @@ DEFAULT_TEMPERATURE = 0.0
 # --- Context Management ---
 DEFAULT_COMPACTION_THRESHOLD = 0.8  # 80% of context window triggers compaction
 
-# --- Permissions ---
-AUTO_APPROVE_READ = True
-CONFIRM_WRITE = True
-CONFIRM_SHELL_DANGEROUS = True
-
 # --- Streaming ---
 STREAMING_ENABLED = True
 MAX_OUTPUT_LINES = 40

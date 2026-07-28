@@ -210,12 +210,8 @@ class WriteTool(BaseTool):
 
 @pytest.fixture
 def settings() -> Settings:
-    """Settings with confirm_write=True (default gating)."""
-    return Settings(
-        confirm_write=True,
-        auto_approve_read=True,
-        confirm_shell_dangerous=True,
-    )
+    """Default settings for agent loop tests."""
+    return Settings()
 
 
 @pytest.fixture
@@ -228,16 +224,9 @@ def registry() -> ToolRegistry:
 
 
 @pytest.fixture
-def executor(registry, settings) -> ToolExecutor:
+def executor(registry) -> ToolExecutor:
     """Executor that auto-approves — gating is handled by AgentLoop."""
-    async def _always_approve(tool, params, perm) -> bool:  # noqa: ARG001
-        return True
-
-    return ToolExecutor(
-        registry,
-        settings,
-        confirm_cb=_always_approve,
-    )
+    return ToolExecutor(registry)
 
 
 @pytest.fixture
@@ -480,7 +469,7 @@ class TestPermissionGating:
     """AgentPaused is yielded when a WRITE tool needs confirmation."""
 
     async def test_write_tool_yields_agent_paused(self, registry, executor, settings, conv_ctx):
-        """A WRITE tool with confirm_write=True should pause the loop."""
+        """A WRITE tool should always pause the loop for confirmation."""
         llm = MockLLMProvider(
             responses=[
                 _make_llm_response(

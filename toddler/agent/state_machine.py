@@ -34,8 +34,6 @@ import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 
-from toddler.tools.base import Permission
-
 __all__ = [
     "AgentMode",
     "AgentStateMachine",
@@ -468,10 +466,6 @@ class AgentStateMachine:
 
         # After the user approves:
         sm.transition(AgentMode.PLAN_EXECUTING)
-
-        # Check tool auto-approval:
-        if sm.should_auto_approve_tool("read_file", Permission.READ):
-            ...
     """
 
     # ------------------------------------------------------------------
@@ -703,42 +697,6 @@ class AgentStateMachine:
 
         hint = self.get_mode_hint()
         return SystemPromptBuilder.mode_instructions(hint)
-
-    # ------------------------------------------------------------------
-    # Tool auto-approval
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def should_auto_approve_tool(
-        mode: AgentMode,
-        tool_name: str,
-        permission: Permission,
-    ) -> bool | None:
-        """Return whether a tool should be auto-approved in *mode*.
-
-        Returns
-        -------
-        bool | None
-            ``True`` — auto-approve without confirmation.
-            ``False`` — always require confirmation.
-            ``None`` — use the default permission-based logic.
-        """
-        # In PLAN_EXPLORING mode, never auto-approve mutating tools —
-        # the agent is supposed to be READ-ONLY.
-        if mode == AgentMode.PLAN_EXPLORING:
-            # Only auto-approve READ and SHELL_SAFE.
-            return permission not in (
-                Permission.WRITE, Permission.SHELL_DANGEROUS,
-            )
-
-        # In PLAN_EXECUTING mode, the user already approved the plan.
-        # Auto-approve READ / SHELL_SAFE; still confirm dangerous operations.
-        if mode == AgentMode.PLAN_EXECUTING:
-            # Still confirm dangerous shell commands.
-            return permission != Permission.SHELL_DANGEROUS
-
-        # For all other modes, defer to the standard permission logic.
-        return None
 
     # ------------------------------------------------------------------
     # Prompt for plan generation

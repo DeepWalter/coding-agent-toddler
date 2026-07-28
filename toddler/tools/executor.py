@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from toddler.config.settings import Settings
 from toddler.tools.base import BaseTool, Permission, ToolCall, ToolResult
 from toddler.tools.registry import ToolRegistry
 
@@ -84,8 +83,9 @@ class ToolExecutor:
     settings : Settings
         Resolved configuration controlling permission behavior.
     confirm_cb : ConfirmCallback | None
-        Async callback invoked when user confirmation is needed.  If
-        ``None`` and confirmation would be required, the tool is **denied**.
+        Async callback invoked when user confirmation is needed.
+        When ``None`` (the default), all tools are auto-approved —
+        gating is assumed to be handled upstream by the agent loop.
     checkpoint_cb : CheckpointCallback | None
         Pre-execution hook for creating checkpoints before mutating tools.
     """
@@ -93,13 +93,11 @@ class ToolExecutor:
     def __init__(
         self,
         registry: ToolRegistry,
-        settings: Settings,
         *,
         confirm_cb: ConfirmCallback | None = None,
         checkpoint_cb: CheckpointCallback | None = None,
     ) -> None:
         self._registry = registry
-        self._settings = settings
         self._confirm_cb = confirm_cb
         self._checkpoint_cb = checkpoint_cb
 
@@ -165,23 +163,10 @@ class ToolExecutor:
         self, tool: BaseTool, params: dict[str, Any], perm: Permission
     ) -> bool:
         """Return ``True`` if execution is allowed for this tool + params."""
-        if perm == Permission.READ:
-            if self._settings.auto_approve_read:
-                return True
+        if perm in (Permission.READ, Permission.SHELL_SAFE):
+            return True  # always auto-approve read-only operations
+        if perm in (Permission.WRITE, Permission.SHELL_DANGEROUS):
             return await self._confirm(tool, params, perm)
-
-        if perm == Permission.SHELL_SAFE:
-            # Shell-safe is treated like READ by default
-            return True
-
-        if perm == Permission.WRITE:
-            if not self._settings.confirm_write:
-                return True
-            return await self._confirm(tool, params, perm)
-
-        if perm == Permission.SHELL_DANGEROUS:
-            return await self._confirm(tool, params, perm)
-
         # Unknown permission level → deny
         return False
 
@@ -193,7 +178,7 @@ class ToolExecutor:
         If no callback is configured the tool is denied (safe default).
         """
         if self._confirm_cb is None:
-            return False
+            return True   # no callback → auto-approve (gating is upstream)
         return await self._confirm_cb(tool, params, perm)
 
     @staticmethod

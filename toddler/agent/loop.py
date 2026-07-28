@@ -28,14 +28,12 @@ from toddler.agent.events import (
     ToolCallStart,
 )
 from toddler.agent.handler import create_handler
-from toddler.agent.state_machine import AgentMode
 from toddler.agent.stop_conditions import StopConditionChecker
 from toddler.llm import ContentBlock, Message, TokenUsage
 from toddler.tools.base import Permission, ToolCall, ToolResult
 
 if TYPE_CHECKING:
     from toddler.agent.handler import BaseHandler
-    from toddler.agent.state_machine import AgentStateMachine
     from toddler.config.settings import Settings
     from toddler.context.conversation_context import ConversationContext
     from toddler.llm.base import BaseLLMProvider
@@ -116,7 +114,6 @@ class AgentLoop:
         settings: Settings,
         *,
         context: ConversationContext,
-        state_machine: AgentStateMachine | None = None,
     ) -> None:
         self._llm = llm_provider
         self._registry = tool_registry
@@ -126,10 +123,6 @@ class AgentLoop:
         # Single context object — handles prompt building, window tracking,
         # compaction, and persistence.
         self._ctx = context
-
-        # Optional state machine for plan-mode tool gating.
-        self._sm = state_machine
-        self._current_agent_mode: AgentMode | None = None
 
         # Confirmation gate — see _execute_with_gating for the protocol.
         self._approval_event: asyncio.Event | None = None
@@ -167,14 +160,6 @@ class AgentLoop:
             ``"plan_executing"``.  Used by the prompt builder to select
             mode-specific instructions.
         """
-        # --- resolve mode for plan-aware tool gating ---
-        _mode_map: dict[str, AgentMode] = {
-            "execute": AgentMode.EXECUTING,
-            "plan_exploring": AgentMode.PLAN_EXPLORING,
-            "plan_executing": AgentMode.PLAN_EXECUTING,
-        }
-        self._current_agent_mode = _mode_map.get(mode)
-
         # --- build/append to the message list via the context ---
         messages = await self._ctx.prepare_turn(user_input, mode)
         tools = self._registry.to_api_schemas()
@@ -458,40 +443,22 @@ class AgentLoop:
 
         return await self._executor.execute(call)
 
-    def _needs_confirmation(self, perm: Permission) -> bool:
+    @staticmethod
+    def _needs_confirmation(perm: Permission) -> bool:
         """Return ``True`` when *perm* requires user confirmation.
 
         Mirrors :meth:`ToolExecutor._check_permission`.
         """
-        if perm == Permission.READ:
-            return not self._settings.auto_approve_read
-        if perm == Permission.SHELL_SAFE:
-            return False
-        if perm == Permission.WRITE:
-            return self._settings.confirm_write
-        if perm == Permission.SHELL_DANGEROUS:
-            return self._settings.confirm_shell_dangerous
+        if perm in (Permission.READ, Permission.SHELL_SAFE):
+            return False  # always auto-approve read-only operations
+        if perm in (Permission.WRITE, Permission.SHELL_DANGEROUS):
+            return True   # always confirm mutating operations
         return True  # unknown — be safe
 
     def _needs_confirmation_for(self, call: ToolCall) -> bool:
-        """Shorthand: does *call* need user confirmation?
-
-        Consults the state machine for plan-mode-specific gating before
-        falling back to settings-based permission logic.
-        """
+        """Shorthand: does *call* need user confirmation?"""
         tool = self._registry.get(call.tool_name)
         if tool is None:
             return False  # executor will produce the error
         perm = tool.get_permission(**call.parameters)
-
-        # Plan-mode tool gating: consult state machine first.
-        if self._sm is not None and self._current_agent_mode is not None:
-            decision = self._sm.should_auto_approve_tool(
-                self._current_agent_mode, call.tool_name, perm,
-            )
-            if decision is not None:
-                # True  → auto-approve (no confirmation needed)
-                # False → always require confirmation
-                return not decision
-
         return self._needs_confirmation(perm)

@@ -68,17 +68,6 @@ class Settings:
         _env("TODDLER_TEMPERATURE", str(defaults.DEFAULT_TEMPERATURE))
     )
 
-    # --- Permissions ---
-    auto_approve_read: bool = field(
-        default_factory=lambda: _env_bool("TODDLER_AUTO_APPROVE_READ", defaults.AUTO_APPROVE_READ)
-    )
-    confirm_write: bool = field(
-        default_factory=lambda: _env_bool("TODDLER_CONFIRM_WRITE", defaults.CONFIRM_WRITE)
-    )
-    confirm_shell_dangerous: bool = field(
-        default_factory=lambda: _env_bool("TODDLER_CONFIRM_SHELL_DANGEROUS", defaults.CONFIRM_SHELL_DANGEROUS)
-    )
-
     # --- Streaming ---
     streaming_enabled: bool = field(
         default_factory=lambda: _env_bool("TODDLER_STREAMING", defaults.STREAMING_ENABLED)

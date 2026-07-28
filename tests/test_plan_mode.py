@@ -24,7 +24,7 @@ from toddler.agent.state_machine import (
 )
 from toddler.llm import ContentBlock, LLMResponse, Message, TokenUsage
 from toddler.llm.base import BaseLLMProvider
-from toddler.tools.base import Permission
+
 
 
 # ============================================================================
@@ -332,43 +332,6 @@ class TestPlanProposalPrompt:
 
 
 # ============================================================================
-# should_auto_approve_tool() tests
-# ============================================================================
-
-
-class TestShouldAutoApproveTool:
-
-    def test_read_in_exploring_is_auto_approved(self):
-        assert AgentStateMachine.should_auto_approve_tool(
-            AgentMode.PLAN_EXPLORING, "read_file", Permission.READ,
-        ) is True
-
-    def test_write_in_exploring_is_blocked(self):
-        assert AgentStateMachine.should_auto_approve_tool(
-            AgentMode.PLAN_EXPLORING, "write_file", Permission.WRITE,
-        ) is False
-
-    def test_shell_dangerous_in_exploring_is_blocked(self):
-        assert AgentStateMachine.should_auto_approve_tool(
-            AgentMode.PLAN_EXPLORING, "shell", Permission.SHELL_DANGEROUS,
-        ) is False
-
-    def test_write_in_executing_is_auto_approved(self):
-        assert AgentStateMachine.should_auto_approve_tool(
-            AgentMode.PLAN_EXECUTING, "write_file", Permission.WRITE,
-        ) is True
-
-    def test_shell_dangerous_in_executing_still_blocked(self):
-        assert AgentStateMachine.should_auto_approve_tool(
-            AgentMode.PLAN_EXECUTING, "shell", Permission.SHELL_DANGEROUS,
-        ) is False
-
-    def test_executing_mode_defers_to_default(self):
-        assert AgentStateMachine.should_auto_approve_tool(
-            AgentMode.EXECUTING, "write_file", Permission.WRITE,
-        ) is None
-
-
 # ============================================================================
 # Plan step progress tracking
 # ============================================================================
@@ -472,8 +435,6 @@ class TestSessionCoordinatorPlanWorkflow:
         from toddler.config.settings import Settings
         return Settings(
             streaming_enabled=False,
-            auto_approve_read=True,
-            confirm_write=True,
         )
 
     @pytest.fixture

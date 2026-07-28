@@ -41,7 +41,7 @@ from toddler.llm.responses import LLMResponse
 from toddler.session.manager import StorageManager
 from toddler.session.models import Session
 from toddler.tools import create_default_registry
-from toddler.tools.executor import ToolExecutor, always_approve
+from toddler.tools.executor import ToolExecutor
 
 if TYPE_CHECKING:
     from toddler.context.compaction import ConversationCompactor
@@ -134,8 +134,6 @@ class SessionCoordinator:
         self._registry = create_default_registry()
         self._executor = ToolExecutor(
             self._registry,
-            self._settings,
-            confirm_cb=always_approve,
             checkpoint_cb=create_checkpoint_callback(
                 ckpt_manager=self._ckpt_mgr,
             ),
@@ -631,7 +629,6 @@ class SessionCoordinator:
                 tool_executor=self._executor,
                 settings=self._settings,
                 context=self._ctx,
-                state_machine=self._sm,
             )
         return self._agent_impl
 
