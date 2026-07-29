@@ -749,6 +749,26 @@ class StreamingRenderer(Renderer):
             self._refresh(force=True)
 
     # ------------------------------------------------------------------
+    # Plan display (override)
+    # ------------------------------------------------------------------
+
+    def on_plan_proposed(self, event: PlanProposed) -> None:
+        """Display a proposed plan in the output panel.
+
+        If the renderer was stopped (e.g. after the explore phase
+        completed), re-enters the alternate screen so the plan and
+        confirmation table stay in the same visual context.
+        """
+        if self._stopped:
+            # Re-enter alt screen without resetting accumulated state;
+            # the plan text replaces whatever was in the output panel.
+            self._dismiss_prompt = False
+            self._stopped = False
+            self._live.start()
+        self._text = event.plan.format_for_display()
+        self._refresh(force=True)
+
+    # ------------------------------------------------------------------
     # Streaming event handlers
     # ------------------------------------------------------------------
 
