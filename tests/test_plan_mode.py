@@ -536,3 +536,198 @@ class TestSessionCoordinatorPlanWorkflow:
                 second_plan = event
                 break
         assert second_plan is not None
+
+
+# ============================================================================
+# Planner unit tests (mock AgentLoop + mock LLM)
+# ============================================================================
+
+
+class MockAgentLoop:
+    """Mock AgentLoop that yields a single AgentFinished event."""
+
+    def __init__(self):
+        self.run_calls: list[dict] = []
+
+    async def run(self, user_input: str, *, mode: str = "execute",
+                  max_iterations: int = 10, stream: bool = False,
+                  **kwargs) -> AsyncIterator[AgentFinished]:
+        self.run_calls.append({"user_input": user_input, "mode": mode})
+        yield AgentFinished(
+            reason="Mock phase complete.",
+            usage=TokenUsage(input_tokens=10, output_tokens=5),
+        )
+
+
+class MockConversationContext:
+    """Minimal mock of ConversationContext for Planner tests."""
+
+    def __init__(self, messages: list[Message] | None = None):
+        self._messages: list[Message] = messages or []
+        self._appended: list[Message] = []
+
+    @property
+    def messages(self) -> list[Message]:
+        return self._messages
+
+    def append(self, msg: Message) -> None:
+        self._appended.append(msg)
+        self._messages.append(msg)
+
+
+class TestPlanner:
+    """Unit tests for Planner — plan loop logic with mocked dependencies."""
+
+    @pytest.fixture
+    def llm(self):
+        return MockPlanLLMProvider()
+
+    @pytest.fixture
+    def agent_loop(self):
+        return MockAgentLoop()
+
+    @pytest.fixture
+    def ctx(self):
+        return MockConversationContext()
+
+    @pytest.fixture
+    def settings(self):
+        from toddler.config.settings import Settings
+        return Settings(streaming_enabled=False)
+
+    @staticmethod
+    def _plan_sm() -> AgentStateMachine:
+        """Create a state machine pre-transitioned to PLAN_EXPLORING."""
+        sm = AgentStateMachine()
+        sm.transition(AgentMode.PLAN_EXPLORING)
+        return sm
+
+    def _make_planner(self, settings, llm, ctx, agent_loop,
+                      state_machine=None):
+        if state_machine is None:
+            state_machine = self._plan_sm()
+        from toddler.agent.planner import Planner
+        return Planner(
+            llm_provider=llm,
+            context=ctx,
+            settings=settings,
+            agent_loop=agent_loop,
+            state_machine=state_machine,
+        )
+
+    async def _collect(self, gen) -> list:
+        events = []
+        async for event in gen:
+            events.append(event)
+        return events
+
+    @pytest.mark.asyncio
+    async def test_plan_mode_yields_plan_proposed(
+        self, settings, llm, agent_loop, ctx,
+    ):
+        """Complex input → yields PlanProposed with the expected plan."""
+        planner = self._make_planner(settings, llm, ctx, agent_loop)
+        gen = planner.run("refactor the database layer")
+        events = []
+        async for event in gen:
+            events.append(event)
+            if isinstance(event, PlanProposed):
+                break
+
+        plan_events = [e for e in events if isinstance(e, PlanProposed)]
+        assert len(plan_events) == 1
+        assert plan_events[0].plan.title == "Mock Plan"
+        assert planner.current_mode == AgentMode.PLAN_WAITING
+
+    @pytest.mark.asyncio
+    async def test_approve_plan(self, settings, llm, agent_loop, ctx):
+        """Approve transitions to PLAN_EXECUTING and plan is set."""
+        planner = self._make_planner(settings, llm, ctx, agent_loop)
+        gen = planner.run("refactor the database layer")
+        async for event in gen:
+            if isinstance(event, PlanProposed):
+                break
+
+        assert planner.current_mode == AgentMode.PLAN_WAITING
+        result = planner.approve_plan()
+        assert result is True
+        assert planner.current_mode == AgentMode.PLAN_EXECUTING
+        assert planner.plan is not None
+        assert planner.plan.title == "Mock Plan"
+
+    @pytest.mark.asyncio
+    async def test_reject_plan_outright(
+        self, settings, llm, agent_loop, ctx,
+    ):
+        """Reject without feedback → FINISHED, plan cleared."""
+        planner = self._make_planner(settings, llm, ctx, agent_loop)
+        gen = planner.run("refactor the database layer")
+        async for event in gen:
+            if isinstance(event, PlanProposed):
+                break
+
+        planner.reject_plan()
+        assert planner.current_mode == AgentMode.FINISHED
+        assert planner.plan is None
+
+    @pytest.mark.asyncio
+    async def test_reject_with_feedback_loops(
+        self, settings, llm, agent_loop, ctx,
+    ):
+        """Reject with feedback → loops back to PLAN_EXPLORING."""
+        planner = self._make_planner(settings, llm, ctx, agent_loop)
+        gen = planner.run("refactor the database layer")
+        async for event in gen:
+            if isinstance(event, PlanProposed):
+                break
+
+        planner.reject_plan(feedback="Add more steps")
+        assert planner.current_mode == AgentMode.PLAN_EXPLORING
+        assert planner.plan is None
+
+        # Advance the generator one step so the feedback injection code
+        # runs (the generator was paused at `yield PlanProposed`; after
+        # reject_plan() sets the event, we need to resume past the
+        # `await event.wait()` to reach the `ctx.append()` call).
+        try:
+            await gen.__anext__()
+        except StopAsyncIteration:
+            pass
+
+        # Verify feedback was injected into context.
+        feedback_msgs = [
+            m for m in ctx._appended
+            if "Add more steps" in (m.text or "")
+        ]
+        assert len(feedback_msgs) == 1
+
+    @pytest.mark.asyncio
+    async def test_plan_generation_failure(
+        self, settings, llm, agent_loop, ctx,
+    ):
+        """Empty steps → AgentError yielded."""
+        llm._plan_json = {"title": "Bad", "steps": []}
+        planner = self._make_planner(settings, llm, ctx, agent_loop)
+        gen = planner.run("refactor the database layer")
+        events = await self._collect(gen)
+
+        errors = [e for e in events if isinstance(e, AgentError)]
+        assert len(errors) >= 1
+        assert planner.current_mode == AgentMode.FINISHED
+        assert planner.plan is None
+
+    @pytest.mark.asyncio
+    async def test_reuses_state_machine(self, settings, llm, agent_loop, ctx):
+        """Planner should accept and use an external state machine."""
+        sm = self._plan_sm()
+        planner = self._make_planner(
+            settings, llm, ctx, agent_loop, state_machine=sm,
+        )
+        gen = planner.run("refactor the database layer")
+        async for event in gen:
+            if isinstance(event, PlanProposed):
+                break
+
+        # State machine should be the same instance and in PLAN_WAITING.
+        assert sm.current_mode == AgentMode.PLAN_WAITING
+        assert planner.current_mode == AgentMode.PLAN_WAITING

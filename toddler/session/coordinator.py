@@ -14,18 +14,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from toddler.agent.events import (
-    AgentError,
-    AgentEvent,
-    AgentFinished,
-    PlanProposed,
-)
+from toddler.agent.events import AgentEvent, AgentFinished
 from toddler.agent.loop import AgentLoop
-from toddler.agent.state_machine import (
-    AgentMode,
-    AgentStateMachine,
-    Plan,
-)
+from toddler.agent.planner import Planner
+from toddler.agent.state_machine import AgentMode, AgentStateMachine
 from toddler.checkpoint import create_checkpoint_callback
 from toddler.checkpoint.manager import CheckpointManager
 from toddler.checkpoint.models import (
@@ -36,8 +28,7 @@ from toddler.checkpoint.models import (
 from toddler.config.settings import Settings
 from toddler.context.conversation_context import ConversationContext
 from toddler.context.system_prompt import SystemPromptBuilder
-from toddler.llm import BaseLLMProvider, Message, TokenUsage
-from toddler.llm.responses import LLMResponse
+from toddler.llm import BaseLLMProvider, TokenUsage
 from toddler.session.manager import StorageManager
 from toddler.session.models import Session
 from toddler.tools import create_default_registry
@@ -154,9 +145,8 @@ class SessionCoordinator:
         # State machine
         self._sm = state_machine or AgentStateMachine()
 
-        # Plan approval gating (same asyncio.Event pattern as AgentLoop)
-        self._plan_decision_event = asyncio.Event()
-        self._plan_feedback: str = ""
+        # Planner instance for the current turn (created in process_turn).
+        self._planner: Planner | None = None
 
         # Current session + context (set via resolve())
         self._session: Session | None = None
@@ -216,7 +206,7 @@ class SessionCoordinator:
     # Turn execution
     # ==================================================================
 
-    async def process_turn(  # noqa: C901
+    async def process_turn(
         self,
         user_input: str,
         *,
@@ -224,122 +214,55 @@ class SessionCoordinator:
     ) -> AsyncIterator[AgentEvent]:
         """Run one complete agent turn — user input through to finish.
 
-        For simple requests this is a single pass through the agent loop.
-        For complex requests it drives the full plan-mode lifecycle:
-        explore → propose → wait (user approval) → execute.
+        Classification happens here so the full state-machine lifecycle is
+        visible in one place.  Simple requests go straight to execution;
+        complex ones are delegated to :class:`~toddler.agent.planner.Planner`
+        for the plan loop (explore → propose → wait), then executed.
 
         Yields :class:`AgentEvent` objects for the CLI to render.
         """
-        # --- Classify and transition from IDLE ---
+        # --- Conversation-start checkpoint (first turn only) ---
+        self._create_conversation_start_checkpoint()
+
+        # --- Classify ---
         self._sm.reset()
         mode = self._sm.classify_and_transition(
             user_input, force_plan=force_plan,
         )
 
-        # --- Conversation-start checkpoint (first turn only) ---
-        self._create_conversation_start_checkpoint()
-
-        # --- Simple execution path (no plan) ---
-        if mode == AgentMode.EXECUTING:
-            async for event in self._run_phase(user_input, "execute"):
+        # --- Plan path ---
+        if mode == AgentMode.PLAN_EXPLORING:
+            self._planner = Planner(
+                llm_provider=self._llm,
+                context=self._ctx,
+                settings=self._settings,
+                agent_loop=self.agent,
+                state_machine=self._sm,
+            )
+            async for event in self._planner.run(user_input):
+                if isinstance(event, AgentFinished):
+                    await self._maybe_persist_phase(event)
                 yield event
-            self._sm.mark_finished()
-            return
 
-        # --- Plan-mode path: multi-phase orchestration ---
-        original_request = user_input
-        explore_input = user_input
-
-        while True:
-            current_mode = self._sm.current_mode
-
-            if current_mode == AgentMode.PLAN_EXPLORING:
-                async for event in self._run_phase(
-                    explore_input, "plan_exploring",
-                ):
-                    yield event
-                self._sm.transition(AgentMode.PLAN_PROPOSING)
-                continue
-
-            elif current_mode == AgentMode.PLAN_PROPOSING:
-                plan = await self._generate_plan(original_request)
-                if plan is None:
-                    self._sm.mark_finished()
-                    yield AgentError(
-                        message=(
-                            "Failed to generate a valid plan. "
-                            "The LLM did not produce parseable JSON. "
-                            "Try rephrasing your request."
-                        ),
-                        recoverable=False,
-                    )
-                    return
-                self._sm.set_plan(plan)
-                self._sm.transition(AgentMode.PLAN_WAITING)
-                continue
-
-            elif current_mode == AgentMode.PLAN_WAITING:
-                # Clear BEFORE yielding so the caller's set() isn't
-                # immediately wiped by a trailing clear() on resume.
-                self._plan_decision_event.clear()
-                yield PlanProposed(plan=self._sm.current_plan)  # type: ignore[arg-type]
-                await self._plan_decision_event.wait()
-
-                # Decision was made by approve_plan() / reject_plan()
-                if self._sm.current_mode == AgentMode.PLAN_EXECUTING:
-                    # Approved — inject plan and execute
-                    plan_text = self._sm.current_plan.format_for_prompt()
-                    exec_msg = (
-                        "I have reviewed and approved the following plan. "
-                        "Execute it step by step, reporting progress after "
-                        f"each step:\n\n{plan_text}"
-                    )
-                    if self._ctx is not None:
-                        self._ctx.append(Message.user(exec_msg))
-                    continue  # next iteration → PLAN_EXECUTING
-
-                elif self._sm.current_mode == AgentMode.PLAN_EXPLORING:
-                    # Rejected with feedback — loop back to explore
-                    feedback_msg = (
-                        "The proposed plan was rejected with this feedback: "
-                        f"{self._plan_feedback}\n\n"
-                        "Please reconsider the original request and "
-                        "re-explore the codebase, addressing the feedback "
-                        "above."
-                    )
-                    if self._ctx is not None:
-                        self._ctx.append(Message.user(feedback_msg))
-                    explore_input = (
-                        f"Revise your research based on this feedback: "
-                        f"{self._plan_feedback}"
-                    )
-                    continue  # next iteration → PLAN_EXPLORING
-
-                else:
-                    # Rejected outright → FINISHED
-                    yield AgentFinished(
-                        reason="Plan rejected by user.",
-                        usage=None,
-                    )
-                    return
-
-            elif current_mode == AgentMode.PLAN_EXECUTING:
-                async for event in self._run_phase(
-                    "Begin executing the approved plan now.",
-                    "plan_executing",
-                ):
-                    yield event
+            if self._planner.plan is None:
                 self._sm.mark_finished()
                 return
 
-            elif current_mode == AgentMode.FINISHED:
-                return
+            plan_text = self._planner.plan.format_for_prompt()
+            user_input = (
+                "I have reviewed and approved the following plan. "
+                "Execute it step by step, reporting progress after "
+                f"each step:\n\n{plan_text}"
+            )
+            mode_hint = "plan_executing"
+            self._sm.transition(AgentMode.PLAN_EXECUTING)
+        else:
+            mode_hint = "execute"
 
-            else:
-                logger.error(
-                    "Unexpected mode in process_turn: %s", current_mode,
-                )
-                return
+        # --- Execute ---
+        async for event in self._run_phase(user_input, mode_hint):
+            yield event
+        self._sm.mark_finished()
 
     def approve_plan(self) -> bool:
         """Approve the current plan and unblock :meth:`process_turn`.
@@ -347,11 +270,9 @@ class SessionCoordinator:
         Called by the CLI layer after the user confirms approval.
         Returns ``True`` if the plan was successfully approved.
         """
-        success = self._sm.approve_plan()
-        if not success:
-            self._sm.mark_finished()
-        self._plan_decision_event.set()
-        return success
+        if self._planner is not None:
+            return self._planner.approve_plan()
+        return False
 
     def reject_plan(self, *, feedback: str = "") -> None:
         """Reject the current plan and unblock :meth:`process_turn`.
@@ -359,9 +280,8 @@ class SessionCoordinator:
         When *feedback* is provided the agent will re-explore and propose
         a revised plan.  Otherwise the turn finishes.
         """
-        self._plan_feedback = feedback
-        self._sm.reject_plan(feedback=feedback)
-        self._plan_decision_event.set()
+        if self._planner is not None:
+            self._planner.reject_plan(feedback=feedback)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -416,76 +336,29 @@ class SessionCoordinator:
             yield event
 
         # Persist after the phase completes.
+        await self._maybe_persist_phase(usage)
+
+    async def _maybe_persist_phase(
+        self, event_or_usage: AgentFinished | TokenUsage | None,
+    ) -> None:
+        """Persist token usage and context after a phase completes.
+
+        Accepts an :class:`AgentFinished` event (used when iterating over
+        Planner events) or a plain :class:`TokenUsage` (used by
+        :meth:`_run_phase`).
+        """
+        usage: TokenUsage | None
+        if isinstance(event_or_usage, AgentFinished):
+            usage = event_or_usage.usage
+        else:
+            usage = event_or_usage
+
         if self._ctx is not None:
             if usage is not None and self._storage_mgr is not None:
                 self._storage_mgr.accumulate_tokens(
                     self._session.id, usage,
                 )
             await self._ctx.save()
-
-    async def _generate_plan(self, user_request: str) -> Plan | None:
-        """Ask the LLM to produce a structured JSON plan.
-
-        Collects research context from the exploration phase (recent
-        assistant messages), sends the plan-proposal prompt to the LLM
-        without tools, and parses the JSON response.
-
-        Returns ``None`` when the LLM fails to produce valid JSON.
-        """
-        # Collect research context from the exploration phase
-        research_context = ""
-        if self._ctx is not None:
-            assistant_texts = []
-            for msg in self._ctx.messages:
-                if msg.role == "assistant":
-                    text = msg.text.strip()
-                    if text:
-                        assistant_texts.append(text)
-            research_context = "\n\n".join(assistant_texts[-5:])
-            if len(research_context) > 4000:
-                research_context = research_context[:4000] + (
-                    "\n... (truncated)"
-                )
-
-        prompt = AgentStateMachine.plan_proposal_prompt(
-            user_request,
-            research_context=research_context,
-        )
-
-        try:
-            response = await self._llm.generate(
-                [Message.user(prompt)],
-                tools=[],
-                max_tokens=2048,
-                temperature=0.0,
-                stream=False,
-            )
-            # Non-streaming response
-            if isinstance(response, LLMResponse):
-                text = (
-                    response.messages[0].text
-                    if response.messages else ""
-                )
-            else:
-                logger.error(
-                    "Unexpected response type from plan LLM call"
-                )
-                return None
-        except Exception:
-            logger.exception("Plan generation LLM call failed")
-            return None
-
-        plan = Plan.from_json(text)
-        if plan is None:
-            logger.warning(
-                "Failed to parse plan JSON.  Raw response: %.200s...",
-                text,
-            )
-        elif not plan.steps:
-            logger.warning("Plan has no steps — rejecting")
-            plan = None
-
-        return plan
 
     # ==================================================================
     # Conversation management
