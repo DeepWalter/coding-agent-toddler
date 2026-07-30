@@ -232,23 +232,16 @@ class SessionCoordinator:
 
         # --- Plan path ---
         if mode == AgentMode.PLAN_EXPLORING:
-            self._planner = Planner(
-                llm_provider=self._llm,
-                context=self._ctx,
-                settings=self._settings,
-                agent_loop=self.agent,
-                state_machine=self._sm,
-            )
-            async for event in self._planner.run(user_input):
+            async for event in self.planner.run(user_input):
                 if isinstance(event, AgentFinished):
                     await self._maybe_persist_phase(event)
                 yield event
 
-            if self._planner.plan is None:
+            if self.planner.plan is None:
                 self._sm.mark_finished()
                 return
 
-            plan_text = self._planner.plan.format_for_prompt()
+            plan_text = self.planner.plan.format_for_prompt()
             user_input = (
                 "I have reviewed and approved the following plan. "
                 "Execute it step by step, reporting progress after "
@@ -504,6 +497,23 @@ class SessionCoordinator:
                 context=self._ctx,
             )
         return self._agent_impl
+
+    @property
+    def planner(self) -> Planner:
+        """Lazily build and return the plan-mode orchestrator.
+
+        Same lazy-init pattern as :attr:`agent` — dependencies are stable
+        references so the Planner is created once and reused across turns.
+        """
+        if self._planner is None:
+            self._planner = Planner(
+                llm_provider=self._llm,
+                context=self._ctx,
+                settings=self._settings,
+                agent_loop=self.agent,
+                state_machine=self._sm,
+            )
+        return self._planner
 
     @property
     def storage_manager(self) -> StorageManager:
