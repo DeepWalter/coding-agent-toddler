@@ -26,11 +26,11 @@ from toddler.checkpoint.models import (
     RollbackResult,
 )
 from toddler.config.settings import Settings
-from toddler.context.conversation_context import ConversationContext
-from toddler.context.system_prompt import SystemPromptBuilder
-from toddler.llm import BaseLLMProvider, TokenUsage
+from toddler.context.builder import SystemPromptBuilder
+from toddler.context.manager import ContextManager
+from toddler.llm import BaseLLMProvider, Message, TokenUsage
 from toddler.session.manager import StorageManager
-from toddler.session.models import Session
+from toddler.session.models import Conversation, Session
 from toddler.tools import create_default_registry
 from toddler.tools.executor import ToolExecutor
 
@@ -66,7 +66,7 @@ class SessionCoordinator:
     The CLI talks ONLY to this object.  It creates and manages:
 
     - ToolRegistry + ToolExecutor
-    - ConversationContext + SystemPromptBuilder
+    - ContextManager + SystemPromptBuilder
     - AgentLoop (lazily)
     - CheckpointManager (deferred until session resolution)
 
@@ -150,8 +150,12 @@ class SessionCoordinator:
 
         # Current session + context (set via resolve())
         self._session: Session | None = None
-        self._ctx: ConversationContext | None = None
+        self._conv: Conversation | None = None
+        self._ctx: ContextManager | None = None
         self._agent_impl: AgentLoop | None = None
+
+        # Persistence tracking (coordinator owns this, not the context).
+        self._base_seq: int = 0
 
     # ==================================================================
     # Session lifecycle
@@ -171,16 +175,15 @@ class SessionCoordinator:
         """
         self._session = self._storage_mgr.get_or_create(session_id)
 
-        self._ctx = ConversationContext(
-            self._storage_mgr,
+        self._ctx = ContextManager(
             self._prompt_builder,
             window_mgr=self._context_window_mgr,
             compactor=self._conversation_compactor,
         )
-        conv = self._storage_mgr.get_or_create_active_conversation(
+        self._conv = self._storage_mgr.get_or_create_active_conversation(
             self._session.id,
         )
-        await self._ctx.activate(conv)
+        await self._activate_context()
 
         if self._ckpt_mgr is not None:
             self._ckpt_mgr.set_session(self._session.id)
@@ -193,9 +196,14 @@ class SessionCoordinator:
         return self._session
 
     @property
-    def context(self) -> ConversationContext | None:
+    def context(self) -> ContextManager | None:
         """The current conversation context, or *None* before :meth:`resolve`."""  # noqa: E501
         return self._ctx
+
+    @property
+    def conversation(self) -> Conversation | None:
+        """The current conversation model, or *None* before :meth:`resolve`."""
+        return self._conv
 
     @property
     def state_machine(self) -> AgentStateMachine:
@@ -224,11 +232,20 @@ class SessionCoordinator:
         # --- Conversation-start checkpoint (first turn only) ---
         self._create_conversation_start_checkpoint()
 
+        # --- Auto-title new conversations ---
+        if self._conv is not None and not self._conv.title:
+            self._conv.title = user_input[:80]
+
         # --- Classify ---
         self._sm.reset()
         mode = self._sm.classify_and_transition(
             user_input, force_plan=force_plan,
         )
+
+        # --- Collect prior conversation summaries ---
+        prior_titles = self._get_prior_titles()
+        if self._ctx is not None:
+            self._ctx.set_cross_conversation_context(prior_titles)
 
         # --- Plan path ---
         if mode == AgentMode.PLAN_EXPLORING:
@@ -284,15 +301,14 @@ class SessionCoordinator:
         """Create a checkpoint at the start of a new conversation."""
         if (
             self._ckpt_mgr is not None
-            and self._ctx is not None
-            and self._ctx.conversation is not None
-            and self._ctx.conversation.message_count == 0
+            and self._conv is not None
+            and self._conv.message_count == 0
         ):
             try:
                 self._ckpt_mgr.create(
                     description=(
                         "Start of conversation "
-                        f"{self._ctx.conversation.sequence_num}"
+                        f"{self._conv.sequence_num}"
                     ),
                     tool_name="conversation_start",
                     agent_state=AgentStateSnapshot(
@@ -304,6 +320,51 @@ class SessionCoordinator:
                 logger.exception(
                     "Failed to create conversation-start checkpoint."
                 )
+
+    async def _activate_context(self) -> None:
+        """Load messages from storage and populate the context buffer.
+
+        The coordinator
+        reads messages from the DB, builds the initial list (including any
+        synthetic compaction summary), and hands it to
+        :meth:`ContextManager.load`.
+        """
+        if self._conv is None or self._ctx is None:
+            return
+
+        after_seq = self._conv.compacted_at_seq or -1
+        recent = self._storage_mgr.get_messages(
+            session_id=self._conv.session_id,
+            conversation_id=self._conv.id,
+            after_sequence=after_seq,
+        )
+
+        self._base_seq = after_seq + 1
+        initial: list[Message] = []
+
+        if self._conv.compacted_summary:
+            initial.append(
+                Message.user(
+                    "[Compacted history — summary of the conversation"
+                    " so far]\n\n"
+                    + self._conv.compacted_summary
+                )
+            )
+
+        initial.extend(recent)
+        self._ctx.load(initial)
+
+    def _get_prior_titles(self) -> list[str] | None:
+        """Collect titles of prior conversations in the same session."""
+        if self._storage_mgr is None or self._conv is None:
+            return None
+        summaries = self._storage_mgr.get_conversation_summaries(
+            self._conv.session_id,
+            exclude_id=self._conv.id,
+        )
+        if not summaries:
+            return None
+        return [title for _, title in summaries]
 
     async def _run_phase(
         self, user_input: str, mode_hint: str,
@@ -351,7 +412,7 @@ class SessionCoordinator:
                 self._storage_mgr.accumulate_tokens(
                     self._session.id, usage,
                 )
-            await self._ctx.save()
+            await self.save()
 
     # ==================================================================
     # Conversation management
@@ -370,11 +431,11 @@ class SessionCoordinator:
         if self._ctx is None:
             return
 
-        if title:
-            self._ctx.set_title(title)
-        await self._ctx.save()
+        if title and self._conv:
+            self._conv.title = title.strip() or None
+        await self.save()
 
-        conv = self._ctx.conversation
+        conv = self._conv
         if conv is not None and conv.message_count == 0:
             # Current conversation is empty — just rename it in-place
             # instead of archiving and creating a new one.
@@ -387,10 +448,10 @@ class SessionCoordinator:
 
         # Always create a fresh conversation — never reuse a stale "active"
         # conversation that may have been left behind by a bug or crash.
-        conv = self._storage_mgr.create_conversation(
+        self._conv = self._storage_mgr.create_conversation(
             self._session.id,
         )
-        await self._ctx.activate(conv)
+        await self._activate_context()
 
     async def resume_conversation(self, conversation_id: str) -> None:
         """Switch to an existing (usually archived) conversation.
@@ -404,9 +465,9 @@ class SessionCoordinator:
             return
 
         # Archive the current conversation so only one is active at a time.
-        if self._ctx.conversation is not None:
+        if self._conv is not None:
             self._storage_mgr.archive_conversation(
-                self._ctx.conversation.id,
+                self._conv.id,
             )
 
         # Resolve by sequence number (#N) or UUID.
@@ -427,7 +488,8 @@ class SessionCoordinator:
 
         # Reactivate the resumed conversation.
         conv.status = "active"
-        await self._ctx.activate(conv)
+        self._conv = conv
+        await self._activate_context()
 
     async def switch_session(self, session_id: str) -> None:
         """Switch to a different session by ID.
@@ -441,17 +503,20 @@ class SessionCoordinator:
             )
 
         self._session = session
-        # Re-resolve: create new context and activate active conversation.
-        self._ctx = ConversationContext(
-            self._storage_mgr,
+        # Create new context and load active conversation.
+        self._ctx = ContextManager(
             self._prompt_builder,
             window_mgr=self._context_window_mgr,
             compactor=self._conversation_compactor,
         )
-        conv = self._storage_mgr.get_or_create_active_conversation(
+        self._conv = self._storage_mgr.get_or_create_active_conversation(
             self._session.id,
         )
-        await self._ctx.activate(conv)
+        await self._activate_context()
+
+        # Reset the agent so it captures the new context.
+        self._agent_impl = None
+
         if self._ckpt_mgr is not None:
             self._ckpt_mgr.set_session(self._session.id)
 
@@ -460,9 +525,42 @@ class SessionCoordinator:
     # ==================================================================
 
     async def save(self) -> None:
-        """Persist the current conversation context to the database."""
-        if self._ctx is not None:
-            await self._ctx.save()
+        """Persist new messages and conversation metadata to the database.
+
+        Reads new messages from the context (those added since the last
+        :meth:`ContextManager.acknowledge`), persists them to the messages
+        table, and updates the conversation row.  Also persists compaction
+        metadata if a compaction occurred during the last turn.
+        """
+        if self._ctx is None or self._conv is None:
+            return
+
+        # Persist new messages.
+        new_msgs = self._ctx.new_messages
+        for msg in new_msgs:
+            self._storage_mgr.append_message(
+                self._conv.session_id,
+                msg,
+                conversation_id=self._conv.id,
+            )
+        self._ctx.acknowledge()
+        self._conv.message_count += len(new_msgs)
+
+        # Persist compaction metadata if a compaction occurred.
+        cmeta = self._ctx.last_compaction
+        if cmeta is not None:
+            self._conv.compacted_summary = cmeta.summary
+            # Compute compacted_at_seq.
+            body_before = cmeta.messages_before - 1  # minus system msg
+            body_after = cmeta.messages_after - 1     # minus system msg
+            summarized = max(0, body_before - body_after)
+            if summarized > 0:
+                prev = self._conv.compacted_at_seq or self._base_seq - 1
+                self._conv.compacted_at_seq = prev + summarized
+            self._ctx.clear_compaction_result()
+
+        # Persist conversation metadata.
+        self._storage_mgr.update_conversation(self._conv)
 
     async def prune_if_empty(self) -> None:
         """Delete the current session if no messages were added.

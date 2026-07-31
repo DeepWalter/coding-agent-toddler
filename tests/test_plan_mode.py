@@ -559,8 +559,8 @@ class MockAgentLoop:
         )
 
 
-class MockConversationContext:
-    """Minimal mock of ConversationContext for Planner tests."""
+class MockContextManager:
+    """Minimal mock of ContextManager for Planner tests."""
 
     def __init__(self, messages: list[Message] | None = None):
         self._messages: list[Message] = messages or []
@@ -588,7 +588,7 @@ class TestPlanner:
 
     @pytest.fixture
     def ctx(self):
-        return MockConversationContext()
+        return MockContextManager()
 
     @pytest.fixture
     def settings(self):

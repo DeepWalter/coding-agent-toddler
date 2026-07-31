@@ -171,16 +171,12 @@ class CLIApp:
         # Compute output path scoped by session + conversation
         output_path: Path | None = None
         session = self._coordinator.session
-        ctx = self._coordinator.context
-        if (
-            session is not None
-            and ctx is not None
-            and ctx.conversation is not None
-        ):
+        conv = self._coordinator.conversation
+        if session is not None and conv is not None:
             output_path = (
                 self._output_base
                 / session.id[:12]
-                / ctx.conversation.id[:12]
+                / conv.id[:12]
                 / f"turn-{turn_number:04d}.md"
             )
 

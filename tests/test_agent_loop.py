@@ -22,8 +22,8 @@ from toddler.agent.events import (
 )
 from toddler.agent.loop import AgentLoop
 from toddler.config.settings import Settings
-from toddler.context.conversation_context import ConversationContext
-from toddler.context.system_prompt import SystemPromptBuilder
+from toddler.context.manager import ContextManager
+from toddler.context.builder import SystemPromptBuilder
 from toddler.llm.base import BaseLLMProvider
 from toddler.llm import ContentBlock, LLMResponse, Message, StreamEvent, TokenUsage
 from toddler.tools.base import BaseTool, Permission, ToolResult
@@ -230,12 +230,11 @@ def executor(registry) -> ToolExecutor:
 
 
 @pytest.fixture
-def conv_ctx() -> ConversationContext:
-    """Bare ConversationContext for tests (no backing session)."""
-    return ConversationContext(
-        storage_mgr=None,
-        prompt_builder=SystemPromptBuilder(),
-    )
+def conv_ctx() -> ContextManager:
+    """Bare ContextManager for tests (no backing session)."""
+    ctx = ContextManager(SystemPromptBuilder())
+    ctx.load([])
+    return ctx
 
 
 @pytest.fixture
@@ -609,7 +608,7 @@ class TestStopConditions:
 # ============================================================================
 
 
-class TestConversationContext:
+class TestContextManager:
     """The LLM receives the full conversation history."""
 
     async def test_tool_results_appear_in_next_call(self, registry, executor, settings, conv_ctx):
@@ -638,7 +637,7 @@ class TestConversationContext:
         assert "tool" in roles
 
     async def test_system_prompt_is_built_by_context(self, registry, executor, settings, conv_ctx):  # noqa: E501
-        """The system prompt is assembled by ConversationContext.prepare_turn()."""
+        """The system prompt is assembled by ContextManager.prepare_turn()."""
         llm = MockLLMProvider(
             responses=[
                 _make_llm_response(text="Ok", stop_reason="end_turn"),

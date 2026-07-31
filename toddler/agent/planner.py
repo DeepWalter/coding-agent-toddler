@@ -33,7 +33,7 @@ from toddler.llm.responses import LLMResponse
 if TYPE_CHECKING:
     from toddler.agent.loop import AgentLoop
     from toddler.config.settings import Settings
-    from toddler.context.conversation_context import ConversationContext
+    from toddler.context.manager import ContextManager
     from toddler.llm.base import BaseLLMProvider
 
 __all__ = ["Planner"]
@@ -70,7 +70,7 @@ class Planner:
     def __init__(
         self,
         llm_provider: BaseLLMProvider,
-        context: ConversationContext,
+        context: ContextManager,
         settings: Settings,
         agent_loop: AgentLoop,
         *,

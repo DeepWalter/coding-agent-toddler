@@ -671,7 +671,7 @@ class AgentStateMachine:
 
     def get_mode_hint(self) -> str:
         """Return the mode string expected by
-        :class:`~toddler.context.system_prompt.SystemPromptBuilder`.
+        :class:`~toddler.context.builder.SystemPromptBuilder`.
 
         Maps internal :class:`AgentMode` values to the strings that
         :meth:`SystemPromptBuilder.build` understands:
@@ -693,7 +693,7 @@ class AgentStateMachine:
         delegates to :class:`SystemPromptBuilder` via :meth:`get_mode_hint`
         so callers don't need both objects.
         """
-        from toddler.context.system_prompt import SystemPromptBuilder
+        from toddler.context.builder import SystemPromptBuilder
 
         hint = self.get_mode_hint()
         return SystemPromptBuilder.mode_instructions(hint)

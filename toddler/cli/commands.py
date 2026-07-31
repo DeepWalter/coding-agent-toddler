@@ -200,7 +200,7 @@ class SlashCommandDispatcher:
             self._coordinator is None
             or self._coordinator.session is None
             or self._coordinator.context is None
-            or self._coordinator.context.conversation is None
+            or self._coordinator.conversation is None
         ):
             return CommandResult(
                 continue_repl=True,
@@ -208,7 +208,7 @@ class SlashCommandDispatcher:
             )
 
         sid = self._coordinator.session.id[:12]
-        cid = self._coordinator.context.conversation.id[:12]
+        cid = self._coordinator.conversation.id[:12]
         filepath = (
             self._output_base / sid / cid / f"turn-{turn_num:04d}.md"
         )
@@ -389,9 +389,8 @@ class SlashCommandDispatcher:
             )
 
         active_id = (
-            self._coordinator.context.conversation.id
-            if self._coordinator.context
-            and self._coordinator.context.conversation
+            self._coordinator.conversation.id
+            if self._coordinator.conversation
             else None
         )
 

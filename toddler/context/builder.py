@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from toddler.context.memory import PersistentMemory
-    from toddler.context.project_map import ProjectMapper
+    from toddler.context.workspace import ProjectMapper
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +104,7 @@ class SystemPromptBuilder:
     Parameters
     ----------
     project_mapper:
-        Optional :class:`~toddler.context.project_map.ProjectMapper` for
+        Optional :class:`~toddler.context.workspace.ProjectMapper` for
         generating the project structure overview.  When *None* the project
         map section is omitted.
     persistent_memory:

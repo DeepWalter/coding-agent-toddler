@@ -7,9 +7,9 @@ for the current mode.  The loop yields :class:`AgentEvent` objects as
 they arrive (real-time in streaming mode, or batched from the full
 response in non-streaming mode).
 
-The loop receives a single :class:`~toddler.context.ConversationContext`
+The loop receives a single :class:`~toddler.context.manager.ContextManager`
 instance that handles system prompt assembly, context window tracking,
-compaction, and persistence — keeping the orchestration layer clean.
+and compaction — keeping the orchestration layer clean.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ from toddler.tools.base import Permission, ToolCall, ToolResult
 if TYPE_CHECKING:
     from toddler.agent.handler import BaseHandler
     from toddler.config.settings import Settings
-    from toddler.context.conversation_context import ConversationContext
+    from toddler.context.manager import ContextManager
     from toddler.llm.base import BaseLLMProvider
     from toddler.tools.executor import ToolExecutor
     from toddler.tools.registry import ToolRegistry
@@ -113,7 +113,7 @@ class AgentLoop:
         tool_executor: ToolExecutor,
         settings: Settings,
         *,
-        context: ConversationContext,
+        context: ContextManager,
     ) -> None:
         self._llm = llm_provider
         self._registry = tool_registry
@@ -161,7 +161,7 @@ class AgentLoop:
             mode-specific instructions.
         """
         # --- build/append to the message list via the context ---
-        messages = await self._ctx.prepare_turn(user_input, mode)
+        await self._ctx.prepare_turn(user_input, mode)
         tools = self._registry.to_api_schemas()
 
         max_iter = (
@@ -183,10 +183,8 @@ class AgentLoop:
                 yield AgentFinished(reason=stop_reason.message, usage=None)
                 return
 
-            # -- context window management ---
-            await self._ctx.check_and_compact()
-
-            # -- call LLM ---
+            # -- call LLM (context auto-compacts before returning messages) ---
+            messages = await self._ctx.get_messages()
             logger.debug(
                 f"Iteration {stop_checker.iteration} — "
                 f"calling LLM with {len(messages)} messages "
@@ -221,7 +219,7 @@ class AgentLoop:
             # Skip empty messages — they can occur on streaming errors where
             # the handler assembled no text and no tool calls.
             if assistant_msg.content:
-                messages.append(assistant_msg)
+                self._ctx.append(assistant_msg)
 
             # -- handle stop reason ---
             sr = StopConditionChecker.from_llm_stop_reason(stop_reason)
@@ -251,7 +249,7 @@ class AgentLoop:
                 ):
                     yield event
 
-                messages.append(Message.tool(tool_result_blocks))
+                self._ctx.append(Message.tool(tool_result_blocks))
 
                 if stop_checker.is_exhausted:
                     extra = stop_checker.increment()
