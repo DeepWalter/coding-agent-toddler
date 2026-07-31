@@ -12,7 +12,6 @@ import logging
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from toddler.agent.events import AgentEvent, AgentFinished
 from toddler.agent.loop import AgentLoop
@@ -26,19 +25,12 @@ from toddler.checkpoint.models import (
     RollbackResult,
 )
 from toddler.config.settings import Settings
-from toddler.context.builder import SystemPromptBuilder
 from toddler.context.manager import ContextManager
 from toddler.llm import BaseLLMProvider, Message, TokenUsage
 from toddler.session.manager import StorageManager
 from toddler.session.models import Conversation, Session
 from toddler.tools import create_default_registry
 from toddler.tools.executor import ToolExecutor
-
-if TYPE_CHECKING:
-    from toddler.context.compaction import ConversationCompactor
-    from toddler.context.memory import PersistentMemory
-    from toddler.context.project_map import ProjectMapper
-    from toddler.context.window import ContextWindowManager
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +58,7 @@ class SessionCoordinator:
     The CLI talks ONLY to this object.  It creates and manages:
 
     - ToolRegistry + ToolExecutor
-    - ContextManager + SystemPromptBuilder
+    - ContextManager (+ its internal sub-components)
     - AgentLoop (lazily)
     - CheckpointManager (deferred until session resolution)
 
@@ -80,18 +72,6 @@ class SessionCoordinator:
         LLM provider shared with the agent loop and auto-titling.
     repo_root:
         Absolute path to the working directory.
-    project_mapper:
-        Optional :class:`ProjectMapper` for structural codebase overview
-        in the system prompt.
-    persistent_memory:
-        Optional :class:`PersistentMemory` for user preferences that
-        survive across sessions.
-    context_window_mgr:
-        Optional :class:`ContextWindowManager` for token tracking and
-        compaction/truncation triggers.
-    conversation_compactor:
-        Optional :class:`ConversationCompactor` for LLM summarisation
-        of old conversation turns.
     state_machine:
         Optional :class:`AgentStateMachine` for plan-mode workflow.
         When *None*, a default instance is created.
@@ -104,10 +84,6 @@ class SessionCoordinator:
         llm: BaseLLMProvider,
         *,
         repo_root: Path | None = None,
-        project_mapper: ProjectMapper | None = None,
-        persistent_memory: PersistentMemory | None = None,
-        context_window_mgr: ContextWindowManager | None = None,
-        conversation_compactor: ConversationCompactor | None = None,
         state_machine: AgentStateMachine | None = None,
     ) -> None:
         self._settings = settings
@@ -128,18 +104,6 @@ class SessionCoordinator:
             checkpoint_cb=create_checkpoint_callback(
                 ckpt_manager=self._ckpt_mgr,
             ),
-        )
-
-        # Context management components
-        self._project_mapper = project_mapper
-        self._persistent_memory = persistent_memory
-        self._context_window_mgr = context_window_mgr
-        self._conversation_compactor = conversation_compactor
-
-        # Pre-build SystemPromptBuilder
-        self._prompt_builder = SystemPromptBuilder(
-            project_mapper=project_mapper,
-            persistent_memory=persistent_memory,
         )
 
         # State machine
@@ -176,9 +140,10 @@ class SessionCoordinator:
         self._session = self._storage_mgr.get_or_create(session_id)
 
         self._ctx = ContextManager(
-            self._prompt_builder,
-            window_mgr=self._context_window_mgr,
-            compactor=self._conversation_compactor,
+            self._settings,
+            self._llm,
+            project_root=self._repo_root,
+            memory_dir=self._settings.session_dir,
         )
         self._conv = self._storage_mgr.get_or_create_active_conversation(
             self._session.id,
@@ -505,9 +470,10 @@ class SessionCoordinator:
         self._session = session
         # Create new context and load active conversation.
         self._ctx = ContextManager(
-            self._prompt_builder,
-            window_mgr=self._context_window_mgr,
-            compactor=self._conversation_compactor,
+            self._settings,
+            self._llm,
+            project_root=self._repo_root,
+            memory_dir=self._settings.session_dir,
         )
         self._conv = self._storage_mgr.get_or_create_active_conversation(
             self._session.id,

@@ -15,14 +15,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from pathlib import Path
 
-from toddler.llm import Message
-
-if TYPE_CHECKING:
-    from toddler.context.builder import SystemPromptBuilder
-    from toddler.context.summarizer import ConversationCompactor
-    from toddler.context.window import ContextWindowManager
+from toddler.config.settings import Settings
+from toddler.context.builder import SystemPromptBuilder
+from toddler.context.summarizer import ConversationCompactor
+from toddler.context.window import ContextWindowManager
+from toddler.llm import BaseLLMProvider, Message
 
 logger = logging.getLogger(__name__)
 
@@ -66,10 +65,10 @@ class CompactionResult:
 class ContextManager:
     """Pure in-memory message buffer for LLM conversations.
 
-    A single instance lives for the lifetime of the REPL.  It holds the
+    A single instance lives for the lifetime of the REPL.  It owns the
     shared sub-components (SystemPromptBuilder, ContextWindowManager,
-    ConversationCompactor) and is reset between conversations via
-    :meth:`load`.
+    ConversationCompactor) — building them internally from the raw
+    ingredients — and is reset between conversations via :meth:`load`.
 
     Holds messages across turns — the session layer is responsible for
     loading initial messages and persisting new ones.  The context tracks
@@ -82,15 +81,22 @@ class ContextManager:
 
     def __init__(
         self,
-        prompt_builder: SystemPromptBuilder,
+        settings: Settings,
+        llm_provider: BaseLLMProvider,
         *,
-        window_mgr: ContextWindowManager | None = None,
-        compactor: ConversationCompactor | None = None,
+        project_root: Path | None = None,
+        memory_dir: Path | None = None,
     ) -> None:
-        # Shared sub-components — never change across conversations.
-        self._prompt_builder = prompt_builder
-        self._window_mgr = window_mgr
-        self._compactor = compactor
+        # Build sub-components internally from raw ingredients.
+        self._prompt_builder = SystemPromptBuilder(
+            project_root=project_root,
+            memory_dir=memory_dir,
+        )
+        self._window_mgr = ContextWindowManager(
+            llm_provider,
+            max_context_length=settings.max_context_length,
+        )
+        self._compactor = ConversationCompactor(llm_provider)
 
         # Message buffer state — reset on each load().
         self._messages: list[Message] = []
@@ -99,6 +105,10 @@ class ContextManager:
 
         # Most-recent compaction result (cleared on load).
         self._last_compaction: CompactionResult | None = None
+
+        # Current mode — set by prepare_turn(), used by _auto_compact()
+        # so the compact system prompt keeps the right instructions.
+        self._mode: str = "execute"
 
         # Cross-conversation context — set by the session layer before
         # the first prepare_turn() of a turn, consumed by prepare_turn().
@@ -153,6 +163,8 @@ class ContextManager:
         After this returns, :attr:`messages` is ready for LLM calls and
         :meth:`append` can be used to add assistant/tool messages.
         """
+        self._mode = mode
+
         if not self._messages:
             # Fresh conversation — build system prompt from scratch.
             sys_text = self._prompt_builder.build(
@@ -176,19 +188,13 @@ class ContextManager:
         layer uses this to persist ``compacted_summary`` /
         ``compacted_at_seq``), or ``None`` if no compaction was needed.
         """
-        if self._window_mgr is None:
-            return None
-
         token_count = self._window_mgr.count_tokens(self._messages)
         logger.info(
             f"Context: {self._window_mgr.status_line(self._messages)}"
         )
 
         # --- compaction ---
-        if (
-            self._compactor is not None
-            and self._window_mgr.should_compact(self._messages)
-        ):
+        if self._window_mgr.should_compact(self._messages):
             logger.warning(
                 f"Compaction triggered. "
                 f"Compacting {len(self._messages)} messages..."
@@ -213,8 +219,11 @@ class ContextManager:
                 self._messages.clear()
                 self._messages.extend(compacted)
 
-                # Rebuild system prompt with compact variant.
-                compact_sys = self._prompt_builder.build_compact()
+                # Rebuild system prompt with compact variant,
+                # preserving the current mode's instructions.
+                compact_sys = self._prompt_builder.build_compact(
+                    mode=self._mode,
+                )
                 self._replace_system_messages(compact_sys)
 
                 # Reset baseline — the compacted list is now the canonical

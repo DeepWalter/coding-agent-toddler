@@ -23,7 +23,6 @@ from toddler.agent.events import (
 from toddler.agent.loop import AgentLoop
 from toddler.config.settings import Settings
 from toddler.context.manager import ContextManager
-from toddler.context.builder import SystemPromptBuilder
 from toddler.llm.base import BaseLLMProvider
 from toddler.llm import ContentBlock, LLMResponse, Message, StreamEvent, TokenUsage
 from toddler.tools.base import BaseTool, Permission, ToolResult
@@ -50,10 +49,6 @@ class MockLLMProvider(BaseLLMProvider):
         self.responses: list[LLMResponse] = responses or []
         self.call_count: int = 0
         self.messages_history: list[list[Message]] = []
-
-    @property
-    def max_context_length(self) -> int:
-        return 128_000
 
     async def generate(
         self,
@@ -232,7 +227,8 @@ def executor(registry) -> ToolExecutor:
 @pytest.fixture
 def conv_ctx() -> ContextManager:
     """Bare ContextManager for tests (no backing session)."""
-    ctx = ContextManager(SystemPromptBuilder())
+    from toddler.config.settings import Settings
+    ctx = ContextManager(Settings(), MockLLMProvider())
     ctx.load([])
     return ctx
 

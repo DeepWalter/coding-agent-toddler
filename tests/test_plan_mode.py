@@ -392,10 +392,6 @@ class MockPlanLLMProvider(BaseLLMProvider):
         self.call_count = 0
         self.messages_history: list[list[Message]] = []
 
-    @property
-    def max_context_length(self) -> int:
-        return 128_000
-
     async def generate(
         self, messages, tools, *, max_tokens=4096, temperature=0.0, stream=True,
     ):

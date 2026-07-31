@@ -89,21 +89,9 @@ class AgentLoop:
         Executor that runs tool calls (with checkpoint hooks if configured).
     settings:
         Resolved settings (limits, permissions, etc.).
-    system_prompt_builder:
-        Optional :class:`SystemPromptBuilder` for layered system prompts.
-        When *None*, a default builder with no project map or memory is used.
-    context_window_mgr:
-        Optional :class:`ContextWindowManager` for token tracking and
-        compaction/truncation triggers.  When *None*, context management
-        is skipped.
-    conversation_compactor:
-        Optional :class:`ConversationCompactor` for LLM-powered conversation
-        summarisation.  Required when *context_window_mgr* is provided and
-        you want automatic compaction.
-    storage_manager:
-        Optional :class:`StorageManager` for persisting compaction results.
-        When provided, compacted messages are written back to the session
-        store so the compaction survives restarts.
+    context:
+        :class:`ContextManager` that owns the message buffer, system prompt
+        building, token tracking, compaction, and persistence coordination.
     """
 
     def __init__(

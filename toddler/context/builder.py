@@ -10,11 +10,10 @@ computed once and reused across turns.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from pathlib import Path
 
-if TYPE_CHECKING:
-    from toddler.context.memory import PersistentMemory
-    from toddler.context.workspace import ProjectMapper
+from toddler.context.memory import PersistentMemory
+from toddler.context.workspace import ProjectMapper
 
 logger = logging.getLogger(__name__)
 
@@ -103,22 +102,31 @@ class SystemPromptBuilder:
 
     Parameters
     ----------
-    project_mapper:
-        Optional :class:`~toddler.context.workspace.ProjectMapper` for
-        generating the project structure overview.  When *None* the project
-        map section is omitted.
-    persistent_memory:
-        Optional :class:`~toddler.context.memory.PersistentMemory` for
-        user preferences.  When *None* the memory section is omitted.
+    project_root:
+        Root directory of the project.  When set, a
+        :class:`~toddler.context.workspace.ProjectMapper` is built
+        internally to generate the project structure overview.  When
+        *None* the project map section is omitted.
+    memory_dir:
+        Directory for persistent memory storage (``memory.json``).
+        When set, a :class:`~toddler.context.memory.PersistentMemory`
+        is built internally.  When *None* the memory section is omitted.
     """
 
     def __init__(
         self,
-        project_mapper: ProjectMapper | None = None,
-        persistent_memory: PersistentMemory | None = None,
+        project_root: str | Path | None = None,
+        memory_dir: str | Path | None = None,
     ) -> None:
-        self._mapper = project_mapper
-        self._memory = persistent_memory
+        if project_root is not None:
+            self._mapper = ProjectMapper(project_root)
+        else:
+            self._mapper = None
+
+        if memory_dir is not None:
+            self._memory = PersistentMemory(memory_dir)
+        else:
+            self._memory = None
 
         # Caches — built once and reused.
         self._project_map_text: str | None = None

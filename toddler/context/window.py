@@ -35,8 +35,9 @@ class ContextWindowManager:
     Parameters
     ----------
     llm_provider:
-        The LLM backend — used for token counting and to learn the
-        context-window size.
+        The LLM backend — used for token counting.
+    max_context_length:
+        The model's maximum context window size in tokens.
     compaction_threshold:
         Fraction of the context window (0.0-1.0) at which compaction is
         triggered. The default (0.8) means compaction starts when tokens
@@ -49,11 +50,13 @@ class ContextWindowManager:
     def __init__(
         self,
         llm_provider: BaseLLMProvider,
+        max_context_length: int,
         *,
         compaction_threshold: float = 0.8,
         output_headroom: int = _DEFAULT_OUTPUT_HEADROOM,
     ) -> None:
         self._llm = llm_provider
+        self._max_context_length = max_context_length
         self._compaction_threshold = compaction_threshold
         self._output_headroom = output_headroom
 
@@ -64,7 +67,7 @@ class ContextWindowManager:
     @property
     def context_limit(self) -> int:
         """The model's advertised context window size (tokens)."""
-        return self._llm.max_context_length
+        return self._max_context_length
 
     @property
     def effective_limit(self) -> int:
