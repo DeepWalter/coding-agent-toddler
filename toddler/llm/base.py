@@ -66,16 +66,13 @@ class BaseLLMProvider(ABC):
         ...
 
     # ------------------------------------------------------------------
-    # Token counting
+    # Model identity
     # ------------------------------------------------------------------
 
+    @property
     @abstractmethod
-    def count_tokens(self, messages: list[Message]) -> int:
-        """Count the total tokens consumed by *messages*.
-
-        Used by the context window manager to decide when compaction or
-        truncation is needed.
-        """
+    def model(self) -> str:
+        """The model name string (e.g. ``"deepseek-v4-pro"``)."""
         ...
 
     # ------------------------------------------------------------------

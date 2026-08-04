@@ -144,8 +144,15 @@ class Conversation:
         UTC timestamps.
     message_count:
         Number of messages in this conversation.
-    total_input_tokens / total_output_tokens:
-        Cumulative token counters for this conversation.
+    total_tokens:
+        Token count of the conversation's current messages (a snapshot
+        of the in-memory context at the last ``save()``).  Used on reload
+        to seed the context-window baseline and skip a full tiktoken
+        re-estimate.  Invalidated when ``model`` changes.
+    model:
+        The model the ``total_tokens`` snapshot was computed with.
+        *None* for old / fresh rows.  When the current model differs, the
+        stored count is treated as stale and re-estimated.
     """
 
     id: str
@@ -158,8 +165,8 @@ class Conversation:
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     message_count: int = 0
-    total_input_tokens: int = 0
-    total_output_tokens: int = 0
+    total_tokens: int = 0
+    model: str | None = None
 
     @property
     def display_title(self) -> str:

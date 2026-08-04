@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 # Current schema version (integer — increments on every schema change)
 # ---------------------------------------------------------------------------
 
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 
 # ---------------------------------------------------------------------------
 # SQL
@@ -97,8 +97,8 @@ CREATE TABLE IF NOT EXISTS conversations (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     message_count INTEGER NOT NULL DEFAULT 0,
-    total_input_tokens INTEGER NOT NULL DEFAULT 0,
-    total_output_tokens INTEGER NOT NULL DEFAULT 0
+    total_tokens INTEGER NOT NULL DEFAULT 0,
+    model TEXT
 );
 """
 
@@ -381,8 +381,7 @@ class SQLiteStore:
                 """INSERT INTO conversations
                    (id, session_id, title, sequence_num, status,
                     compacted_summary, compacted_at_seq, created_at,
-                    updated_at, message_count, total_input_tokens,
-                    total_output_tokens)
+                    updated_at, message_count, total_tokens, model)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     conv.id,
@@ -395,8 +394,8 @@ class SQLiteStore:
                     conv.created_at.isoformat(),
                     conv.updated_at.isoformat(),
                     conv.message_count,
-                    conv.total_input_tokens,
-                    conv.total_output_tokens,
+                    conv.total_tokens,
+                    conv.model,
                 ),
             )
             conn.commit()
@@ -488,8 +487,7 @@ class SQLiteStore:
                 """UPDATE conversations
                    SET title = ?, status = ?, compacted_summary = ?,
                        compacted_at_seq = ?, updated_at = ?,
-                       message_count = ?, total_input_tokens = ?,
-                       total_output_tokens = ?
+                       message_count = ?, total_tokens = ?, model = ?
                    WHERE id = ?""",
                 (
                     conv.title,
@@ -498,8 +496,8 @@ class SQLiteStore:
                     conv.compacted_at_seq,
                     conv.updated_at.isoformat(),
                     conv.message_count,
-                    conv.total_input_tokens,
-                    conv.total_output_tokens,
+                    conv.total_tokens,
+                    conv.model,
                     conv.id,
                 ),
             )
@@ -732,6 +730,24 @@ class SQLiteStore:
             conn.commit()
             current = 2
 
+        if current < 3:
+            logger.info(
+                "Migrating to schema v3 — conversation token baseline."
+            )
+            _add_column_if_missing(
+                conn, "conversations", "total_tokens",
+                "INTEGER NOT NULL DEFAULT 0",
+            )
+            _add_column_if_missing(
+                conn, "conversations", "model",
+                "TEXT",
+            )
+            conn.execute(
+                "UPDATE _schema_version SET version = 3"
+            )
+            conn.commit()
+            current = 3
+
         if current != CURRENT_SCHEMA_VERSION:
             logger.warning(
                 f"Database schema is at v{current}, but code expects "
@@ -779,8 +795,8 @@ class SQLiteStore:
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
             message_count=row["message_count"],
-            total_input_tokens=row["total_input_tokens"],
-            total_output_tokens=row["total_output_tokens"],
+            total_tokens=row["total_tokens"],
+            model=row["model"],
         )
 
     @staticmethod
@@ -882,9 +898,8 @@ def _backfill_conversations(conn: sqlite3.Connection) -> None:
             """INSERT INTO conversations
                (id, session_id, title, sequence_num, status,
                 compacted_summary, compacted_at_seq, created_at,
-                updated_at, message_count, total_input_tokens,
-                total_output_tokens)
-               VALUES (?, ?, ?, ?, 'active', NULL, NULL, ?, ?, 0, 0, 0)""",
+                updated_at, message_count)
+               VALUES (?, ?, ?, ?, 'active', NULL, NULL, ?, ?, 0)""",
             (conv_id, sid, None, max_seq + 1, now, now),
         )
 

@@ -209,6 +209,10 @@ class AgentLoop:
             if assistant_msg.content:
                 self._ctx.append(assistant_msg)
 
+            # Feed API-reported token counts back into the context so
+            # subsequent count_tokens() calls only estimate the delta.
+            self._ctx.record_usage(usage)
+
             # -- handle stop reason ---
             sr = StopConditionChecker.from_llm_stop_reason(stop_reason)
             if sr is not None:

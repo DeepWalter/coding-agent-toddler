@@ -10,15 +10,17 @@ from toddler.context.builder import SystemPromptBuilder
 from toddler.context.manager import CompactionResult, ContextManager
 from toddler.context.memory import PersistentMemory
 from toddler.context.summarizer import ConversationCompactor
+from toddler.context.token_counter import TokenCounter
 from toddler.context.window import ContextWindowManager
 from toddler.context.workspace import ProjectMapper
 
 __all__ = [
-    "ContextManager",
     "CompactionResult",
+    "ContextManager",
     "ContextWindowManager",
     "ConversationCompactor",
     "PersistentMemory",
     "ProjectMapper",
     "SystemPromptBuilder",
+    "TokenCounter",
 ]

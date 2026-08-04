@@ -417,8 +417,9 @@ class MockPlanLLMProvider(BaseLLMProvider):
             usage=TokenUsage(input_tokens=20, output_tokens=10),
         )
 
-    def count_tokens(self, messages):
-        return 100
+    @property
+    def model(self) -> str:
+        return "test-model"
 
     async def generate_compact(self, prompt):
         return "compacted"

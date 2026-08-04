@@ -21,11 +21,9 @@ import httpx
 from openai import NOT_GIVEN, NotGiven
 
 from toddler.llm._async_openai import AsyncOpenAI
-
 from toddler.llm.base import BaseLLMProvider
 from toddler.llm.messages import ContentBlock, Message
 from toddler.llm.responses import LLMResponse, StreamEvent, TokenUsage
-from toddler.llm.token_counter import TokenCounter
 
 if TYPE_CHECKING:
     from toddler.config.settings import Settings
@@ -81,7 +79,15 @@ class OpenAICompatibleProvider(BaseLLMProvider):
             api_key=settings.api_key,
             http_client=http_client,
         )
-        self._token_counter = TokenCounter(model=settings.model)
+
+    # ------------------------------------------------------------------
+    # Properties
+    # ------------------------------------------------------------------
+
+    @property
+    def model(self) -> str:
+        """The model name string."""
+        return self._model
 
     # ------------------------------------------------------------------
     # generate — the core API
@@ -106,13 +112,6 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         return await self._generate_non_streaming(
             openai_messages, openai_tools, max_tokens, temperature
         )
-
-    # ------------------------------------------------------------------
-    # Token counting (delegates to TokenCounter)
-    # ------------------------------------------------------------------
-
-    def count_tokens(self, messages: list[Message]) -> int:
-        return self._token_counter.count_messages(messages)
 
     # ------------------------------------------------------------------
     # Compaction helper

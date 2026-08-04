@@ -319,6 +319,20 @@ class SessionCoordinator:
         initial.extend(recent)
         self._ctx.load(initial)
 
+        # Seed the token-count baseline from the persisted conversation row so
+        # the first count_tokens() call skips a full tiktoken re-estimate.
+        # Only valid when the stored count is nonzero AND was computed with
+        # the current model.
+        if (
+            self._conv.total_tokens > 0
+            and self._conv.model is not None
+            and self._conv.model == self._llm.model
+        ):
+            self._ctx.set_token_baseline(
+                total_tokens=self._conv.total_tokens,
+                message_count=len(initial),
+            )
+
     def _get_prior_titles(self) -> list[str] | None:
         """Collect titles of prior conversations in the same session."""
         if self._storage_mgr is None or self._conv is None:
@@ -524,6 +538,13 @@ class SessionCoordinator:
                 prev = self._conv.compacted_at_seq or self._base_seq - 1
                 self._conv.compacted_at_seq = prev + summarized
             self._ctx.clear_compaction_result()
+
+        # Snapshot the current context size so a future reload can seed the
+        # baseline and skip a full tiktoken re-estimate.  The count is only
+        # comparable across loads when the model is unchanged, so persist it
+        # too.
+        self._conv.total_tokens = self._ctx.count_tokens()
+        self._conv.model = self._llm.model
 
         # Persist conversation metadata.
         self._storage_mgr.update_conversation(self._conv)

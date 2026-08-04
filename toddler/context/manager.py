@@ -21,7 +21,7 @@ from toddler.config.settings import Settings
 from toddler.context.builder import SystemPromptBuilder
 from toddler.context.summarizer import ConversationCompactor
 from toddler.context.window import ContextWindowManager
-from toddler.llm import BaseLLMProvider, Message
+from toddler.llm import BaseLLMProvider, Message, TokenUsage
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +93,7 @@ class ContextManager:
             memory_dir=memory_dir,
         )
         self._window_mgr = ContextWindowManager(
-            llm_provider,
+            llm_provider.model,
             max_context_length=settings.max_context_length,
         )
         self._compactor = ConversationCompactor(llm_provider)
@@ -130,6 +130,7 @@ class ContextManager:
         self._baseline_count = len(messages)
         self._has_compacted = False
         self._last_compaction = None
+        self._window_mgr.reset_baseline()
 
     def set_cross_conversation_context(
         self, prior_titles: list[str] | None,
@@ -142,6 +143,44 @@ class ContextManager:
         conversation.
         """
         self._prior_titles = prior_titles
+
+    # ------------------------------------------------------------------
+    # Token tracking
+    # ------------------------------------------------------------------
+
+    def record_usage(self, usage: TokenUsage) -> None:
+        """Feed API-reported token counts back into the window manager.
+
+        Must be called AFTER the assistant message is appended so that
+        ``usage.total`` covers every message currently in the buffer.
+        """
+        if usage.total > 0:
+            self._window_mgr.set_baseline(
+                total_tokens=usage.total,
+                message_count=len(self._messages),
+            )
+
+    def count_tokens(self) -> int:
+        """Return the current token count of the in-memory buffer.
+
+        Uses the window manager's baseline + tiktoken delta — exact for the
+        persisted message list when the baseline was seeded from storage.
+        """
+        return self._window_mgr.count_tokens(self._messages)
+
+    def set_token_baseline(
+        self, *, total_tokens: int, message_count: int,
+    ) -> None:
+        """Seed the window-manager baseline from persisted conversation data.
+
+        Called by the session layer immediately after :meth:`load` when the
+        stored ``total_tokens`` is usable (nonzero and the model matches),
+        so the first ``count_tokens`` call doesn't need a full tiktoken
+        estimate.
+        """
+        self._window_mgr.set_baseline(
+            total_tokens=total_tokens, message_count=message_count,
+        )
 
     # ------------------------------------------------------------------
     # Turn preparation
@@ -230,6 +269,7 @@ class ContextManager:
                 # buffer, and new_messages / new_message_count should only
                 # reflect additions made after this point.
                 self._baseline_count = len(self._messages)
+                self._window_mgr.reset_baseline()
 
                 self._has_compacted = True
                 self._last_compaction = result
@@ -253,6 +293,7 @@ class ContextManager:
             self._messages.clear()
             self._messages.extend(truncated)
             self._baseline_count = len(self._messages)
+            self._window_mgr.reset_baseline()
             logger.error(
                 f"EMERGENCY TRUNCATION: {before:,} → {after:,} tokens."
             )

@@ -8,12 +8,9 @@ truncation when the conversation grows too large.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
 
+from toddler.context.token_counter import TokenCounter
 from toddler.llm import Message
-
-if TYPE_CHECKING:
-    from toddler.llm import BaseLLMProvider
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +31,9 @@ class ContextWindowManager:
 
     Parameters
     ----------
-    llm_provider:
-        The LLM backend — used for token counting.
+    model:
+        The model name string (e.g. ``"gpt-4"``) — used to resolve the
+        tiktoken encoding.
     max_context_length:
         The model's maximum context window size in tokens.
     compaction_threshold:
@@ -49,16 +47,21 @@ class ContextWindowManager:
 
     def __init__(
         self,
-        llm_provider: BaseLLMProvider,
+        model: str,
         max_context_length: int,
         *,
         compaction_threshold: float = 0.8,
         output_headroom: int = _DEFAULT_OUTPUT_HEADROOM,
     ) -> None:
-        self._llm = llm_provider
+        self._token_counter = TokenCounter(model=model)
         self._max_context_length = max_context_length
         self._compaction_threshold = compaction_threshold
         self._output_headroom = output_headroom
+
+        # Baseline tracking — set after each API call via set_baseline().
+        # When zero, count_tokens() falls back to a full tiktoken estimate.
+        self._baseline_total_tokens: int = 0
+        self._baseline_message_count: int = 0
 
     # ------------------------------------------------------------------
     # Properties
@@ -82,9 +85,50 @@ class ContextWindowManager:
     # Token counting
     # ------------------------------------------------------------------
 
+    def set_baseline(self, *, total_tokens: int, message_count: int) -> None:
+        """Set the authoritative baseline after an API call.
+
+        *total_tokens* is ``usage.total`` from the response (input + output).
+        *message_count* is ``len(messages)`` AFTER the assistant is appended.
+        """
+        self._baseline_total_tokens = total_tokens
+        self._baseline_message_count = message_count
+
+    def reset_baseline(self) -> None:
+        """Invalidate the baseline.
+
+        Called when the message list changes structurally — new conversation
+        (``load``), compaction, or truncation.  Subsequent ``count_tokens``
+        calls will estimate everything with tiktoken until the next API
+        response provides a fresh baseline.
+        """
+        self._baseline_total_tokens = 0
+        self._baseline_message_count = 0
+
     def count_tokens(self, messages: list[Message]) -> int:
-        """Count the total tokens consumed by *messages*."""
-        return self._llm.count_tokens(messages)
+        """Count tokens: actual baseline + estimated delta.
+
+        When a baseline is available (from a prior API response), only the
+        new messages since that API call are estimated via tiktoken.  When
+        no baseline exists yet, the full list is estimated.
+        """
+        if self._baseline_total_tokens == 0:
+            # No baseline yet — estimate everything
+            return self._token_counter.count_messages(messages)
+
+        already_counted = self._baseline_message_count
+        if len(messages) < already_counted:
+            # Shouldn't happen (reset_baseline is always called on structural
+            # changes), but guard defensively.
+            return self._token_counter.count_messages(messages)
+
+        if len(messages) == already_counted:
+            # No new messages since baseline was set — still exact.
+            return self._baseline_total_tokens
+
+        new_msgs = messages[already_counted:]  # only user input + tool results
+        delta = self._token_counter.count_messages(new_msgs)
+        return self._baseline_total_tokens + delta
 
     def estimate_remaining(self, messages: list[Message]) -> int:
         """Estimate how many tokens are still available.

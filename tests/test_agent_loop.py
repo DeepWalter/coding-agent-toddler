@@ -72,12 +72,9 @@ class MockLLMProvider(BaseLLMProvider):
             usage=TokenUsage(input_tokens=10, output_tokens=5),
         )
 
-    def count_tokens(self, messages: list[Message]) -> int:
-        return sum(
-            len(getattr(b, "text", "") or "") // 4
-            for m in messages
-            for b in m.content
-        )
+    @property
+    def model(self) -> str:
+        return "test-model"
 
     async def generate_compact(self, prompt: str) -> str:
         return "[compacted]"
