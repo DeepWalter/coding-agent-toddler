@@ -172,14 +172,14 @@ class SystemPromptBuilder:
         if proj:
             sections.append(proj)
 
+        mem = self._persistent_memory_section()
+        if mem:
+            sections.append(mem)
+
         if prior_conversation_summaries:
             sections.append(
                 self._prior_work_section(prior_conversation_summaries)
             )
-
-        mem = self._persistent_memory_section()
-        if mem:
-            sections.append(mem)
 
         sections.append(self._mode_instructions(mode))
         return "\n\n".join(sections)
@@ -201,16 +201,16 @@ class SystemPromptBuilder:
         if proj:
             sections.append(proj)
 
+        mem = self._compact_memory_section()
+        if mem:
+            sections.append(mem)
+
         if prior_conversation_summaries:
             sections.append(
                 self._prior_work_section_compact(
                     prior_conversation_summaries
                 )
             )
-
-        mem = self._compact_memory_section()
-        if mem:
-            sections.append(mem)
 
         sections.append(self._compact_mode_instructions(mode))
         return "\n\n".join(sections)

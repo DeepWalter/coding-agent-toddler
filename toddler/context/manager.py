@@ -211,7 +211,6 @@ class ContextManager:
                 prior_conversation_summaries=self._prior_titles,
             )
             self._messages = [Message.system(sys_text)]
-            self._prior_titles = None  # consumed
 
         self._messages.append(Message.user(user_input))
 
@@ -262,6 +261,7 @@ class ContextManager:
                 # preserving the current mode's instructions.
                 compact_sys = self._prompt_builder.build_compact(
                     mode=self._mode,
+                    prior_conversation_summaries=self._prior_titles,
                 )
                 self._replace_system_messages(compact_sys)
 
