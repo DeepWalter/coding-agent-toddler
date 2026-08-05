@@ -7,10 +7,8 @@ six packages.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
 from pathlib import Path
 
 from toddler.agent.events import AgentEvent, AgentFinished
@@ -33,19 +31,6 @@ from toddler.tools import create_default_registry
 from toddler.tools.executor import ToolExecutor
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Auto-titling prompt
-# ---------------------------------------------------------------------------
-
-_TITLE_PROMPT = (
-    "Generate a short title (3-6 words) for a conversation that starts "
-    "with this user message.  Return ONLY the title, no quotes, no "
-    "explanation, no punctuation at the end.\n\n"
-    "User message: {first_message}\n\n"
-    "Title:"
-)
-
 
 # ======================================================================
 # SessionCoordinator
@@ -604,47 +589,6 @@ class SessionCoordinator:
     def storage_manager(self) -> StorageManager:
         """The storage manager (for listing sessions, etc.)."""
         return self._storage_mgr
-
-    # ==================================================================
-    # Auto-titling
-    # ==================================================================
-
-    def auto_title_background(
-        self,
-        session_id: str,
-        first_user_message: str,
-    ) -> None:
-        """Launch a non-blocking background task to generate a session title.
-
-        Call this **after** the first user message has been appended.
-        """
-        asyncio.create_task(
-            self._auto_title(session_id, first_user_message)
-        )
-
-    async def _auto_title(
-        self, session_id: str, first_user_message: str,
-    ) -> None:
-        """Generate a title by calling the LLM, then persist it."""
-        try:
-            prompt = _TITLE_PROMPT.format(first_message=first_user_message)
-            title = await self._llm.generate_compact(prompt)
-            title = title.strip().strip('"').strip("'")
-            if len(title) > 100:
-                title = title[:97] + "..."
-
-            session = self._storage_mgr.get(session_id)
-            if session is None:
-                return
-
-            session.title = title if title else None
-            session.updated_at = datetime.now(UTC)
-            self._storage_mgr.update(session)
-            logger.info(f"Auto-titled session {session_id}: {title}")
-        except Exception:
-            logger.exception(
-                f"Auto-title failed for session {session_id} — ignoring."
-            )
 
     # ==================================================================
     # Checkpoint delegation

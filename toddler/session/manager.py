@@ -331,6 +331,12 @@ class StorageManager:
         self._store.archive_conversation(conversation_id)
         logger.info(f"Archived conversation {conversation_id}.")
 
+    def get_first_user_message(
+        self, conversation_id: str,
+    ) -> str | None:
+        """Return the first user message text for *conversation_id*, or *None*."""
+        return self._store.get_first_user_message(conversation_id)
+
     def get_conversation_summaries(
         self, session_id: str, *, exclude_id: str | None = None,
     ) -> list[tuple[int, str]]:

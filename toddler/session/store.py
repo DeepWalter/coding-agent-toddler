@@ -540,6 +540,32 @@ class SQLiteStore:
             conn.close()
         return int(row[0]) if row else 0
 
+    def get_first_user_message(
+        self, conversation_id: str,
+    ) -> str | None:
+        """Return the content of the first user message in *conversation_id*.
+
+        Returns *None* when the conversation has no user messages.
+        """
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT content_json FROM messages "
+                "WHERE conversation_id = ? AND role = 'user' "
+                "ORDER BY sequence_num ASC LIMIT 1",
+                (conversation_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+        if row is None:
+            return None
+        blocks = _json_loads(row["content_json"])
+        for block in blocks:
+            if block.get("type") == "text":
+                text = block.get("text")
+                return text if text else None
+        return None
+
     # ==================================================================
     # Checkpoint CRUD  (Phase 9 will build on these stubs)
     # ==================================================================
