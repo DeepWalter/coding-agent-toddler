@@ -102,6 +102,11 @@ class CLIApp:
         self._renderer.info('Type /help for commands, /quit to exit.')
 
         while True:
+            self._renderer.prompt_header(
+                mode_label=self._coordinator.mode_label,
+                model=self._settings.model,
+                context_usage_pct=self._coordinator.context_usage_pct,
+            )
             try:
                 user_input = await self._input.prompt()
             except KeyboardInterrupt:

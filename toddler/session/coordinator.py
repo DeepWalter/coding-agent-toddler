@@ -160,6 +160,29 @@ class SessionCoordinator:
         """The agent state machine (exposed for slash-command dispatch)."""
         return self._sm
 
+    @property
+    def mode_label(self) -> str:
+        """User-facing mode label for the REPL header.
+
+        Returns ``"PLAN"`` when in any plan-related mode or when
+        ``/plan`` has been entered but not yet consumed by a turn.
+        Otherwise returns ``"EXECUTE"``.
+        """
+        if self._sm.plan_pending:
+            return "PLAN"
+        return self._sm.current_mode.display_label
+
+    @property
+    def context_usage_pct(self) -> int | None:
+        """Current context usage as a whole-number percentage (0–100+).
+
+        Returns *None* when the context hasn't been initialised yet
+        (before :meth:`resolve`).
+        """
+        if self._ctx is None:
+            return None
+        return round(self._ctx.usage_ratio * 100)
+
     # ==================================================================
     # Turn execution
     # ==================================================================

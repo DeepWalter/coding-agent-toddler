@@ -98,6 +98,11 @@ class AgentMode(Enum):
         """Return ``True`` when the agent is actively processing."""
         return not self.is_terminal
 
+    @property
+    def display_label(self) -> str:
+        """Short user-facing mode label for the REPL header."""
+        return "PLAN" if self.is_plan_related else "EXECUTE"
+
 
 # ============================================================================
 # Plan data models

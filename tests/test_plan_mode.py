@@ -728,3 +728,28 @@ class TestPlanner:
         # State machine should be the same instance and in PLAN_WAITING.
         assert sm.current_mode == AgentMode.PLAN_WAITING
         assert planner.current_mode == AgentMode.PLAN_WAITING
+
+
+class TestModeDisplayLabel:
+    """Unit tests for AgentMode.display_label."""
+
+    def test_execute_label(self):
+        """IDLE, EXECUTING, and FINISHED all return EXECUTE."""
+        assert AgentMode.IDLE.display_label == "EXECUTE"
+        assert AgentMode.EXECUTING.display_label == "EXECUTE"
+        assert AgentMode.FINISHED.display_label == "EXECUTE"
+
+    def test_plan_label(self):
+        """All PLAN_* modes return PLAN."""
+        for mode in (
+            AgentMode.PLAN_EXPLORING,
+            AgentMode.PLAN_PROPOSING,
+            AgentMode.PLAN_WAITING,
+            AgentMode.PLAN_EXECUTING,
+        ):
+            assert mode.display_label == "PLAN"
+
+    def test_all_modes_have_label(self):
+        """Every AgentMode has a non-empty display label."""
+        for mode in AgentMode:
+            assert mode.display_label in ("EXECUTE", "PLAN")

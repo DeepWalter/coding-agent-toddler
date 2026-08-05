@@ -168,6 +168,11 @@ class ContextManager:
         """
         return self._window_mgr.count_tokens(self._messages)
 
+    @property
+    def usage_ratio(self) -> float:
+        """Current context usage as a fraction of the effective limit (0.0–1.0+)."""  # noqa: E501
+        return self._window_mgr.usage_ratio(self._messages)
+
     def set_token_baseline(
         self, *, total_tokens: int, message_count: int,
     ) -> None:

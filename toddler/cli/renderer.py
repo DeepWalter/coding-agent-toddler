@@ -194,6 +194,31 @@ class Renderer(ABC):
         self._console.print()
         self._console.print(Text(text, style=_HEADER))
 
+    def prompt_header(
+        self,
+        mode_label: str,
+        model: str,
+        *,
+        context_usage_pct: int | None = None,
+    ) -> None:
+        """Print a status header above the REPL prompt.
+
+        Shows the current agent mode (EXECUTE / PLAN), the active
+        LLM model name, and optionally the context usage percentage.
+        """
+        mode_style = "bold yellow" if mode_label == "PLAN" else _ACCENT
+        parts: list[tuple[str, str]] = [
+            ("⚡ ", _TOOL_RUNNING),
+            (mode_label, mode_style),
+            (" · ", "dim"),
+            (model, "bold cyan"),
+        ]
+        if context_usage_pct is not None:
+            parts.append((" · ", "dim"))
+            parts.append((f"{context_usage_pct}%", "bold green"))
+        self._console.print()
+        self._console.print(Text.assemble(*parts))
+
     def info(self, text: str) -> None:
         """Print a muted informational line."""
         self._console.print(Text(text, style=_STATUS_MUTED))
