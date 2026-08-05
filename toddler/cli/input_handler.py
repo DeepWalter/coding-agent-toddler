@@ -18,6 +18,7 @@ from prompt_toolkit.styles import Style
 
 _SLASH_COMMANDS: dict[str, str] = {
     "/plan": "Enter plan mode — agent researches and proposes a plan",
+    "/mode": "Show or switch mode — /mode [plan|execute]",
     "/view": "View full output from a turn — /view <turn_number>",
     "/clear": "Archive conversation and start fresh — /clear [title]",
     "/resume": "Resume an archived conversation — /resume <conversation_id>",
@@ -37,6 +38,20 @@ _SLASH_COMMANDS: dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 
+# Sub-option autocomplete entries: command → [(sub_option, description), ...]
+_SUB_OPTIONS: dict[str, list[tuple[str, str]]] = {
+    "/mode": [
+        ("plan", "Research → propose → execute"),
+        ("execute", "Skip plan mode, run directly"),
+    ],
+    "/session": [
+        ("info", "/session info"),
+        ("list", "/session list"),
+        ("switch", "/session switch <id>"),
+    ],
+}
+
+
 class SlashCommandCompleter(Completer):
     """Autocomplete slash commands and their sub-options."""
 
@@ -50,29 +65,31 @@ class SlashCommandCompleter(Completer):
         if not text.startswith("/"):
             return
 
-        # Full command list
         words = text.split()
         if len(words) == 1:
-            # Completing the command name itself.
-            prefix = words[0]
-            for cmd, desc in self._commands.items():
-                if cmd.startswith(prefix):
-                    yield Completion(
-                        cmd,
-                        start_position=-len(prefix),
-                        display_meta=desc,
-                    )
+            yield from self._complete_command(words[0])
         elif len(words) == 2:
-            # Completing sub-options for specific commands.
-            cmd = words[0]
-            if cmd == "/session":
-                for sub in ("info", "list", "switch"):
-                    if sub.startswith(words[1]):
-                        yield Completion(
-                            sub,
-                            start_position=-len(words[1]),
-                            display_meta=f"/session {sub}",
-                        )
+            yield from self._complete_sub_option(words[0], words[1])
+
+    def _complete_command(self, prefix: str):
+        """Yield completions for the command name itself."""
+        for cmd, desc in self._commands.items():
+            if cmd.startswith(prefix):
+                yield Completion(
+                    cmd,
+                    start_position=-len(prefix),
+                    display_meta=desc,
+                )
+
+    def _complete_sub_option(self, cmd: str, prefix: str):
+        """Yield completions for sub-options of a command."""
+        for sub, meta in _SUB_OPTIONS.get(cmd, ()):
+            if sub.startswith(prefix):
+                yield Completion(
+                    sub,
+                    start_position=-len(prefix),
+                    display_meta=meta,
+                )
 
 
 # ---------------------------------------------------------------------------

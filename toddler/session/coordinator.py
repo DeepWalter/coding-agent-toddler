@@ -166,8 +166,11 @@ class SessionCoordinator:
 
         Returns ``"PLAN"`` when in any plan-related mode or when
         ``/plan`` has been entered but not yet consumed by a turn.
-        Otherwise returns ``"EXECUTE"``.
+        Returns ``"EXECUTE"`` when ``/mode execute`` has forced direct
+        execution.  Otherwise reflects the current state-machine mode.
         """
+        if self._sm.force_direct:
+            return "EXECUTE"
         if self._sm.plan_pending:
             return "PLAN"
         return self._sm.current_mode.display_label

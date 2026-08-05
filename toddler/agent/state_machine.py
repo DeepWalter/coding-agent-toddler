@@ -524,6 +524,14 @@ class AgentStateMachine:
         :meth:`classify_and_transition`.
         """
 
+        self._force_direct: bool = False
+        """When ``True``, the next user message skips plan mode entirely.
+
+        Set by ``/mode execute`` and consumed by
+        :meth:`classify_and_transition`.  Overrides both ``_plan_pending``
+        and the complexity heuristic, forcing ``EXECUTING`` mode.
+        """
+
     # ------------------------------------------------------------------
     # Mode accessors
     # ------------------------------------------------------------------
@@ -599,6 +607,13 @@ class AgentStateMachine:
         AgentMode
             The new current mode (``EXECUTING`` or ``PLAN_EXPLORING``).
         """
+        # _force_direct overrides everything — skip plan mode entirely.
+        if self._force_direct:
+            self._force_direct = False
+            self._plan_pending = False
+            self.transition(AgentMode.EXECUTING)
+            return self._mode
+
         should_plan = (
             force_plan
             or self._plan_pending
@@ -644,6 +659,22 @@ class AgentStateMachine:
         Called by the ``/plan`` slash command.
         """
         self._plan_pending = True
+        self._force_direct = False
+
+    def flag_direct_execute(self) -> None:
+        """Force the next user message to skip plan mode entirely.
+
+        Called by ``/mode execute``.  Overrides both ``/plan`` and the
+        complexity heuristic so the next turn goes straight to
+        ``EXECUTING``.
+        """
+        self._force_direct = True
+        self._plan_pending = False
+
+    @property
+    def force_direct(self) -> bool:
+        """Whether the next turn will skip plan mode."""
+        return self._force_direct
 
     def approve_plan(self) -> bool:
         """Approve the current plan and transition to PLAN_EXECUTING.

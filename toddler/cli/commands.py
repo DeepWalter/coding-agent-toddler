@@ -5,6 +5,7 @@ Phase 10: Structured slash-command handling extracted from the inline
 
 Commands:
     ``/plan``                    — Flag the next message for plan mode.
+    ``/mode [plan|execute]``     — Show or switch between plan/execute mode.
     ``/clear [title]``           — Archive conversation and start fresh.
     ``/resume <conversation_id>``— Resume an archived conversation.
     ``/conversations``           — List conversations in the current session.
@@ -238,6 +239,71 @@ class SlashCommandDispatcher:
         return CommandResult(
             continue_repl=True,
             message="Plan mode will be triggered on your next message.",
+        )
+
+    async def _cmd_mode(self, args: str) -> CommandResult:
+        """``/mode [plan|execute]`` — switch between plan and execute modes.
+
+        Without arguments, shows the current mode.  With ``plan``, flags the
+        next message for plan mode (same as ``/plan``).  With ``execute``,
+        clears any pending plan flag and forces the next turn to skip the
+        complexity heuristic.
+        """
+        sub = args.strip().lower()
+
+        if not sub:
+            if self._sm is None:
+                return CommandResult(
+                    continue_repl=True,
+                    message="No state machine available.",
+                )
+            if self._sm.force_direct:
+                current = "EXECUTE (forced — next turn skips plan mode)"
+            elif self._sm.plan_pending:
+                current = "PLAN (pending — next message will trigger plan mode)"  # noqa: E501
+            else:
+                current = self._sm.current_mode.display_label
+            return CommandResult(
+                continue_repl=True,
+                message=f"Current mode: {current}",
+            )
+
+        if sub in ("p", "plan"):
+            if self._sm is not None:
+                self._sm.flag_plan_pending()
+                return CommandResult(
+                    continue_repl=True,
+                    message=(
+                        "Plan mode enabled — your next message will "
+                        "trigger research and plan proposal."
+                    ),
+                )
+            return CommandResult(
+                continue_repl=True,
+                message="Plan mode will be triggered on your next message.",
+            )
+
+        if sub in ("e", "exec", "execute"):
+            if self._sm is not None:
+                self._sm.flag_direct_execute()
+                return CommandResult(
+                    continue_repl=True,
+                    message=(
+                        "Execute mode — next turn will skip the "
+                        "complexity heuristic and run directly."
+                    ),
+                )
+            return CommandResult(
+                continue_repl=True,
+                message="Switched to execute mode.",
+            )
+
+        return CommandResult(
+            continue_repl=True,
+            message=(
+                f"Unknown /mode subcommand: '{sub}'. "
+                f"Available: plan, execute."
+            ),
         )
 
     async def _cmd_rollback(self, args: str) -> CommandResult:
@@ -544,6 +610,7 @@ _COMMAND_TABLE: dict[str, _Handler] = {
     "/help": SlashCommandDispatcher._cmd_help,
     "/view": SlashCommandDispatcher._cmd_view,
     "/plan": SlashCommandDispatcher._cmd_plan,
+    "/mode": SlashCommandDispatcher._cmd_mode,
     "/resume": SlashCommandDispatcher._cmd_resume,
     "/conversations": SlashCommandDispatcher._cmd_conversations,
     "/rollback": SlashCommandDispatcher._cmd_rollback,
@@ -562,6 +629,7 @@ HELP_TEXT = """\
 | Command | Description |
 |---------|-------------|
 | `/plan` | Flag the next message for plan mode (research → propose → execute) |
+| `/mode [plan / execute]` | Show or switch the current mode |
 | `/view <N>` | View full output from turn N in a pager |
 | `/clear [title]` | Archive current conversation and start a fresh one |
 | `/resume <id>` | Resume a conversation by #N or UUID |
