@@ -336,12 +336,16 @@ class SQLiteStore:
 
         return [self._row_to_message(r) for r in rows]
 
-    def get_message_count(self, session_id: str) -> int:
-        """Return the number of messages stored for *session_id*."""
+    def get_max_message_seq(self, session_id: str) -> int:
+        """Return the highest message ``sequence_num`` for *session_id*.
+
+        Returns 0 when there are no messages.
+        """
         conn = self._connect()
         try:
             row = conn.execute(
-                "SELECT COUNT(*) FROM messages WHERE session_id = ?",
+                "SELECT COALESCE(MAX(sequence_num), 0) "
+                "FROM messages WHERE session_id = ?",
                 (session_id,),
             ).fetchone()
         finally:

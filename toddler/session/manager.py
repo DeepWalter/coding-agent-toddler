@@ -188,12 +188,12 @@ class StorageManager:
 
         Returns the new ``sequence_num``.
         """  # noqa: E501
-        # Use global sequence within the session.
-        current_count = self._store.get_message_count(session_id)
+        # Use per-session message sequence.
+        next_seq = self._store.get_max_message_seq(session_id) + 1
         stored = StoredMessage(
             session_id=session_id,
             conversation_id=conversation_id,
-            sequence_num=current_count,
+            sequence_num=next_seq,
             role=message.role,
             content_json=_serialize_content(message.content),
             token_count=token_count,
@@ -204,7 +204,7 @@ class StorageManager:
         # Update session counters.
         session = self._store.get_session(session_id)
         if session:
-            session.message_count = current_count + 1
+            session.message_count = next_seq
             session.updated_at = datetime.now(UTC)
             self._store.update_session(session)
 

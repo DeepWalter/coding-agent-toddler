@@ -130,7 +130,8 @@ class Conversation:
         Optional human-readable title.  Auto-set from first user input
         if not explicitly provided via ``/clear <title>``.
     sequence_num:
-        Global sequence counter (sparse — only incremented on creation).
+        Per-session conversation sequence number, independent from message
+        sequence numbers.  Assigned contiguously (1, 2, 3…) on creation.
     status:
         ``"active"`` or ``"archived"``.  Only one conversation per session
         can be active at a time.
@@ -237,7 +238,7 @@ class StoredMessage:
     id: int | None = None  # auto-increment, *None* until persisted
     session_id: str = ""
     conversation_id: str = ""
-    sequence_num: int = 0
+    sequence_num: int = 0  # per-session message index (1, 2, 3…)
     role: str = "user"
     content_json: str = "[]"
     token_count: int = 0
