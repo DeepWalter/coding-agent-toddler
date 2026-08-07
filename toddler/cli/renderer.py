@@ -1336,7 +1336,7 @@ def _format_tool_signature(name: str, params: dict) -> str:
         parts.append(f"{k}={s}")
 
     label = name if name else ""
-    args = ", ".join(parts[:2])
+    args = ", ".join(parts[:3])
     if args:
         return f"{label}({args})" if label else args
     return label
