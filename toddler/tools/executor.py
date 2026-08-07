@@ -5,7 +5,14 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from toddler.tools.base import BaseTool, Permission, ToolCall, ToolResult
+from toddler.tools.base import (
+    BaseTool,
+    Permission,
+    PermissionManager,
+    PermissionMode,
+    ToolCall,
+    ToolResult,
+)
 from toddler.tools.registry import ToolRegistry
 
 __all__ = [
@@ -65,12 +72,12 @@ async def always_approve(
 class ToolExecutor:
     """Executes tool calls with permission gating and checkpoint integration.
 
-    Permission logic (driven by ``Settings``)::
+    Permission logic delegates to
+    :meth:`~PermissionManager.needs_confirmation` via a shared
+    :class:`PermissionManager`::
 
-        READ            → auto-approve (by default)
-        WRITE           → confirm with user (by default)
-        SHELL_SAFE      → auto-approve (by default)
-        SHELL_DANGEROUS → always confirm
+        MANUAL (default): READ/SHELL_SAFE auto; WRITE/SHELL_DANGEROUS confirm
+        AUTO:             READ/SHELL_SAFE/WRITE auto; SHELL_DANGEROUS confirm
 
     The executor is deliberately decoupled from the agent loop — it receives
     a ``ToolCall`` and returns a ``ToolResult``, with all side-effect concerns
@@ -80,15 +87,16 @@ class ToolExecutor:
     ----------
     registry : ToolRegistry
         The tool registry to resolve tool names from.
-    settings : Settings
-        Resolved configuration controlling permission behavior.
     confirm_cb : ConfirmCallback | None
         Async callback invoked when user confirmation is needed.
         When ``None`` (the default), all tools are auto-approved —
         gating is assumed to be handled upstream by the agent loop.
     checkpoint_cb : CheckpointCallback | None
         Pre-execution hook for creating checkpoints before mutating tools.
-    """
+    permission_manager : PermissionManager | None
+        Shared permission manager for live gating-mode reads.
+        When ``None``, a default (MANUAL) manager is created internally.
+    """  # noqa: E501
 
     def __init__(
         self,
@@ -96,14 +104,25 @@ class ToolExecutor:
         *,
         confirm_cb: ConfirmCallback | None = None,
         checkpoint_cb: CheckpointCallback | None = None,
+        permission_manager: PermissionManager | None = None,
     ) -> None:
         self._registry = registry
         self._confirm_cb = confirm_cb
         self._checkpoint_cb = checkpoint_cb
+        self._perm_mgr = permission_manager or PermissionManager()
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def set_permission_mode(self, mode: PermissionMode) -> None:
+        """Update the permission gating mode via the shared manager.
+
+        Kept for backward compatibility — the manager reference already
+        tracks the live mode, so this is only needed when the executor
+        owns its own private manager (i.e. no shared manager was passed).
+        """
+        self._perm_mgr.set_mode(mode)
 
     async def execute(self, call: ToolCall) -> ToolResult:
         """Resolve, gate, and run a single tool call.
@@ -162,13 +181,15 @@ class ToolExecutor:
     async def _check_permission(
         self, tool: BaseTool, params: dict[str, Any], perm: Permission
     ) -> bool:
-        """Return ``True`` if execution is allowed for this tool + params."""
-        if perm in (Permission.READ, Permission.SHELL_SAFE):
-            return True  # always auto-approve read-only operations
-        if perm in (Permission.WRITE, Permission.SHELL_DANGEROUS):
-            return await self._confirm(tool, params, perm)
-        # Unknown permission level → deny
-        return False
+        """Return ``True`` if execution is allowed for this tool + params.
+
+        Delegates the policy decision to the shared
+        :class:`PermissionManager` and only invokes
+        the user-confirmation callback when the policy says so.
+        """
+        if not self._perm_mgr.needs_confirmation(perm):
+            return True
+        return await self._confirm(tool, params, perm)
 
     async def _confirm(
         self, tool: BaseTool, params: dict[str, Any], perm: Permission

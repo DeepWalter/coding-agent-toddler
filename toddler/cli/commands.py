@@ -5,7 +5,7 @@ Phase 10: Structured slash-command handling extracted from the inline
 
 Commands:
     ``/plan``                    — Flag the next message for plan mode.
-    ``/mode [plan|execute]``     — Show or switch between plan/execute mode.
+    ``/mode [plan|manual|auto]`` — Show or switch workflow and gating mode.
     ``/clear [title]``           — Archive conversation and start fresh.
     ``/resume <conversation_id>``— Resume an archived conversation.
     ``/conversations``           — List conversations in the current session.
@@ -25,8 +25,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from toddler.tools.base import PermissionMode
+
 if TYPE_CHECKING:
-    from toddler.agent.state_machine import AgentStateMachine
     from toddler.session.coordinator import SessionCoordinator
 
 __all__ = [
@@ -85,12 +86,10 @@ class SlashCommandDispatcher:
 
     Parameters
     ----------
-    state_machine:
-        Used by ``/plan`` to flag plan-pending.
     session_coordinator:
-        Used by ``/session``, ``/clear``, ``/resume``,
-        ``/conversations``, ``/rollback``, and ``/checkpoints`` commands.
-        When *None*, those commands show a "persistence disabled" message.
+        Provides the state machine (``/plan``, ``/mode``), session and
+        conversation management (``/clear``, ``/resume``, ``/session``,
+        ``/rollback``, ``/checkpoints``), and persistence.
     output_base:
         Base directory for turn output files.  Used by ``/view`` to
         locate saved full-turn markdown.
@@ -99,11 +98,9 @@ class SlashCommandDispatcher:
     def __init__(
         self,
         *,
-        state_machine: AgentStateMachine | None = None,
-        session_coordinator: SessionCoordinator | None = None,
+        session_coordinator: SessionCoordinator,
         output_base: Path | None = None,
     ) -> None:
-        self._sm = state_machine
         self._coordinator = session_coordinator
         self._output_base = output_base or (
             Path.home() / ".toddler" / "outputs"
@@ -227,84 +224,88 @@ class SlashCommandDispatcher:
 
     async def _cmd_plan(self, _args: str) -> CommandResult:
         """``/plan`` — flag the next message for plan mode."""
-        if self._sm is not None:
-            self._sm.flag_plan_pending()
-            return CommandResult(
-                continue_repl=True,
-                message=(
-                    "Plan mode enabled — your next message will trigger "
-                    "research and plan proposal."
-                ),
-            )
+        self._coordinator.state_machine.flag_plan_pending()
+        self._coordinator.set_permission_mode(PermissionMode.MANUAL)
         return CommandResult(
             continue_repl=True,
-            message="Plan mode will be triggered on your next message.",
+            message=self._format_mode_status(),
         )
 
     async def _cmd_mode(self, args: str) -> CommandResult:
-        """``/mode [plan|execute]`` — switch between plan and execute modes.
+        """``/mode [plan|manual|auto]`` — switch workflow mode and gating.
 
-        Without arguments, shows the current mode.  With ``plan``, flags the
-        next message for plan mode (same as ``/plan``).  With ``execute``,
-        clears any pending plan flag and forces the next turn to skip the
-        complexity heuristic.
+        Without arguments, shows the current workflow mode and permission
+        gating mode.  ``plan`` flags the next message for plan mode (same
+        as ``/plan``).  ``manual`` and ``auto`` set the permission gating
+        mode.
         """
         sub = args.strip().lower()
 
         if not sub:
-            if self._sm is None:
-                return CommandResult(
-                    continue_repl=True,
-                    message="No state machine available.",
-                )
-            if self._sm.force_direct:
-                current = "EXECUTE (forced — next turn skips plan mode)"
-            elif self._sm.plan_pending:
-                current = "PLAN (pending — next message will trigger plan mode)"  # noqa: E501
-            else:
-                current = self._sm.current_mode.display_label
             return CommandResult(
                 continue_repl=True,
-                message=f"Current mode: {current}",
+                message=self._format_mode_status(),
             )
 
         if sub in ("p", "plan"):
-            if self._sm is not None:
-                self._sm.flag_plan_pending()
-                return CommandResult(
-                    continue_repl=True,
-                    message=(
-                        "Plan mode enabled — your next message will "
-                        "trigger research and plan proposal."
-                    ),
-                )
+            self._coordinator.state_machine.flag_plan_pending()
+            self._coordinator.set_permission_mode(PermissionMode.MANUAL)
             return CommandResult(
                 continue_repl=True,
-                message="Plan mode will be triggered on your next message.",
+                message=self._format_mode_status(),
             )
 
-        if sub in ("e", "exec", "execute"):
-            if self._sm is not None:
-                self._sm.flag_direct_execute()
-                return CommandResult(
-                    continue_repl=True,
-                    message=(
-                        "Execute mode — next turn will skip the "
-                        "complexity heuristic and run directly."
-                    ),
-                )
+        if sub in ("m", "manual"):
+            self._coordinator.set_permission_mode(PermissionMode.MANUAL)
+            self._clear_plan_pending()
             return CommandResult(
                 continue_repl=True,
-                message="Switched to execute mode.",
+                message=self._format_mode_status(),
+            )
+
+        if sub in ("a", "auto"):
+            self._coordinator.set_permission_mode(PermissionMode.AUTO)
+            self._clear_plan_pending()
+            return CommandResult(
+                continue_repl=True,
+                message=self._format_mode_status(),
             )
 
         return CommandResult(
             continue_repl=True,
             message=(
                 f"Unknown /mode subcommand: '{sub}'. "
-                f"Available: plan, execute."
+                f"Available: plan, manual, auto."
             ),
         )
+
+    def _clear_plan_pending(self) -> None:
+        """Clear any pending plan flag so the next turn runs in execute mode.
+
+        The complexity heuristic may still trigger plan mode for complex
+        requests — this just cancels an explicit ``/plan``.
+        """
+        self._coordinator.state_machine.clear_plan_pending()
+
+    def _format_mode_status(self) -> str:
+        """Build a one-line mode + gating summary for ``/mode`` output."""
+        # -- workflow mode --
+        sm = self._coordinator.state_machine
+        if sm.plan_pending:
+            workflow = "PLAN (pending)"
+        elif sm.current_mode.is_plan_related:
+            workflow = "PLAN"
+        else:
+            workflow = "EXECUTE"
+
+        # -- gating --
+        gating = self._coordinator.permission_mode.value.upper()
+        if gating == "AUTO":
+            detail = "WRITE tools auto-approved; dangerous shell still confirms"  # noqa: E501
+        else:
+            detail = "WRITE and dangerous shell commands require confirmation"
+
+        return f"Mode: {workflow}  •  Gating: {gating} — {detail}"
 
     async def _cmd_rollback(self, args: str) -> CommandResult:
         """``/rollback <checkpoint_id>`` — rollback to a checkpoint."""
@@ -629,7 +630,7 @@ HELP_TEXT = """\
 | Command | Description |
 |---------|-------------|
 | `/plan` | Flag the next message for plan mode (research → propose → execute) |
-| `/mode [plan / execute]` | Show or switch the current mode |
+| `/mode [plan / manual / auto]` | Show or switch workflow mode and permission gating |
 | `/view <N>` | View full output from turn N in a pager |
 | `/clear [title]` | Archive current conversation and start a fresh one |
 | `/resume <id>` | Resume a conversation by #N or UUID |

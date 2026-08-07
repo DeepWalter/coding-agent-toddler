@@ -253,6 +253,7 @@ class TestAgentLoopRecordUsageIntegration:
         """After a successful LLM call, the context baseline is updated."""
         from toddler.agent.loop import AgentLoop
         from toddler.config.settings import Settings
+        from toddler.tools.base import PermissionManager
         from toddler.tools.executor import ToolExecutor
         from toddler.tools.registry import ToolRegistry
 
@@ -281,6 +282,7 @@ class TestAgentLoopRecordUsageIntegration:
         loop = AgentLoop(
             provider, ToolRegistry(), ToolExecutor(ToolRegistry()),
             settings, context=ctx,
+            permission_manager=PermissionManager(),
         )
 
         # Drain the run.
@@ -297,7 +299,7 @@ class TestAgentLoopRecordUsageIntegration:
         """Each LLM response updates the baseline for incremental growth."""
         from toddler.agent.loop import AgentLoop
         from toddler.config.settings import Settings
-        from toddler.tools.base import BaseTool, Permission, ToolResult
+        from toddler.tools.base import BaseTool, Permission, PermissionManager, ToolResult
         from toddler.tools.executor import ToolExecutor
         from toddler.tools.registry import ToolRegistry
 
@@ -364,6 +366,7 @@ class TestAgentLoopRecordUsageIntegration:
         ctx = ContextManager(settings, provider)
         loop = AgentLoop(
             provider, registry, ToolExecutor(registry), settings, context=ctx,
+            permission_manager=PermissionManager(),
         )
 
         events = []

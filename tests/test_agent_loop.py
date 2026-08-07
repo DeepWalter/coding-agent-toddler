@@ -25,7 +25,7 @@ from toddler.config.settings import Settings
 from toddler.context.manager import ContextManager
 from toddler.llm.base import BaseLLMProvider
 from toddler.llm import ContentBlock, LLMResponse, Message, StreamEvent, TokenUsage
-from toddler.tools.base import BaseTool, Permission, ToolResult
+from toddler.tools.base import BaseTool, Permission, PermissionManager, PermissionMode, ToolResult
 from toddler.tools.executor import ToolExecutor
 from toddler.tools.registry import ToolRegistry
 
@@ -195,6 +195,33 @@ class WriteTool(BaseTool):
         return Permission.WRITE
 
 
+class DangerousTool(BaseTool):
+    """A mock SHELL_DANGEROUS-permission tool — always requires confirmation."""
+
+    name = "dangerous_cmd"
+    description = "Run a dangerous shell command"
+    parameters = {
+        "type": "object",
+        "properties": {
+            "command": {"type": "string", "description": "Command to run"}
+        },
+        "required": ["command"],
+    }
+
+    async def execute(self, **kwargs) -> ToolResult:
+        cmd = kwargs.get("command", "")
+        return ToolResult(
+            tool_id="",
+            tool_name="dangerous_cmd",
+            success=True,
+            output=f"Ran: {cmd}",
+        )
+
+    @property
+    def permission(self) -> Permission:
+        return Permission.SHELL_DANGEROUS
+
+
 # ============================================================================
 # Fixtures
 # ============================================================================
@@ -212,6 +239,7 @@ def registry() -> ToolRegistry:
     reg.register(EchoTool())
     reg.register(FailingTool())
     reg.register(WriteTool())
+    reg.register(DangerousTool())
     return reg
 
 
@@ -239,6 +267,7 @@ def loop(registry, executor, settings, conv_ctx) -> AgentLoop:
         tool_executor=executor,
         settings=settings,
         context=conv_ctx,
+        permission_manager=PermissionManager(),
     )
 
 
@@ -272,7 +301,7 @@ class TestSimpleTextResponse:
                 ),
             ]
         )
-        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx)
+        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx, permission_manager=PermissionManager())
         events = await _collect_events(loop.run("Hi!"))
 
         assert len(events) >= 2
@@ -288,7 +317,7 @@ class TestSimpleTextResponse:
                 _make_llm_response(text="", stop_reason="end_turn"),
             ]
         )
-        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx)
+        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx, permission_manager=PermissionManager())
         events = await _collect_events(loop.run("Hi!"))
 
         # No TextDelta when text is empty.
@@ -322,7 +351,7 @@ class TestToolCalls:
                 ),
             ]
         )
-        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx)
+        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx, permission_manager=PermissionManager())
         events = await _collect_events(loop.run("Echo please"))
 
         # Should have: ToolCallStart, ToolCallEnd, TextDelta, AgentFinished
@@ -365,7 +394,7 @@ class TestToolCalls:
                 _make_llm_response(text="All done", stop_reason="end_turn"),
             ]
         )
-        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx)
+        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx, permission_manager=PermissionManager())
         events = await _collect_events(loop.run("Double echo"))
 
         starts = [e for e in events if isinstance(e, ToolCallStart)]
@@ -395,7 +424,7 @@ class TestErrorRecovery:
                 _make_llm_response(text="I'll try something else", stop_reason="end_turn"),
             ]
         )
-        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx)
+        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx, permission_manager=PermissionManager())
         events = await _collect_events(loop.run("Do something"))
 
         ends = [e for e in events if isinstance(e, ToolCallEnd)]
@@ -425,7 +454,7 @@ class TestErrorRecovery:
                 _make_llm_response(text="Ok, I'll adapt", stop_reason="end_turn"),
             ]
         )
-        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx)
+        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx, permission_manager=PermissionManager())
         events = await _collect_events(loop.run("Try unknown tool"))
 
         ends = [e for e in events if isinstance(e, ToolCallEnd)]
@@ -440,7 +469,7 @@ class TestErrorRecovery:
             async def generate(self, messages, tools, *, max_tokens=4096, temperature=0.0, stream=True):
                 raise RuntimeError("API connection lost")
 
-        loop = AgentLoop(FailingLLM(), registry, executor, settings, context=conv_ctx)
+        loop = AgentLoop(FailingLLM(), registry, executor, settings, context=conv_ctx, permission_manager=PermissionManager())
         events = await _collect_events(loop.run("Hi"))
 
         errors = [e for e in events if isinstance(e, AgentError)]
@@ -475,7 +504,7 @@ class TestPermissionGating:
                 _make_llm_response(text="Written!", stop_reason="end_turn"),
             ]
         )
-        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx)
+        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx, permission_manager=PermissionManager())
 
         gen = loop.run("Write this down")
         events: list = []
@@ -513,7 +542,7 @@ class TestPermissionGating:
                 _make_llm_response(text="Ok, I won't write", stop_reason="end_turn"),
             ]
         )
-        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx)
+        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx, permission_manager=PermissionManager())
 
         gen = loop.run("Write this")
         events = []
@@ -542,11 +571,157 @@ class TestPermissionGating:
                 _make_llm_response(text="Done", stop_reason="end_turn"),
             ]
         )
-        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx)
+        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx, permission_manager=PermissionManager())
         events = await _collect_events(loop.run("Echo test"))
 
         paused = [e for e in events if isinstance(e, AgentPaused)]
         assert len(paused) == 0  # READ auto-approves
+
+
+class TestPermissionMode:
+    """AgentLoop respects the PermissionMode configured on the shared manager."""
+
+    @pytest.fixture
+    def perm_mgr(self) -> PermissionManager:
+        return PermissionManager()
+
+    async def test_write_tool_auto_approves_in_auto_mode(
+        self, registry, executor, settings, conv_ctx, perm_mgr,
+    ):
+        """In AUTO mode, WRITE tools should NOT pause for confirmation."""
+        perm_mgr.set_mode(PermissionMode.AUTO)
+        llm = MockLLMProvider(
+            responses=[
+                _make_llm_response(
+                    tool_blocks=[
+                        _make_tool_use_block(
+                            "c1", "write_stuff", {"content": "auto-approved"}
+                        ),
+                    ],
+                    stop_reason="tool_use",
+                ),
+                _make_llm_response(text="Done", stop_reason="end_turn"),
+            ]
+        )
+        loop = AgentLoop(
+            llm, registry, executor, settings,
+            context=conv_ctx, permission_manager=perm_mgr,
+        )
+
+        gen = loop.run("Write this")
+        events = []
+        async for event in gen:
+            events.append(event)
+            if isinstance(event, AgentPaused):
+                await loop.approve_tool_call()
+
+        paused = [e for e in events if isinstance(e, AgentPaused)]
+        assert len(paused) == 0  # WRITE auto-approved in AUTO mode
+
+        ends = [e for e in events if isinstance(e, ToolCallEnd)]
+        assert len(ends) == 1
+        assert ends[0].result.success
+
+    async def test_dangerous_tool_still_pauses_in_auto_mode(
+        self, registry, executor, settings, conv_ctx, perm_mgr,
+    ):
+        """In AUTO mode, SHELL_DANGEROUS tools still pause."""
+        perm_mgr.set_mode(PermissionMode.AUTO)
+        llm = MockLLMProvider(
+            responses=[
+                _make_llm_response(
+                    tool_blocks=[
+                        _make_tool_use_block(
+                            "c1", "dangerous_cmd", {"command": "rm -rf /"}
+                        ),
+                    ],
+                    stop_reason="tool_use",
+                ),
+                _make_llm_response(text="Done", stop_reason="end_turn"),
+            ]
+        )
+        loop = AgentLoop(
+            llm, registry, executor, settings,
+            context=conv_ctx, permission_manager=perm_mgr,
+        )
+
+        gen = loop.run("Delete everything")
+        events = []
+        async for event in gen:
+            events.append(event)
+            if isinstance(event, AgentPaused):
+                await loop.approve_tool_call()
+
+        paused = [e for e in events if isinstance(e, AgentPaused)]
+        assert len(paused) == 1
+        assert "dangerous_cmd" in paused[0].prompt
+
+    async def test_write_tool_pauses_in_manual_mode(
+        self, registry, executor, settings, conv_ctx, perm_mgr,
+    ):
+        """In MANUAL mode, WRITE tools should pause (current behavior)."""
+        perm_mgr.set_mode(PermissionMode.MANUAL)
+        llm = MockLLMProvider(
+            responses=[
+                _make_llm_response(
+                    tool_blocks=[
+                        _make_tool_use_block(
+                            "c1", "write_stuff", {"content": "needs confirm"}
+                        ),
+                    ],
+                    stop_reason="tool_use",
+                ),
+                _make_llm_response(text="Done", stop_reason="end_turn"),
+            ]
+        )
+        loop = AgentLoop(
+            llm, registry, executor, settings,
+            context=conv_ctx, permission_manager=perm_mgr,
+        )
+
+        gen = loop.run("Write this")
+        events = []
+        async for event in gen:
+            events.append(event)
+            if isinstance(event, AgentPaused):
+                await loop.approve_tool_call()
+
+        paused = [e for e in events if isinstance(e, AgentPaused)]
+        assert len(paused) == 1  # WRITE still pauses in MANUAL mode
+
+    async def test_explicit_manual_mode_pauses_for_write(
+        self, registry, executor, settings, conv_ctx,
+    ):
+        """When MANUAL mode is explicitly set, WRITE tools pause."""
+        perm_mgr = PermissionManager()
+        perm_mgr.set_mode(PermissionMode.MANUAL)
+        llm = MockLLMProvider(
+            responses=[
+                _make_llm_response(
+                    tool_blocks=[
+                        _make_tool_use_block(
+                            "c1", "write_stuff", {"content": "default"}
+                        ),
+                    ],
+                    stop_reason="tool_use",
+                ),
+                _make_llm_response(text="Done", stop_reason="end_turn"),
+            ]
+        )
+        loop = AgentLoop(
+            llm, registry, executor, settings, context=conv_ctx,
+            permission_manager=perm_mgr,
+        )
+
+        gen = loop.run("Write this")
+        events = []
+        async for event in gen:
+            events.append(event)
+            if isinstance(event, AgentPaused):
+                await loop.approve_tool_call()
+
+        paused = [e for e in events if isinstance(e, AgentPaused)]
+        assert len(paused) == 1  # WRITE pauses (MANUAL default)
 
 
 # ============================================================================
@@ -568,7 +743,7 @@ class TestStopConditions:
         )
 
         llm = MockLLMProvider(responses=[tool_response] * 10)
-        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx)
+        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx, permission_manager=PermissionManager())
         events = await _collect_events(
             loop.run("Loop forever", max_iterations=3)
         )
@@ -588,7 +763,7 @@ class TestStopConditions:
                 ),
             ]
         )
-        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx)
+        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx, permission_manager=PermissionManager())
         events = await _collect_events(loop.run("Do something"))
 
         finishes = [e for e in events if isinstance(e, AgentFinished)]
@@ -618,7 +793,7 @@ class TestContextManager:
                 _make_llm_response(text="Complete", stop_reason="end_turn"),
             ]
         )
-        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx)
+        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx, permission_manager=PermissionManager())
         await _collect_events(loop.run("Test context"))
 
         # Second call should include: system, user, assistant (tool_use), tool
@@ -636,7 +811,7 @@ class TestContextManager:
                 _make_llm_response(text="Ok", stop_reason="end_turn"),
             ]
         )
-        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx)
+        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx, permission_manager=PermissionManager())
         await _collect_events(loop.run("Hi"))
 
         first_msgs = llm.messages_history[0]
@@ -673,7 +848,7 @@ class TestMultiIteration:
                 _make_llm_response(text="Final answer", stop_reason="end_turn"),
             ]
         )
-        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx)
+        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx, permission_manager=PermissionManager())
         events = await _collect_events(loop.run("Multi-round"))
 
         starts = [e for e in events if isinstance(e, ToolCallStart)]

@@ -20,6 +20,65 @@ class Permission(Enum):
     SHELL_DANGEROUS = "shell_dangerous"  # rm, sudo, curl, etc. (always confirm)  # noqa: E501
 
 
+class PermissionMode(Enum):
+    """Permission gating policy for tool execution.
+
+    ``MANUAL`` (the default) auto-approves READ + SHELL_SAFE and
+    requires confirmation for WRITE + SHELL_DANGEROUS.  ``AUTO``
+    additionally auto-approves WRITE, leaving only SHELL_DANGEROUS
+    to confirm.
+    """
+
+    MANUAL = "manual"
+    AUTO = "auto"
+
+
+# ---------------------------------------------------------------------------
+# Permission manager
+# ---------------------------------------------------------------------------
+
+
+class PermissionManager:
+    """Mutable container for the current :class:`PermissionMode`.
+
+    Owned by :class:`~toddler.session.coordinator.SessionCoordinator` and
+    shared with :class:`~toddler.agent.loop.AgentLoop` and
+    :class:`~toddler.tools.executor.ToolExecutor` so they always see the
+    same live mode without coupling to the state machine.
+
+    Parameters
+    ----------
+    mode:
+        Initial gating mode (defaults to :attr:`PermissionMode.MANUAL`).
+    """
+
+    def __init__(self, mode: PermissionMode = PermissionMode.MANUAL) -> None:
+        self._mode = mode
+
+    @property
+    def mode(self) -> PermissionMode:
+        """The current permission gating mode."""
+        return self._mode
+
+    def set_mode(self, mode: PermissionMode) -> None:
+        """Replace the current permission gating mode."""
+        self._mode = mode
+
+    def needs_confirmation(self, perm: Permission) -> bool:
+        """Return ``True`` when *perm* requires user confirmation under the
+        current mode.
+
+        This is the **single source of truth** for the permission gating
+        policy — no mirrored logic to keep in sync.
+        """
+        if perm in (Permission.READ, Permission.SHELL_SAFE):
+            return False
+        if perm is Permission.WRITE:
+            return self._mode is not PermissionMode.AUTO
+        # SHELL_DANGEROUS and unknown — always confirm
+        return True
+
+
 # ---------------------------------------------------------------------------
 # Tool call / result
 # ---------------------------------------------------------------------------

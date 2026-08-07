@@ -29,6 +29,7 @@ from toddler.cli.input_handler import InputHandler
 from toddler.cli.renderer import create_renderer
 from toddler.config.settings import Settings
 from toddler.session.coordinator import SessionCoordinator
+from toddler.tools.base import PermissionMode
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +72,6 @@ class CLIApp:
 
         # Slash-command dispatcher makes direct calls on SessionCoordinator.
         self._cmd_dispatcher = SlashCommandDispatcher(
-            state_machine=session.state_machine,
             session_coordinator=session,
             output_base=self._output_base,
         )
@@ -244,13 +244,29 @@ class CLIApp:
 
                     result = await self._renderer.confirm(
                         prompt="Approve this plan?",
-                        choices=["approve", "deny", "feedback"],
+                        choices=[
+                            "approve with manual accept",
+                            "approve with auto accept",
+                            "deny",
+                            "feedback",
+                        ],
                         allow_feedback=True,
                     )
 
                     match result.decision:
-                        case "approve":
-                            await self._coordinator.approve_plan()
+                        case "approve_with_manual":
+                            await self._coordinator.approve_plan(
+                                permission_mode=PermissionMode.MANUAL,
+                            )
+                            # Reset content for execution phase.
+                            self._renderer.start(
+                                turn_number=turn_number,
+                                output_path=output_path,
+                            )
+                        case "approve_with_auto":
+                            await self._coordinator.approve_plan(
+                                permission_mode=PermissionMode.AUTO,
+                            )
                             # Reset content for execution phase.
                             self._renderer.start(
                                 turn_number=turn_number,

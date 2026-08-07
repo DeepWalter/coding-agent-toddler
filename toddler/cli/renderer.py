@@ -96,7 +96,10 @@ _STATUS_STYLES = {
 class ConfirmResult:
     """Outcome of a confirmation prompt (tool approval, plan approval)."""
 
-    decision: Literal["approve", "deny", "feedback"]
+    decision: Literal[
+        "approve", "deny", "feedback",
+        "approve_with_manual", "approve_with_auto",
+    ]
     feedback: str | None = None
 
 
@@ -204,7 +207,7 @@ class Renderer(ABC):
     ) -> None:
         """Print a status header above the REPL prompt.
 
-        Shows the current agent mode (EXECUTE / PLAN), the active
+        Shows the current mode (PLAN / MANUAL / AUTO), the active
         LLM model name, and optionally the context usage percentage.
         """
         mode_style = "bold yellow" if mode_label == "PLAN" else _ACCENT
@@ -760,11 +763,16 @@ class StreamingRenderer(Renderer):
             # -- Build result ------------------------------------------
             idx = self._confirm_selection
             selected = choices[idx] if 0 <= idx < len(choices) else "deny"
-            if selected.lower() == "feedback" and buf:
+            sel = selected.lower()
+            if sel == "feedback" and buf:
                 return ConfirmResult(
                     decision="feedback", feedback=buf,
                 )
-            elif selected.lower() in ("approve", "yes", "y", "ok"):
+            elif sel == "approve with manual accept":
+                return ConfirmResult(decision="approve_with_manual")
+            elif sel == "approve with auto accept":
+                return ConfirmResult(decision="approve_with_auto")
+            elif sel in ("approve", "yes", "y", "ok"):
                 return ConfirmResult(decision="approve")
             else:
                 return ConfirmResult(decision="deny")
@@ -1264,6 +1272,10 @@ class NonStreamingRenderer(Renderer):
                             decision="feedback", feedback=fb,
                         )
                     return ConfirmResult(decision="deny")
+                elif choice.lower() == "approve with manual accept":
+                    return ConfirmResult(decision="approve_with_manual")
+                elif choice.lower() == "approve with auto accept":
+                    return ConfirmResult(decision="approve_with_auto")
                 elif choice.lower() in ("approve", "yes", "y", "ok"):
                     return ConfirmResult(decision="approve")
                 else:

@@ -30,7 +30,11 @@ from toddler.agent.events import (
 from toddler.agent.handler import create_handler
 from toddler.agent.stop_conditions import StopConditionChecker
 from toddler.llm import ContentBlock, Message, TokenUsage
-from toddler.tools.base import Permission, ToolCall, ToolResult
+from toddler.tools.base import (
+    PermissionManager,
+    ToolCall,
+    ToolResult,
+)
 
 if TYPE_CHECKING:
     from toddler.agent.handler import BaseHandler
@@ -102,6 +106,7 @@ class AgentLoop:
         settings: Settings,
         *,
         context: ContextManager,
+        permission_manager: PermissionManager,
     ) -> None:
         self._llm = llm_provider
         self._registry = tool_registry
@@ -111,6 +116,11 @@ class AgentLoop:
         # Single context object — handles prompt building, window tracking,
         # compaction, and persistence.
         self._ctx = context
+
+        # Shared permission manager — live reference so mode changes
+        # (e.g. /mode auto) take effect immediately without rebuilding
+        # the agent loop.
+        self._perm_mgr = permission_manager
 
         # Confirmation gate — see _execute_with_gating for the protocol.
         self._approval_event: asyncio.Event | None = None
@@ -411,10 +421,8 @@ class AgentLoop:
                 error=f"Unknown tool: '{call.tool_name}'",
             )
 
-        perm = tool.get_permission(**call.parameters)
-
         # If confirmation is not needed, go straight to execution.
-        if not self._needs_confirmation(perm):
+        if not self._needs_confirmation_for(call):
             return await self._executor.execute(call)
 
         # Confirmation is needed — the event was already created by run().
@@ -433,22 +441,12 @@ class AgentLoop:
 
         return await self._executor.execute(call)
 
-    @staticmethod
-    def _needs_confirmation(perm: Permission) -> bool:
-        """Return ``True`` when *perm* requires user confirmation.
-
-        Mirrors :meth:`ToolExecutor._check_permission`.
-        """
-        if perm in (Permission.READ, Permission.SHELL_SAFE):
-            return False  # always auto-approve read-only operations
-        if perm in (Permission.WRITE, Permission.SHELL_DANGEROUS):
-            return True   # always confirm mutating operations
-        return True  # unknown — be safe
-
     def _needs_confirmation_for(self, call: ToolCall) -> bool:
-        """Shorthand: does *call* need user confirmation?"""
+        """Return ``True`` when *call* requires user confirmation under the
+        current permission gating mode.
+        """
         tool = self._registry.get(call.tool_name)
         if tool is None:
             return False  # executor will produce the error
         perm = tool.get_permission(**call.parameters)
-        return self._needs_confirmation(perm)
+        return self._perm_mgr.needs_confirmation(perm)

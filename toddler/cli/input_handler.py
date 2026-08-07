@@ -18,7 +18,7 @@ from prompt_toolkit.styles import Style
 
 _SLASH_COMMANDS: dict[str, str] = {
     "/plan": "Enter plan mode — agent researches and proposes a plan",
-    "/mode": "Show or switch mode — /mode [plan|execute]",
+    "/mode": "Show or switch mode — /mode [plan|manual|auto]",
     "/view": "View full output from a turn — /view <turn_number>",
     "/clear": "Archive conversation and start fresh — /clear [title]",
     "/resume": "Resume an archived conversation — /resume <conversation_id>",
@@ -42,7 +42,8 @@ _SLASH_COMMANDS: dict[str, str] = {
 _SUB_OPTIONS: dict[str, list[tuple[str, str]]] = {
     "/mode": [
         ("plan", "Research → propose → execute"),
-        ("execute", "Skip plan mode, run directly"),
+        ("manual", "Confirm WRITE tools (default)"),
+        ("auto", "Auto-approve WRITE tools; SHELL_DANGEROUS still confirms"),
     ],
     "/session": [
         ("info", "/session info"),

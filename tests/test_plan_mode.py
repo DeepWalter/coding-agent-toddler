@@ -22,6 +22,7 @@ from toddler.agent.state_machine import (
     PlanStep,
     classify_complexity,
 )
+from toddler.tools.base import PermissionMode
 from toddler.llm import ContentBlock, LLMResponse, Message, TokenUsage
 from toddler.llm.base import BaseLLMProvider
 
@@ -534,6 +535,52 @@ class TestSessionCoordinatorPlanWorkflow:
                 break
         assert second_plan is not None
 
+    # ------------------------------------------------------------------
+    # Permission mode integration with plan workflow
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_plan_entry_resets_permission_to_manual(self, coordinator):
+        """Entering plan mode resets gating to MANUAL."""
+        coordinator.set_permission_mode(PermissionMode.AUTO)
+        assert coordinator.permission_mode == PermissionMode.AUTO
+
+        gen = coordinator.process_turn("refactor the database layer")
+        async for event in gen:
+            if isinstance(event, PlanProposed):
+                break
+
+        assert coordinator.permission_mode == PermissionMode.MANUAL
+
+    @pytest.mark.asyncio
+    async def test_direct_execute_preserves_permission_auto(self, coordinator):
+        """A simple request does NOT reset an explicitly-set AUTO mode."""
+        coordinator.set_permission_mode(PermissionMode.AUTO)
+
+        gen = coordinator.process_turn("hello")
+        events = []
+        async for event in gen:
+            events.append(event)
+
+        assert coordinator.permission_mode == PermissionMode.AUTO
+        has_plan = any(isinstance(e, PlanProposed) for e in events)
+        assert not has_plan, "Simple request should not trigger plan"
+
+    @pytest.mark.asyncio
+    async def test_plan_pending_flag_resets_permission_to_manual(
+        self, coordinator,
+    ):
+        """When /plan is used, entry into plan mode resets to MANUAL."""
+        coordinator.set_permission_mode(PermissionMode.AUTO)
+        coordinator.state_machine.flag_plan_pending()
+
+        gen = coordinator.process_turn("do something")
+        async for event in gen:
+            if isinstance(event, PlanProposed):
+                break
+
+        assert coordinator.permission_mode == PermissionMode.MANUAL
+
 
 # ============================================================================
 # Planner unit tests (mock AgentLoop + mock LLM)
@@ -753,3 +800,38 @@ class TestModeDisplayLabel:
         """Every AgentMode has a non-empty display label."""
         for mode in AgentMode:
             assert mode.display_label in ("EXECUTE", "PLAN")
+
+
+class TestPermissionMode:
+    """Permission gating via the shared :class:`PermissionManager`."""
+
+    # ------------------------------------------------------------------
+    # Unit tests — PermissionManager
+    # ------------------------------------------------------------------
+
+    def test_default_is_manual(self):
+        from toddler.tools.base import PermissionManager
+        mgr = PermissionManager()
+        assert mgr.mode == PermissionMode.MANUAL
+
+    def test_set_mode_persists(self):
+        from toddler.tools.base import PermissionManager
+        mgr = PermissionManager()
+        mgr.set_mode(PermissionMode.AUTO)
+        assert mgr.mode == PermissionMode.AUTO
+
+    def test_needs_confirmation_delegates(self):
+        from toddler.tools.base import PermissionManager, Permission
+        mgr = PermissionManager()
+        # READ never needs confirmation
+        assert not mgr.needs_confirmation(Permission.READ)
+        # WRITE needs confirmation in MANUAL
+        assert mgr.needs_confirmation(Permission.WRITE)
+        # WRITE does NOT need confirmation in AUTO
+        mgr.set_mode(PermissionMode.AUTO)
+        assert not mgr.needs_confirmation(Permission.WRITE)
+        # SHELL_DANGEROUS always needs confirmation
+        assert mgr.needs_confirmation(Permission.SHELL_DANGEROUS)
+
+    # Coordinator-level tests for plan-entry reset are in
+    # TestSessionCoordinatorPlanWorkflow below.

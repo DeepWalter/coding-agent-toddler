@@ -28,6 +28,7 @@ from toddler.llm import BaseLLMProvider, Message, TokenUsage
 from toddler.session.manager import StorageManager
 from toddler.session.models import Conversation, Session
 from toddler.tools import create_default_registry
+from toddler.tools.base import PermissionManager, PermissionMode
 from toddler.tools.executor import ToolExecutor
 
 logger = logging.getLogger(__name__)
@@ -57,9 +58,6 @@ class SessionCoordinator:
         LLM provider shared with the agent loop and auto-titling.
     repo_root:
         Absolute path to the working directory.
-    state_machine:
-        Optional :class:`AgentStateMachine` for plan-mode workflow.
-        When *None*, a default instance is created.
     """
 
     def __init__(
@@ -69,7 +67,6 @@ class SessionCoordinator:
         llm: BaseLLMProvider,
         *,
         repo_root: Path | None = None,
-        state_machine: AgentStateMachine | None = None,
     ) -> None:
         self._settings = settings
         self._storage_mgr = storage_manager
@@ -82,6 +79,14 @@ class SessionCoordinator:
             repo_root=self._repo_root,
         )
 
+        # State machine — tracks plan workflow state only
+        self._sm = AgentStateMachine()
+
+        # Shared permission manager — single source of truth for both
+        # AgentLoop and ToolExecutor.  Mode changes (via /mode or
+        # plan approval) take effect immediately without rebuilding.
+        self._perm_mgr = PermissionManager()
+
         # Build tool system
         self._registry = create_default_registry()
         self._executor = ToolExecutor(
@@ -89,10 +94,8 @@ class SessionCoordinator:
             checkpoint_cb=create_checkpoint_callback(
                 ckpt_manager=self._ckpt_mgr,
             ),
+            permission_manager=self._perm_mgr,
         )
-
-        # State machine
-        self._sm = state_machine or AgentStateMachine()
 
         # Planner instance for the current turn (created in process_turn).
         self._planner: Planner | None = None
@@ -161,25 +164,29 @@ class SessionCoordinator:
         return self._sm
 
     @property
+    def permission_mode(self) -> PermissionMode:
+        """The current permission gating mode (from the shared manager)."""
+        return self._perm_mgr.mode
+
+    @property
     def mode_label(self) -> str:
         """User-facing mode label for the REPL header.
 
         Returns ``"PLAN"`` when in any plan-related mode or when
-        ``/plan`` has been entered but not yet consumed by a turn.
-        Returns ``"EXECUTE"`` when ``/mode execute`` has forced direct
-        execution.  Otherwise reflects the current state-machine mode.
+        ``/plan`` is pending.  Otherwise returns the permission gating
+        label — ``"MANUAL"`` or ``"AUTO"``.
         """
-        if self._sm.force_direct:
-            return "EXECUTE"
         if self._sm.plan_pending:
             return "PLAN"
-        return self._sm.current_mode.display_label
+        if self._sm.current_mode.is_plan_related:
+            return "PLAN"
+        return self.permission_mode.value.upper()
 
     @property
     def context_usage_pct(self) -> int | None:
         """Current context usage as a whole-number percentage (0–100+).
 
-        Returns *None* when the context hasn't been initialised yet
+        Returns *None* when the context hasn't been initialized yet
         (before :meth:`resolve`).
         """
         if self._ctx is None:
@@ -225,6 +232,10 @@ class SessionCoordinator:
 
         # --- Plan path ---
         if mode == AgentMode.PLAN_EXPLORING:
+            # Every plan cycle starts from the safe baseline — the
+            # approval UI then lets the user explicitly choose AUTO.
+            self._perm_mgr.set_mode(PermissionMode.MANUAL)
+
             async for event in self.planner.run(user_input):
                 if isinstance(event, AgentFinished):
                     await self._maybe_persist_phase(event)
@@ -250,12 +261,22 @@ class SessionCoordinator:
             yield event
         self._sm.mark_finished()
 
-    def approve_plan(self) -> bool:
+    def set_permission_mode(self, mode: PermissionMode) -> None:
+        """Set the permission gating mode — shared manager updates both
+        AgentLoop and ToolExecutor automatically.
+        """
+        self._perm_mgr.set_mode(mode)
+
+    def approve_plan(
+        self, *, permission_mode: PermissionMode | None = None,
+    ) -> bool:
         """Approve the current plan and unblock :meth:`process_turn`.
 
-        Called by the CLI layer after the user confirms approval.
-        Returns ``True`` if the plan was successfully approved.
+        When *permission_mode* is given, the gating mode is switched to it
+        before execution begins (e.g. "approve with auto accept").
         """
+        if permission_mode is not None:
+            self.set_permission_mode(permission_mode)
         if self._planner is not None:
             return self._planner.approve_plan()
         return False
@@ -591,6 +612,7 @@ class SessionCoordinator:
                 tool_executor=self._executor,
                 settings=self._settings,
                 context=self._ctx,
+                permission_manager=self._perm_mgr,
             )
         return self._agent_impl
 
