@@ -71,8 +71,9 @@ class _ToolRow:
     """Display state for one tool call in the streaming tools panel."""
 
     name: str
-    status: str   # "running", "success", or "error"
-    summary: str  # short description / result preview
+    status: str      # "running", "success", or "error"
+    signature: str   # tool call signature (e.g. "shell(command='ls')")
+    result: str      # result preview (populated once the call completes)
 
 
 _ICON_RUNNING = Text("▶", style="bold yellow")
@@ -804,42 +805,44 @@ class StreamingRenderer(Renderer):
 
     def on_tool_call_start(self, event: ToolCallStart) -> None:
         """Add a running row to the tools panel."""
-        summary = _format_tool_table_summary(
+        signature = _format_tool_signature(
             event.tool_name, event.partial_input or {},
         )
         self._tools[event.tool_id] = _ToolRow(
-            name=event.tool_name, status="running", summary=summary,
+            name=event.tool_name,
+            status="running",
+            signature=signature,
+            result="",
         )
         if event.tool_id not in self._tool_order:
             self._tool_order.append(event.tool_id)
         self._refresh()
 
     def on_tool_call_delta(self, event: ToolCallDelta) -> None:
-        """Update the tool row's input summary."""
-        summary = _format_tool_table_summary("", event.input_delta)
+        """Update the tool row's input signature."""
+        signature = _format_tool_signature("", event.input_delta)
         if event.tool_id not in self._tools:
             self._tools[event.tool_id] = _ToolRow(
-                name="", status="running", summary=summary,
+                name="", status="running", signature=signature, result="",
             )
             if event.tool_id not in self._tool_order:
                 self._tool_order.append(event.tool_id)
         else:
-            self._tools[event.tool_id].summary = summary
+            self._tools[event.tool_id].signature = signature
         self._refresh()
 
     def on_tool_call_end(self, event: ToolCallEnd) -> None:
-        """Mark the tool row success or error and refresh."""
+        """Mark the tool row success or error and set the result summary."""
         result = event.result
         if event.tool_id in self._tools:
+            row = self._tools[event.tool_id]
             if result is None:
-                self._tools[event.tool_id].status = "error"
+                row.status = "error"
             elif result.success:
-                self._tools[event.tool_id].status = "success"
+                row.status = "success"
             else:
-                self._tools[event.tool_id].status = "error"
-            self._tools[event.tool_id].summary = (
-                _truncate_tool_result(result)
-            )
+                row.status = "error"
+            row.result = _truncate_tool_result(result)
         self._refresh()
 
     def on_agent_error(self, event: AgentError) -> None:
@@ -1027,15 +1030,15 @@ class StreamingRenderer(Renderer):
         if self._tools:
             table = Table(show_header=True, box=None, padding=(0, 1))
             table.add_column("St", width=2, justify="center")
-            table.add_column("Tool", style="bold cyan")
-            table.add_column("Summary", style="dim", max_width=60)
+            table.add_column("Tool", style="bold cyan", max_width=120)
+            table.add_column("Result", style="dim", max_width=120)
 
             for tool_id in self._tool_order:
                 row = self._tools.get(tool_id)
                 if row is None:
                     continue
                 icon = _STATUS_STYLES[row.status]
-                table.add_row(icon, row.name, row.summary)
+                table.add_row(icon, row.signature, row.result)
 
             tools_panel = Panel(
                 table,
@@ -1320,7 +1323,7 @@ def create_renderer(
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _format_tool_table_summary(name: str, params: dict) -> str:
+def _format_tool_signature(name: str, params: dict) -> str:
     """Format a tool name + key params for the streaming tools table."""
     if not params and not name:
         return "…"
