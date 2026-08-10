@@ -18,7 +18,7 @@ DEFAULT_COMPACTION_THRESHOLD = 0.8  # 80% of context window triggers compaction
 # --- Streaming ---
 STREAMING_ENABLED = True
 MAX_OUTPUT_LINES = 40
-MAX_OUTPUT_PANEL_HEIGHT = 20  # 0 = unlimited (no clipping)
+MAX_OUTPUT_PANEL_HEIGHT = 0  # fallback when terminal size is unknown
 
 # --- Sessions & Data ---
 SESSION_DIR = Path.home() / ".toddler"

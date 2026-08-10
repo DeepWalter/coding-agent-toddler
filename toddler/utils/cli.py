@@ -81,7 +81,7 @@ def build_argparser() -> argparse.ArgumentParser:
         type=int,
         metavar="N",
         default=None,
-        help="Max height of the output panel in lines (0 to disable).",
+        help="Fallback panel height when terminal size is unknown (0 = no clipping).",
     )
     p.add_argument(
         "--verbose", "-v",

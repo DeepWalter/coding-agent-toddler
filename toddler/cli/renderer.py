@@ -88,6 +88,26 @@ _STATUS_STYLES = {
 
 
 # ---------------------------------------------------------------------------
+# Dynamic panel-height budgeting
+# ---------------------------------------------------------------------------
+
+# Lines of chrome (borders + padding) per Rich Panel.  The default Panel
+# padding is horizontal-only, so actual chrome is 2; 4 is kept deliberately
+# conservative to absorb occasional wrapped tool rows / error messages.
+_PANEL_CHROME_LINES = 4
+# The dismiss hint ("\nPress Enter…") renders as a blank spacer + 1 text line.
+_DISMISS_HINT_LINES = 2
+# Guaranteed minimum output-panel content lines.
+_MIN_OUTPUT_LINES = 5
+# Estimated lines per error panel: 1 content line + chrome.
+_ERR_PANEL_LINES = 1 + _PANEL_CHROME_LINES        # 5
+# Fixed lines for the tools panel: 1 table header row + chrome.
+_TOOLS_FIXED_LINES = 1 + _PANEL_CHROME_LINES      # 5
+# Fixed lines for the confirm table: 1 hint row + chrome.
+_CONFIRM_FIXED_LINES = 1 + _PANEL_CHROME_LINES    # 5
+
+
+# ---------------------------------------------------------------------------
 # Public types
 # ---------------------------------------------------------------------------
 
@@ -394,10 +414,11 @@ class StreamingRenderer(Renderer):
     max_output_lines:
         Max lines of output before truncating (0 to disable, default 40).
     max_output_panel_height:
-        Max height of the output panel in lines.  When > 0 and the
-        rendered markdown exceeds this height, the panel clips to show
-        only the latest (bottom) content.  Set to 0 to disable.
-        During the dismiss prompt, arrow keys scroll the clipped content.
+        Fallback panel height in lines when the terminal size cannot be
+        determined (e.g. piped output).  When 0 (default), no clipping
+        is applied in that case.  Under a real terminal the output panel
+        height is always computed dynamically from the terminal size.
+        During the dismiss prompt, arrow keys scroll clipped content.
     """
 
     def __init__(
@@ -429,7 +450,8 @@ class StreamingRenderer(Renderer):
         self._tools: dict[str, _ToolRow] = {}
         # Tool call IDs in arrival order (for stable table ordering).
         self._tool_order: list[str] = []
-        # Current panel height limit; zeroed by stop(), restored by start().
+        # Current panel height limit; recomputed from terminal size each
+        # refresh, zeroed by stop() so flush_to_console() prints unclipped.
         self._max_panel_height: int = max_output_panel_height
         # Current scroll position during the dismiss prompt.
         self._scroll_offset: int = 0
@@ -445,6 +467,10 @@ class StreamingRenderer(Renderer):
         self._dismiss_prompt: bool = False
         # Error messages accumulated during the turn.
         self._errors: list[str] = []
+        # Caps for tools/errors panels, recomputed each refresh by
+        # _compute_dynamic_panel_height().
+        self._max_tools_visible: int = 0
+        self._max_errors_visible: int = 0
 
         # -- confirmation state (set when confirm() is active) --------------
         self._confirming: bool = False
@@ -497,6 +523,8 @@ class StreamingRenderer(Renderer):
         self._stopped = False
         self._dismiss_prompt = False
         self._errors.clear()
+        self._max_tools_visible = 0
+        self._max_errors_visible = 0
         self._live.start()
         self._refresh(force=True)
 
@@ -883,6 +911,67 @@ class StreamingRenderer(Renderer):
     # Output panel height limiting
     # ------------------------------------------------------------------
 
+    def _compute_dynamic_panel_height(self) -> int:
+        """Compute the output-panel content budget from the live terminal size.
+
+        Reserves space for all other visible elements — the output panel's
+        own chrome, a dismiss hint, the confirm table — then greedily fits
+        error panels and tool rows (in that order, cheapest-first) into what
+        remains above a guaranteed output minimum.
+
+        Sets ``_max_tools_visible`` and ``_max_errors_visible`` as side
+        effects so ``_build_renderable()`` can cap those panels to the same
+        budget.
+
+        When ``console.height`` is unavailable (e.g. piped output), falls
+        back to ``_configured_max_panel_height`` (0 = no clipping).
+        """
+        height = self._console.height
+        if not height:
+            # Unknown terminal size — fall back to configured value
+            # and show all tools / errors (no capping).
+            self._max_tools_visible = len(self._tools)
+            self._max_errors_visible = len(self._errors)
+            return self._configured_max_panel_height
+
+        # Budget after reserving the output panel's own chrome.
+        budget = height - _PANEL_CHROME_LINES
+        if self._dismiss_prompt:
+            budget -= _DISMISS_HINT_LINES
+        if self._confirming:
+            budget -= len(self._confirm_choices) + _CONFIRM_FIXED_LINES
+
+        # What is available for tools / errors above the output minimum.
+        allocatable = max(0, budget - _MIN_OUTPUT_LINES)
+
+        # Errors first: cheapest to fit (per-panel cost, no fixed overhead).
+        self._max_errors_visible = min(
+            len(self._errors), allocatable // _ERR_PANEL_LINES
+        )
+        remaining = allocatable - self._max_errors_visible * _ERR_PANEL_LINES
+
+        # Tools second: fixed overhead (header + chrome) before any row fits.
+        if self._tools and remaining >= _TOOLS_FIXED_LINES + 1:
+            self._max_tools_visible = min(
+                len(self._tools), remaining - _TOOLS_FIXED_LINES
+            )
+        else:
+            self._max_tools_visible = 0
+
+        tools_reserved = (
+            _TOOLS_FIXED_LINES + self._max_tools_visible
+            if self._max_tools_visible > 0
+            else 0
+        )
+        errors_reserved = self._max_errors_visible * _ERR_PANEL_LINES
+
+        output_height = max(0, budget - tools_reserved - errors_reserved)
+        # Floor at the minimum — or the whole budget on tiny terminals.
+        output_height = max(
+            output_height, min(_MIN_OUTPUT_LINES, max(0, budget))
+        )
+        return output_height
+
     def _render_md_to_lines(
         self, md: Markdown
     ) -> list[list[Segment]]:
@@ -1019,7 +1108,14 @@ class StreamingRenderer(Renderer):
     # ------------------------------------------------------------------
 
     def _build_renderable(self) -> Group:
-        """Build the dual-panel output: Output (markdown) + Tools (table)."""
+        """Build the stacked panels: Output (markdown) + Tools + Errors."""
+        # Recompute the output budget each refresh so tools appearing,
+        # errors accumulating, and confirm toggling are all tracked.
+        # Skipped after stop() so flush_to_console() prints unclipped
+        # output into the terminal scrollback.
+        if not self._stopped:
+            self._max_panel_height = self._compute_dynamic_panel_height()
+
         md = (
             Markdown(self._text)
             if self._text
@@ -1035,13 +1131,14 @@ class StreamingRenderer(Renderer):
 
         elements: list = [output_panel]
 
-        if self._tools:
+        if self._tools and self._max_tools_visible > 0:
             table = Table(show_header=True, box=None, padding=(0, 1))
             table.add_column("St", width=2, justify="center")
             table.add_column("Tool", style="bold cyan", max_width=120)
             table.add_column("Result", style="dim", max_width=120)
 
-            for tool_id in self._tool_order:
+            # Tail-first within the cap so the newest tool stays visible.
+            for tool_id in self._tool_order[-self._max_tools_visible:]:
                 row = self._tools.get(tool_id)
                 if row is None:
                     continue
@@ -1056,8 +1153,8 @@ class StreamingRenderer(Renderer):
             )
             elements.append(tools_panel)
 
-        if self._errors:
-            for err in self._errors[-3:]:  # show last 3 errors at most
+        if self._errors and self._max_errors_visible > 0:
+            for err in self._errors[-self._max_errors_visible:]:
                 elements.append(
                     Panel(
                         Text(err, style="bold red"),
@@ -1315,11 +1412,10 @@ def create_renderer(
         Max lines of output before truncating (0 to disable, default 40).
         Only used when *streaming* is ``True``.
     max_output_panel_height:
-        Max height of the output panel in lines.  When > 0 and the
-        rendered markdown exceeds this height, the live display clips
-        to show only the latest content and arrow-key scrolling is
-        enabled during dismiss.  Set to 0 to disable (default 0).
-        Only used when *streaming* is ``True``.
+        Fallback panel height when the terminal size is unavailable
+        (e.g. piped output).  0 (default) means no clipping.
+        Under a real terminal the height is always computed
+        dynamically.  Only used when *streaming* is ``True``.
     """
     if streaming:
         return StreamingRenderer(
