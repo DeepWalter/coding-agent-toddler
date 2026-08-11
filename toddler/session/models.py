@@ -75,7 +75,7 @@ class Session:
 
 @dataclass
 class SessionSummary:
-    """A lightweight row returned by :meth:`~toddler.session.manager.StorageManager.list_all` method for display purposes.
+    """A lightweight row returned by :meth:`~toddler.session.storage.StorageManager.list_all` method for display purposes.
 
     Only the fields needed to render a session picker / list are included.
     """  # noqa: E501
@@ -231,7 +231,7 @@ class StoredMessage:
     """A single message row as stored in the ``messages`` table.
 
     The ``content_json`` field holds the serialised list[:class:`~toddler.llm.ContentBlock`] - use
-    :meth:`~toddler.session.manager._serialize_content` / :meth:`~toddler.session.manager._deserialize_content`
+    :meth:`~toddler.session.storage._serialize_content` / :meth:`~toddler.session.storage._deserialize_content`
     to go between Python objects and the database representation.
     """  # noqa: E501
 

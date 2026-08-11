@@ -25,8 +25,8 @@ from toddler.checkpoint.models import (
 from toddler.config.settings import Settings
 from toddler.context.manager import ContextManager
 from toddler.llm import BaseLLMProvider, Message, TokenUsage
-from toddler.session.manager import StorageManager
 from toddler.session.models import Conversation, Session
+from toddler.session.storage import StorageManager
 from toddler.tools import create_default_registry
 from toddler.tools.base import PermissionManager, PermissionMode
 from toddler.tools.executor import ToolExecutor

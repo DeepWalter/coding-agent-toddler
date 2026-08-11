@@ -437,13 +437,13 @@ class TestSessionCoordinatorPlanWorkflow:
 
     @pytest.fixture
     def storage_mgr(self, tmp_path):
-        from toddler.session.store import SQLiteStore
-        from toddler.session.manager import StorageManager
+        from toddler.session.database import SQLiteDatabase
+        from toddler.session.storage import StorageManager
 
         db_path = tmp_path / "test_plan.db"
-        store = SQLiteStore(db_path)
-        store.open()
-        return StorageManager(store)
+        db = SQLiteDatabase(db_path)
+        db.open()
+        return StorageManager(db)
 
     @pytest.fixture
     def llm(self):

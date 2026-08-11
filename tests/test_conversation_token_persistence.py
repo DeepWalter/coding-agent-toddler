@@ -2,7 +2,7 @@
 
 Verifies that ``Conversation.total_tokens`` / ``Conversation.model`` replace
 the dead ``total_input_tokens`` / ``total_output_tokens`` fields, that the
-store round-trips them correctly, the v2→v3 migration works, and that
+database round-trips them correctly, the v2→v3 migration works, and that
 ``ContextManager`` exposes ``count_tokens`` / ``set_token_baseline``.
 """
 
@@ -128,31 +128,31 @@ class TestContextManagerTokenCount:
 
 
 # ============================================================================
-# Store — round-trip new fields
+# Database — round-trip new fields
 # ============================================================================
 
 
-class TestConversationStoreRoundTrip:
+class TestConversationDatabaseRoundTrip:
     """Verify total_tokens / model survive insert → read in SQLite."""
 
     @pytest.fixture
-    def store(self, tmp_path):
-        from toddler.session.store import SQLiteStore
+    def db(self, tmp_path):
+        from toddler.session.database import SQLiteDatabase
 
-        db = SQLiteStore(tmp_path / "test_store.db")
+        db = SQLiteDatabase(tmp_path / "test.db")
         db.open()
         return db
 
     @pytest.fixture
-    def session_id(self, store) -> str:
+    def session_id(self, db) -> str:
         import uuid
         from toddler.session.models import Session
 
         sid = str(uuid.uuid4())
-        store.create_session(Session(id=sid))
+        db.create_session(Session(id=sid))
         return sid
 
-    def test_create_and_read_back(self, store, session_id):
+    def test_create_and_read_back(self, db, session_id):
         """New fields survive create → get_conversation round trip."""
         import uuid
 
@@ -165,13 +165,13 @@ class TestConversationStoreRoundTrip:
             total_tokens=1234,
             model="gpt-4",
         )
-        store.create_conversation(conv)
-        loaded = store.get_conversation(conv.id)
+        db.create_conversation(conv)
+        loaded = db.get_conversation(conv.id)
         assert loaded is not None
         assert loaded.total_tokens == 1234
         assert loaded.model == "gpt-4"
 
-    def test_update_and_read_back(self, store, session_id):
+    def test_update_and_read_back(self, db, session_id):
         """update_conversation persists changes to total_tokens / model."""
         import uuid
 
@@ -181,19 +181,19 @@ class TestConversationStoreRoundTrip:
             title="Test",
             sequence_num=2,
         )
-        store.create_conversation(conv)
+        db.create_conversation(conv)
 
         # Update.
         conv.total_tokens = 9999
         conv.model = "deepseek-v4"
-        store.update_conversation(conv)
+        db.update_conversation(conv)
 
-        loaded = store.get_conversation(conv.id)
+        loaded = db.get_conversation(conv.id)
         assert loaded is not None
         assert loaded.total_tokens == 9999
         assert loaded.model == "deepseek-v4"
 
-    def test_defaults_on_new_conversation(self, store, session_id):
+    def test_defaults_on_new_conversation(self, db, session_id):
         """Fields default to 0 / None for a fresh Conversation."""
         import uuid
 
@@ -203,13 +203,13 @@ class TestConversationStoreRoundTrip:
             title="Defaults",
             sequence_num=3,
         )
-        store.create_conversation(conv)
-        loaded = store.get_conversation(conv.id)
+        db.create_conversation(conv)
+        loaded = db.get_conversation(conv.id)
         assert loaded is not None
         assert loaded.total_tokens == 0
         assert loaded.model is None
 
-    def test_old_fields_not_present(self, store, session_id):
+    def test_old_fields_not_present(self, db, session_id):
         """total_input_tokens/total_output_tokens should not exist on the model."""
         conv = Conversation(
             id="dummy", session_id=session_id, sequence_num=4,
@@ -264,10 +264,10 @@ class TestV2ToV3Migration:
 
     def test_migration_adds_columns(self, v2_db_path):
         """Opening a v2 DB runs the v3 migration and adds new columns."""
-        from toddler.session.store import SQLiteStore
+        from toddler.session.database import SQLiteDatabase
 
-        store = SQLiteStore(v2_db_path)
-        store.open()
+        db = SQLiteDatabase(v2_db_path)
+        db.open()
 
         conn = sqlite3.connect(str(v2_db_path))
         cols = {
@@ -285,10 +285,10 @@ class TestV2ToV3Migration:
 
     def test_migration_sets_schema_version_3(self, v2_db_path):
         """After migration, _schema_version is 3."""
-        from toddler.session.store import SQLiteStore
+        from toddler.session.database import SQLiteDatabase
 
-        store = SQLiteStore(v2_db_path)
-        store.open()
+        db = SQLiteDatabase(v2_db_path)
+        db.open()
 
         conn = sqlite3.connect(str(v2_db_path))
         version = conn.execute(

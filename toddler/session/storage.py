@@ -1,6 +1,7 @@
 """StorageManager — high-level session lifecycle and message persistence.
 
-Sits between the CLI / agent loop and :class:`~toddler.session.store.SQLiteStore`.
+Sits between the CLI / agent loop and
+:class:`~toddler.session.database.SQLiteDatabase`.
 Handles ContentBlock serialization, token accumulation, and all
 business logic that shouldn't live in the raw data layer.
 """  # noqa: E501
@@ -15,6 +16,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from toddler.llm import ContentBlock, Message, TokenUsage
+from toddler.session.database import SQLiteDatabase
 from toddler.session.models import (
     Conversation,
     ConversationSummary,
@@ -22,7 +24,6 @@ from toddler.session.models import (
     SessionSummary,
     StoredMessage,
 )
-from toddler.session.store import SQLiteStore
 
 logger = logging.getLogger(__name__)
 
@@ -35,17 +36,17 @@ logger = logging.getLogger(__name__)
 class StorageManager:
     """High-level manager for session persistence.
 
-    Wraps :class:`SQLiteStore` with ContentBlock serialization
+    Wraps :class:`SQLiteDatabase` with ContentBlock serialization
     and token-usage bookkeeping.
 
     Parameters
     ----------
-    store:
-        The underlying SQLite store (already opened).
+    db:
+        The underlying SQLite database (already opened).
     """
 
-    def __init__(self, store: SQLiteStore) -> None:
-        self._store = store
+    def __init__(self, db: SQLiteDatabase) -> None:
+        self._db = db
 
     # ==================================================================
     # Session lifecycle
@@ -78,13 +79,13 @@ class StorageManager:
             mode=mode,
             metadata=merged_metadata,
         )
-        self._store.create_session(session)
+        self._db.create_session(session)
         logger.info(f"Created session {session.id} (mode={mode}).")
         return session
 
     def get(self, session_id: str) -> Session | None:
         """Return the session with *session_id*, or *None*."""
-        return self._store.get_session(session_id)
+        return self._db.get_session(session_id)
 
     def get_or_create(
         self,
@@ -104,7 +105,7 @@ class StorageManager:
             session is needed — ignored when resuming).
         """
         if session_id:
-            session = self._store.get_session(session_id)
+            session = self._db.get_session(session_id)
             if session:
                 self._warn_cwd_mismatch(session, cwd)
                 return session
@@ -127,19 +128,19 @@ class StorageManager:
 
     def list_all(self) -> list[SessionSummary]:
         """Return all sessions, most-recently-updated first."""
-        return self._store.list_sessions()
+        return self._db.list_sessions()
 
     def delete(self, session_id: str) -> bool:
         """Delete *session_id* and all its messages / checkpoints.
 
         Returns ``True`` if the session existed.
         """
-        return self._store.delete_session(session_id)
+        return self._db.delete_session(session_id)
 
     def update(self, session: Session) -> None:
         """Persist changes to *session* (title, mode, metadata, etc.)."""
         session.updated_at = datetime.now(UTC)
-        self._store.update_session(session)
+        self._db.update_session(session)
 
     # ==================================================================
     # Token tracking
@@ -149,7 +150,7 @@ class StorageManager:
         self, session_id: str, usage: TokenUsage,
     ) -> None:
         """Add *usage* counts to the session's running totals."""
-        session = self._store.get_session(session_id)
+        session = self._db.get_session(session_id)
         if session is None:
             logger.warning(
                 f"Cannot accumulate tokens — session {session_id} not found."
@@ -159,7 +160,7 @@ class StorageManager:
         session.total_input_tokens += usage.input_tokens
         session.total_output_tokens += usage.output_tokens
         session.updated_at = datetime.now(UTC)
-        self._store.update_session(session)
+        self._db.update_session(session)
 
     # ==================================================================
     # Message persistence
@@ -189,7 +190,7 @@ class StorageManager:
         Returns the new ``sequence_num``.
         """  # noqa: E501
         # Use per-session message sequence.
-        next_seq = self._store.get_max_message_seq(session_id) + 1
+        next_seq = self._db.get_max_message_seq(session_id) + 1
         stored = StoredMessage(
             session_id=session_id,
             conversation_id=conversation_id,
@@ -199,23 +200,23 @@ class StorageManager:
             token_count=token_count,
             created_at=message.timestamp,
         )
-        self._store.append_message(stored)
+        self._db.append_message(stored)
 
         # Update session counters.
-        session = self._store.get_session(session_id)
+        session = self._db.get_session(session_id)
         if session:
             session.message_count = next_seq
             session.updated_at = datetime.now(UTC)
-            self._store.update_session(session)
+            self._db.update_session(session)
 
         # Update conversation counters.
-        conv = self._store.get_conversation(conversation_id)
+        conv = self._db.get_conversation(conversation_id)
         if conv:
             conv.message_count = (
-                self._store.get_conversation_message_count(conversation_id)
+                self._db.get_conversation_message_count(conversation_id)
             )
             conv.updated_at = datetime.now(UTC)
-            self._store.update_conversation(conv)
+            self._db.update_conversation(conv)
 
         return stored.sequence_num
 
@@ -232,7 +233,7 @@ class StorageManager:
         conversation are returned.  When *after_sequence* is set, only
         messages with ``sequence_num > after_sequence`` are returned.
         """
-        stored_list = self._store.get_messages(
+        stored_list = self._db.get_messages(
             session_id,
             conversation_id=conversation_id,
             after_sequence=after_sequence,
@@ -246,7 +247,7 @@ class StorageManager:
 
         Returns the count of deleted messages.
         """
-        return self._store.truncate_messages(
+        return self._db.truncate_messages(
             session_id, after_sequence=after_sequence,
         )
 
@@ -266,7 +267,7 @@ class StorageManager:
         Returns the new :class:`Conversation`.
         """
         # Assign the next sequential number for this session (1, 2, 3…).
-        next_seq = self._store.get_max_conversation_seq(session_id) + 1
+        next_seq = self._db.get_max_conversation_seq(session_id) + 1
         conv = Conversation(
             id=uuid.uuid4().hex,
             session_id=session_id,
@@ -274,7 +275,7 @@ class StorageManager:
             sequence_num=next_seq,
             status=status,
         )
-        self._store.create_conversation(conv)
+        self._db.create_conversation(conv)
         logger.info(
             f"Created conversation {conv.id} in session {session_id}."
         )
@@ -287,7 +288,7 @@ class StorageManager:
 
         If no active conversation exists (e.g. migrated session), create one.
         """
-        conv = self._store.get_active_conversation(session_id)
+        conv = self._db.get_active_conversation(session_id)
         if conv is not None:
             return conv
         logger.info(
@@ -299,43 +300,43 @@ class StorageManager:
         self, session_id: str,
     ) -> list[ConversationSummary]:
         """Return all conversations for *session_id*, newest first."""
-        return self._store.list_conversations(session_id)
+        return self._db.list_conversations(session_id)
 
     def get_conversation(
         self, conversation_id: str,
     ) -> Conversation | None:
         """Return the conversation with *conversation_id*, or *None*."""
-        return self._store.get_conversation(conversation_id)
+        return self._db.get_conversation(conversation_id)
 
     def get_conversation_by_sequence(
         self, session_id: str, sequence_num: int,
     ) -> Conversation | None:
         """Return a conversation by session + sequence number, or *None*."""
-        return self._store.get_conversation_by_sequence(
+        return self._db.get_conversation_by_sequence(
             session_id, sequence_num,
         )
 
     def get_max_conversation_seq(self, session_id: str) -> int:
         """Return the highest conversation sequence number for *session_id*."""
-        return self._store.get_max_conversation_seq(session_id)
+        return self._db.get_max_conversation_seq(session_id)
 
     def update_conversation(self, conv: Conversation) -> None:
         """Persist changes to *conv* (title, compaction pointers, etc.)."""
         conv.updated_at = datetime.now(UTC)
-        self._store.update_conversation(conv)
+        self._db.update_conversation(conv)
 
     def archive_conversation(
         self, conversation_id: str,
     ) -> None:
         """Archive *conversation_id* so it's no longer active."""
-        self._store.archive_conversation(conversation_id)
+        self._db.archive_conversation(conversation_id)
         logger.info(f"Archived conversation {conversation_id}.")
 
     def get_first_user_message(
         self, conversation_id: str,
     ) -> str | None:
-        """Return the first user message text for *conversation_id*, or *None*."""
-        return self._store.get_first_user_message(conversation_id)
+        """Return the first user message text for *conversation_id*, or *None*."""  # noqa: E501
+        return self._db.get_first_user_message(conversation_id)
 
     def get_conversation_summaries(
         self, session_id: str, *, exclude_id: str | None = None,
@@ -374,7 +375,7 @@ class StorageManager:
         message_index: int = 0,
     ) -> None:
         """Create a checkpoint row in the database."""
-        self._store.create_checkpoint(
+        self._db.create_checkpoint(
             checkpoint_id=checkpoint_id,
             session_id=session_id,
             sequence_num=sequence_num,
@@ -391,13 +392,13 @@ class StorageManager:
         self, checkpoint_id: str,
     ) -> dict[str, Any] | None:
         """Return a checkpoint row as a dict, or *None*."""
-        return self._store.get_checkpoint(checkpoint_id)
+        return self._db.get_checkpoint(checkpoint_id)
 
     def get_checkpoint_by_sequence(
         self, session_id: str, sequence_num: int,
     ) -> dict[str, Any] | None:
         """Return a checkpoint row by session + sequence number, or *None*."""
-        return self._store.get_checkpoint_by_sequence(
+        return self._db.get_checkpoint_by_sequence(
             session_id, sequence_num,
         )
 
@@ -405,11 +406,11 @@ class StorageManager:
         self, session_id: str,
     ) -> list[dict[str, Any]]:
         """Return all checkpoints for *session_id*, newest first."""
-        return self._store.list_checkpoints(session_id)
+        return self._db.list_checkpoints(session_id)
 
     def delete_checkpoint(self, checkpoint_id: str) -> bool:
         """Delete a single checkpoint.  Returns ``True`` if one was deleted."""
-        return self._store.delete_checkpoint(checkpoint_id)
+        return self._db.delete_checkpoint(checkpoint_id)
 
     def prune_checkpoints(
         self, session_id: str, *, keep_latest: int,
@@ -418,7 +419,7 @@ class StorageManager:
 
         Returns the count of deleted checkpoints.
         """
-        return self._store.prune_checkpoints(
+        return self._db.prune_checkpoints(
             session_id, keep_latest=keep_latest,
         )
 

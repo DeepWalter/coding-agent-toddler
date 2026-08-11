@@ -1,10 +1,10 @@
-"""SQLiteStore — low-level database access for sessions, messages, checkpoints,
-and conversations.
+"""SQLiteDatabase — low-level database access for sessions, messages,
+checkpoints, and conversations.
 
-Manages schema creation, migrations, and raw CRUD operations.  The store is
-intentionally "dumb" — it doesn't know about LLM types, content
+Manages schema creation, migrations, and raw CRUD operations.  The database
+layer is intentionally "dumb" — it doesn't know about LLM types, content
 serialization, or business logic.  That layer lives in
-:class:`~toddler.session.manager.StorageManager`.
+:class:`~toddler.session.storage.StorageManager`.
 """
 
 from __future__ import annotations
@@ -110,11 +110,11 @@ _CREATE_INDEXES = [
 ]
 
 # ======================================================================
-# SQLiteStore
+# SQLiteDatabase
 # ======================================================================
 
 
-class SQLiteStore:
+class SQLiteDatabase:
     """Low-level SQLite database for session persistence.
 
     Opens (or creates) the database at *db_path*, ensures the schema is
@@ -153,7 +153,7 @@ class SQLiteStore:
         """No-op — connections are closed per-operation.
 
         SQLite connections are created and closed within each public method
-        so the store is always safe to use from multiple asyncio tasks.
+        so the database is always safe to use from multiple asyncio tasks.
         """
 
     # ==================================================================
@@ -422,7 +422,7 @@ class SQLiteStore:
     def get_conversation_by_sequence(
         self, session_id: str, sequence_num: int,
     ) -> Conversation | None:
-        """Return a conversation for *session_id* + *sequence_num*, or *None*."""
+        """Return a conversation for *session_id* + *sequence_num*, or *None*."""  # noqa: E501
         conn = self._connect()
         try:
             row = conn.execute(
@@ -644,7 +644,7 @@ class SQLiteStore:
     def get_checkpoint_by_sequence(
         self, session_id: str, sequence_num: int,
     ) -> dict[str, Any] | None:
-        """Return a checkpoint row for *session_id* + *sequence_num*, or *None*."""
+        """Return a checkpoint row for *session_id* + *sequence_num*, or *None*."""  # noqa: E501
         conn = self._connect()
         try:
             row = conn.execute(

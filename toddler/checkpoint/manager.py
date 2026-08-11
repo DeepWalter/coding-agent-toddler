@@ -3,7 +3,7 @@
 Coordinates between :class:`~toddler.checkpoint.snapshot.GitSnapshotter`
 (preferred) and :class:`~toddler.checkpoint.snapshot.FileSnapshotter`
 (fallback) for filesystem snapshots, and the
-:class:`~toddler.session.manager.StorageManager` for persistence.
+:class:`~toddler.session.storage.StorageManager` for persistence.
 
 Rollback restores **both** the filesystem **and** the conversation — messages
 after the checkpoint are truncated.
@@ -28,7 +28,7 @@ from toddler.checkpoint.snapshot import FileSnapshotter, GitSnapshotter
 from toddler.config.defaults import CHECKPOINT_KEEP_LATEST
 
 if TYPE_CHECKING:
-    from toddler.session.manager import StorageManager
+    from toddler.session.storage import StorageManager
 logger = logging.getLogger(__name__)
 
 

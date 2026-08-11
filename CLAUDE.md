@@ -16,7 +16,7 @@ toddler/
                       persistent memory, project map, system prompt
   llm/                LLM provider abstraction (OpenAI-compatible), types,
                       token counting
-  storage/            SQLite-backed session persistence, store, models
+  session/            SQLite-backed session persistence, database, models
   tools/              Tool registry, base protocol, executor, filesystem, git,
                       search, shell subprocess
   checkpoint/         Snapshot/checkpoint management

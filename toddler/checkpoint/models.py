@@ -1,9 +1,9 @@
 """Checkpoint data models — Checkpoint, AgentStateSnapshot, RollbackResult.
 
 These dataclasses represent the domain objects for the checkpoint subsystem.
-The persistence layer lives in :class:`~toddler.session.store.SQLiteStore`;
+The persistence layer lives in :class:`~toddler.session.database.SQLiteDatabase`;
 these models are the in-memory shape used by the manager and snapshotters.
-"""
+"""  # noqa: E501
 
 from __future__ import annotations
 

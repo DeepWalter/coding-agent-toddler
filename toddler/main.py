@@ -16,10 +16,13 @@ from pathlib import Path
 
 from toddler.cli.app import CLIApp
 from toddler.config.settings import Settings
-from toddler.llm.provider import OpenAICompatibleProvider
-from toddler.session import SessionCoordinator, print_sessions
-from toddler.session.manager import StorageManager
-from toddler.session.store import SQLiteStore
+from toddler.llm import OpenAICompatibleProvider
+from toddler.session import (
+    SessionCoordinator,
+    SQLiteDatabase,
+    StorageManager,
+    print_sessions,
+)
 from toddler.utils import build_argparser, setup_logging
 
 
@@ -39,9 +42,9 @@ def main() -> None:
 
     # --- Session persistence (no LLM needed) ---
     db_path = settings.session_dir / "sessions.db"
-    store = SQLiteStore(db_path)
-    store.open()
-    storage_mgr = StorageManager(store)
+    db = SQLiteDatabase(db_path)
+    db.open()
+    storage_mgr = StorageManager(db)
 
     # --- Session listing (no LLM needed — do it early) ---
     if args.list_sessions:
