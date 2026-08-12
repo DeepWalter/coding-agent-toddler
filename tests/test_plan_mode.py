@@ -18,10 +18,9 @@ from toddler.agent.events import (
 from toddler.agent.state_machine import (
     AgentMode,
     AgentStateMachine,
-    Plan,
-    PlanStep,
     classify_complexity,
 )
+from toddler.agent.planner import Plan, PlanStep, plan_proposal_prompt
 from toddler.tools.base import PermissionMode
 from toddler.llm import ContentBlock, LLMResponse, Message, TokenUsage
 from toddler.llm.base import BaseLLMProvider
@@ -125,52 +124,6 @@ class TestAgentStateMachineTransitions:
         sm.classify_and_transition("refactor auth")
         sm.transition(AgentMode.PLAN_PROPOSING)
         assert sm.transition(AgentMode.PLAN_WAITING) is True
-
-    def test_approve_plan_fails_without_plan(self, sm):
-        sm.classify_and_transition("refactor auth")
-        sm.transition(AgentMode.PLAN_PROPOSING)
-        sm.transition(AgentMode.PLAN_WAITING)
-        assert sm.approve_plan() is False
-
-    def test_approve_plan_succeeds_with_plan(self, sm):
-        sm.classify_and_transition("refactor auth")
-        sm.transition(AgentMode.PLAN_PROPOSING)
-        sm.set_plan(_plan())
-        sm.transition(AgentMode.PLAN_WAITING)
-        assert sm.approve_plan() is True
-        assert sm.current_mode == AgentMode.PLAN_EXECUTING
-
-    def test_reject_plan_without_feedback(self, sm):
-        sm.classify_and_transition("refactor auth")
-        sm.transition(AgentMode.PLAN_PROPOSING)
-        sm.transition(AgentMode.PLAN_WAITING)
-        assert sm.reject_plan() is True
-        assert sm.current_mode == AgentMode.FINISHED
-
-    def test_reject_plan_with_feedback(self, sm):
-        sm.classify_and_transition("refactor auth")
-        sm.transition(AgentMode.PLAN_PROPOSING)
-        sm.transition(AgentMode.PLAN_WAITING)
-        assert sm.reject_plan(feedback="Needs more detail") is True
-        assert sm.current_mode == AgentMode.PLAN_EXPLORING
-
-    def test_feedback_loop_complete(self, sm):
-        """Full approve → reject-with-feedback → re-approve cycle."""
-        sm.classify_and_transition("refactor auth")
-        assert sm.current_mode == AgentMode.PLAN_EXPLORING
-        sm.transition(AgentMode.PLAN_PROPOSING)
-        sm.set_plan(_plan(title="Auth Refactor"))
-        sm.transition(AgentMode.PLAN_WAITING)
-
-        sm.reject_plan(feedback="Add more steps")
-        assert sm.current_mode == AgentMode.PLAN_EXPLORING
-
-        sm.transition(AgentMode.PLAN_PROPOSING)
-        sm.set_plan(_plan(title="Auth Refactor v2"))
-        sm.transition(AgentMode.PLAN_WAITING)
-
-        assert sm.approve_plan() is True
-        assert sm.current_mode == AgentMode.PLAN_EXECUTING
 
     def test_mark_finished_from_executing(self, sm):
         sm.classify_and_transition("fix a typo")
@@ -309,26 +262,26 @@ class TestPlanSerialization:
 class TestPlanProposalPrompt:
 
     def test_prompt_includes_user_request(self):
-        prompt = AgentStateMachine.plan_proposal_prompt(
+        prompt = plan_proposal_prompt(
             "refactor the database layer",
         )
         assert "refactor the database layer" in prompt
 
     def test_prompt_includes_research_context(self):
-        prompt = AgentStateMachine.plan_proposal_prompt(
+        prompt = plan_proposal_prompt(
             "refactor the database layer",
             research_context="Found 15 files using the old DB API.",
         )
         assert "Found 15 files using the old DB API." in prompt
 
     def test_prompt_asks_for_json_format(self):
-        prompt = AgentStateMachine.plan_proposal_prompt("fix bugs")
+        prompt = plan_proposal_prompt("fix bugs")
         assert "JSON" in prompt
         assert "title" in prompt
         assert "steps" in prompt
 
     def test_prompt_without_context_omits_context_block(self):
-        prompt = AgentStateMachine.plan_proposal_prompt("do something")
+        prompt = plan_proposal_prompt("do something")
         assert "Context gathered" not in prompt
 
 

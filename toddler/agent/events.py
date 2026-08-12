@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from toddler.agent.state_machine import Plan
+    from toddler.agent.planner import Plan
     from toddler.llm import TokenUsage
     from toddler.tools.base import ToolResult
 
@@ -69,7 +69,7 @@ class ToolCallEnd(AgentEvent):
 class PlanProposed(AgentEvent):
     """The agent is presenting a plan for user approval."""
 
-    plan: Plan  # noqa: F821  # forward reference to agent.state_machine.Plan
+    plan: Plan  # forward reference to agent.planner.Plan
 
 
 # ---------------------------------------------------------------------------

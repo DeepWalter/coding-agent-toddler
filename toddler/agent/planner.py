@@ -1,4 +1,4 @@
-"""Planner — the plan-mode orchestration loop.
+"""Planner — plan data models and orchestration loop.
 
 The Planner owns the plan lifecycle (explore → propose → wait) and is
 symmetric to :class:`AgentLoop`: both are async generators in the agent
@@ -16,8 +16,11 @@ the plan, the caller runs :class:`AgentLoop` directly with
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import uuid
 from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from toddler.agent.events import (
@@ -26,7 +29,7 @@ from toddler.agent.events import (
     AgentFinished,
     PlanProposed,
 )
-from toddler.agent.state_machine import AgentMode, AgentStateMachine, Plan
+from toddler.agent.state_machine import AgentMode, AgentStateMachine
 from toddler.llm import Message
 from toddler.llm.responses import LLMResponse
 
@@ -36,9 +39,340 @@ if TYPE_CHECKING:
     from toddler.context.manager import ContextManager
     from toddler.llm.base import BaseLLMProvider
 
-__all__ = ["Planner"]
+__all__ = ["Plan", "PlanStep", "Planner", "plan_proposal_prompt"]
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# Plan data models
+# ============================================================================
+
+
+@dataclass
+class PlanStep:
+    """A single step in an execution plan.
+
+    Parameters
+    ----------
+    id:
+        Unique step identifier, e.g. ``"step-1"``.
+    description:
+        Human-readable description of what this step accomplishes, e.g.
+        ``"Read auth.py to understand the current login flow"``.
+    tool_calls_expected:
+        Tool names that are likely to be called during this step.
+    files_affected:
+        File paths expected to be read or modified.
+    depends_on:
+        IDs of steps that must complete before this step can begin.
+    status:
+        Current execution status — ``"pending"``, ``"in_progress"``, or
+        ``"completed"``.
+    """
+
+    id: str
+    description: str
+    tool_calls_expected: list[str] = field(default_factory=list)
+    files_affected: list[str] = field(default_factory=list)
+    depends_on: list[str] = field(default_factory=list)
+    status: str = "pending"  # "pending" | "in_progress" | "completed"
+
+    @classmethod
+    def from_dict(cls, d: dict) -> PlanStep:
+        """Build a ``PlanStep`` from a JSON-decoded dict."""
+        return cls(
+            id=d.get("id", ""),
+            description=d.get("description", ""),
+            tool_calls_expected=d.get("tool_calls_expected", []),
+            files_affected=d.get("files_affected", []),
+            depends_on=d.get("depends_on", []),
+            status=d.get("status", "pending"),
+        )
+
+    def to_dict(self) -> dict:
+        """Serialize to a plain dict for JSON storage."""
+        return {
+            "id": self.id,
+            "description": self.description,
+            "tool_calls_expected": self.tool_calls_expected,
+            "files_affected": self.files_affected,
+            "depends_on": self.depends_on,
+            "status": self.status,
+        }
+
+
+@dataclass
+class Plan:
+    """A structured execution plan proposed by the agent.
+
+    Parameters
+    ----------
+    id:
+        Unique plan identifier (UUID4).
+    title:
+        Short title, e.g. ``"Fix authentication bug in auth.py"``.
+    summary:
+        2-3 sentence overview of what the plan aims to achieve.
+    steps:
+        Ordered list of :class:`PlanStep` objects.
+    rationale:
+        Why this approach was chosen over alternatives.
+    risks:
+        Known risks or things that could go wrong.
+    estimated_files_touched:
+        Rough count of files that will be modified.
+    """
+
+    id: str
+    title: str
+    summary: str
+    steps: list[PlanStep] = field(default_factory=list)
+    rationale: str = ""
+    risks: list[str] = field(default_factory=list)
+    estimated_files_touched: int = 0
+
+    # ------------------------------------------------------------------
+    # Factory / serialization
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def create(cls, title: str, summary: str) -> Plan:
+        """Create a new plan with a fresh UUID."""
+        return cls(
+            id=uuid.uuid4().hex,
+            title=title,
+            summary=summary,
+        )
+
+    @classmethod
+    def from_json(cls, raw: str) -> Plan | None:
+        """Parse a JSON string into a :class:`Plan`.
+
+        Strips markdown code fences (`` ```json `` / `` ``` ``) if present,
+        then parses the inner JSON.
+
+        Returns ``None`` when parsing fails so callers can feed the error
+        back to the LLM rather than crashing.
+        """
+        # Strip markdown code fences if present.
+        json_str = raw.strip()
+        if json_str.startswith("```"):
+            first_nl = json_str.find("\n")
+            if first_nl != -1:
+                json_str = json_str[first_nl + 1:]
+            if json_str.endswith("```"):
+                json_str = json_str[:-3]
+        json_str = json_str.strip()
+
+        try:
+            data = json.loads(json_str)
+        except json.JSONDecodeError as exc:
+            logger.warning(f"Failed to parse plan JSON: {exc}")
+            return None
+
+        if not isinstance(data, dict):
+            logger.warning("Plan JSON is not a dict.")
+            return None
+
+        steps_data = data.get("steps", [])
+        steps = [PlanStep.from_dict(s) for s in steps_data]
+
+        return cls(
+            id=data.get("id", uuid.uuid4().hex),
+            title=data.get("title", "Untitled Plan"),
+            summary=data.get("summary", ""),
+            steps=steps,
+            rationale=data.get("rationale", ""),
+            risks=data.get("risks", []),
+            estimated_files_touched=data.get(
+                "estimated_files_touched", len(steps),
+            ),
+        )
+
+    def to_json(self) -> str:
+        """Serialize the plan to a JSON string for storage."""
+        return json.dumps(
+            {
+                "id": self.id,
+                "title": self.title,
+                "summary": self.summary,
+                "steps": [s.to_dict() for s in self.steps],
+                "rationale": self.rationale,
+                "risks": self.risks,
+                "estimated_files_touched": self.estimated_files_touched,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    # ------------------------------------------------------------------
+    # Display helpers
+    # ------------------------------------------------------------------
+
+    def format_for_display(self) -> str:
+        """Render the plan as a markdown string for user display."""
+        lines: list[str] = [
+            f"## Plan: {self.title}",
+            "",
+            self.summary,
+            "",
+        ]
+
+        if self.rationale:
+            lines.append(f"**Rationale**: {self.rationale}")
+            lines.append("")
+
+        if self.risks:
+            lines.append("**Risks**:")
+            for r in self.risks:
+                lines.append(f"- {r}")
+            lines.append("")
+
+        lines.append(f"**Steps** ({len(self.steps)}):")
+        for i, step in enumerate(self.steps, 1):
+            deps = (
+                f" (depends on: {', '.join(step.depends_on)})"
+                if step.depends_on
+                else ""
+            )
+            files = (
+                f" [{', '.join(step.files_affected)}]"
+                if step.files_affected
+                else ""
+            )
+            lines.append(f"{i}. **{step.description}**{deps}{files}")
+
+        lines.append("")
+        lines.append(
+            f"Estimated files touched: {self.estimated_files_touched}"
+        )
+        return "\n".join(lines)
+
+    def format_for_prompt(self) -> str:
+        """Render the plan compactly for inclusion in the system prompt.
+
+        Used during ``PLAN_EXECUTING`` mode so the agent remembers the plan
+        without re-reading it from the conversation.
+        """
+        lines: list[str] = [
+            f"## Approved Plan: {self.title}",
+            f"Summary: {self.summary}",
+            "",
+            "Steps:",
+        ]
+        for step in self.steps:
+            status_icon = {
+                "pending": "⬜",
+                "in_progress": "▶️",
+                "completed": "✅",
+            }.get(step.status, "⬜")
+            lines.append(f"  {status_icon} {step.id}: {step.description}")
+        return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    # Progress tracking
+    # ------------------------------------------------------------------
+
+    @property
+    def completed_steps(self) -> list[PlanStep]:
+        """Return steps that have been completed."""
+        return [s for s in self.steps if s.status == "completed"]
+
+    @property
+    def current_step(self) -> PlanStep | None:
+        """Return the first in-progress step, or the first pending step."""
+        for s in self.steps:
+            if s.status == "in_progress":
+                return s
+        for s in self.steps:
+            if s.status == "pending":
+                return s
+        return None
+
+    @property
+    def is_complete(self) -> bool:
+        """Return ``True`` when all steps are completed."""
+        return all(s.status == "completed" for s in self.steps)
+
+    def mark_step(self, step_id: str, status: str) -> bool:
+        """Update a step's status.  Returns ``False`` if the step is unknown."""  # noqa: E501
+        for s in self.steps:
+            if s.id == step_id:
+                s.status = status
+                return True
+        return False
+
+
+# ============================================================================
+# Plan proposal prompt
+# ============================================================================
+
+
+def plan_proposal_prompt(
+    user_request: str,
+    *,
+    research_context: str = "",
+) -> str:
+    """Build the prompt that asks the LLM to produce a structured plan.
+
+    This is sent as a follow-up user message after the agent finishes
+    exploring in ``PLAN_EXPLORING`` mode.
+
+    Parameters
+    ----------
+    user_request:
+        The original user request.
+    research_context:
+        Any notes or context gathered during the exploration phase.
+    """
+    context_block = ""
+    if research_context:
+        context_block = (
+            f"\n\nContext gathered during research:\n{research_context}"
+        )
+
+    return f"""\
+Based on your research, propose a concrete execution plan for the following \
+request:
+
+> {user_request}{context_block}
+
+Respond with a JSON plan object in this exact format:
+
+```json
+{{
+  "title": "Short title for the plan",
+  "summary": "2-3 sentence overview of what this plan will accomplish",
+  "steps": [
+    {{
+      "id": "step-1",
+      "description": "Detailed description of this step",
+      "tool_calls_expected": ["tool_name_1", "tool_name_2"],
+      "files_affected": ["path/to/file.py"],
+      "depends_on": []
+    }}
+  ],
+  "rationale": "Why this approach was chosen",
+  "risks": ["Potential risk 1", "Potential risk 2"],
+  "estimated_files_touched": 3
+}}
+```
+
+Guidelines:
+- Steps must be concrete and actionable — each step should be achievable with
+  one or two tool calls.
+- Order steps so dependencies are satisfied before dependents.
+- Include ALL files you expect to read or modify.
+- Be realistic about risks — what could go wrong?
+- Keep the plan focused: 3–8 steps is ideal.
+
+Return ONLY the JSON object, no other text."""
+
+
+# ============================================================================
+# Planner
+# ============================================================================
 
 
 class Planner:
@@ -82,7 +416,10 @@ class Planner:
         self._agent_loop = agent_loop
         self._sm = state_machine or AgentStateMachine()
 
-        # Gating state — same asyncio.Event pattern as AgentLoop._approval_event.
+        # Plan state — the Planner owns the Plan object lifecycle.
+        self._plan: Plan | None = None
+
+        # Gating state
         self._plan_decision_event = asyncio.Event()
         self._plan_feedback: str = ""
 
@@ -137,7 +474,7 @@ class Planner:
                         recoverable=False,
                     )
                     return
-                self._sm.set_plan(plan)
+                self._set_plan(plan)
                 self._sm.transition(AgentMode.PLAN_WAITING)
                 continue
 
@@ -145,7 +482,7 @@ class Planner:
                 # Clear BEFORE yielding so the caller's set() isn't
                 # immediately wiped by a trailing clear() on resume.
                 self._plan_decision_event.clear()
-                yield PlanProposed(plan=self._sm.current_plan)  # type: ignore[arg-type]
+                yield PlanProposed(plan=self._plan)
                 await self._plan_decision_event.wait()
 
                 # Decision was made by approve_plan() / reject_plan()
@@ -191,7 +528,12 @@ class Planner:
 
         Returns ``True`` if the plan was successfully approved.
         """
-        success = self._sm.approve_plan()
+        if self._plan is None:
+            logger.warning("Cannot approve: no plan is set.")
+            self._sm.mark_finished()
+            self._plan_decision_event.set()
+            return False
+        success = self._sm.transition(AgentMode.PLAN_EXECUTING)
         if not success:
             self._sm.mark_finished()
         self._plan_decision_event.set()
@@ -204,7 +546,15 @@ class Planner:
         a revised plan.  Otherwise the turn finishes.
         """
         self._plan_feedback = feedback
-        self._sm.reject_plan(feedback=feedback)
+        self._plan = None
+        if feedback:
+            logger.info(
+                "Plan rejected with feedback; returning to exploring."
+            )
+            self._sm.transition(AgentMode.PLAN_EXPLORING)
+        else:
+            logger.info("Plan rejected outright; finishing.")
+            self._sm.transition(AgentMode.FINISHED)
         self._plan_decision_event.set()
 
     # ------------------------------------------------------------------
@@ -214,7 +564,7 @@ class Planner:
     @property
     def plan(self) -> Plan | None:
         """The current plan, or *None* if no plan has been set."""
-        return self._sm.current_plan
+        return self._plan
 
     @property
     def current_mode(self) -> AgentMode:
@@ -224,6 +574,11 @@ class Planner:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _set_plan(self, plan: Plan) -> None:
+        """Store the current plan (e.g. after parsing the LLM's proposal)."""
+        self._plan = plan
+        logger.info(f"Plan set: {plan.title} ({len(plan.steps)} steps)")
 
     async def _generate_plan(self, user_request: str) -> Plan | None:
         """Ask the LLM to produce a structured JSON plan.
@@ -248,7 +603,7 @@ class Planner:
                 "\n... (truncated)"
             )
 
-        prompt = AgentStateMachine.plan_proposal_prompt(
+        prompt = plan_proposal_prompt(
             user_request,
             research_context=research_context,
         )
