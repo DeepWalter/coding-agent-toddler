@@ -39,6 +39,7 @@ from toddler.agent.events import (
     AgentFinished,
     AgentPaused,
     PlanProposed,
+    PlanStepUpdate,
     TextDelta,
     ToolCallDelta,
     ToolCallEnd,
@@ -84,6 +85,13 @@ _STATUS_STYLES = {
     "running": _ICON_RUNNING,
     "success": _ICON_SUCCESS,
     "error": _ICON_ERROR,
+}
+
+_PLAN_ICONS = {"pending": "⬜", "in_progress": "▶️", "completed": "✅"}
+_PLAN_STYLES = {
+    "pending": "dim",
+    "in_progress": "bold yellow",
+    "completed": "bold green",
 }
 
 
@@ -343,6 +351,22 @@ class Renderer(ABC):
         """
         self.markdown(event.plan.format_for_display())
 
+    def on_plan_step_update(self, event: PlanStepUpdate) -> None:
+        """Print one line per step in the event (one-shot mode).
+
+        Events carry only the changed steps, so each arrival prints
+        exactly the new statuses; the initial and final emissions carry
+        all steps and print the complete list.
+        """
+        for step_id, description, status in event.steps:
+            icon = _PLAN_ICONS.get(status, "⬜")
+            self._console.print(
+                Text(
+                    f"{icon} {step_id}: {description}",
+                    style=_PLAN_STYLES.get(status, ""),
+                )
+            )
+
     # ------------------------------------------------------------------
     # Confirmation (abstract)
     # ------------------------------------------------------------------
@@ -471,6 +495,12 @@ class StreamingRenderer(Renderer):
         # _compute_dynamic_panel_height().
         self._max_tools_visible: int = 0
         self._max_errors_visible: int = 0
+        # Plan panel snapshot — (step id, description, status) tuples,
+        # None while no plan is executing.  No Plan reference is kept so
+        # a stale plan can never outlive the turn.
+        self._plan_steps: list[tuple[str, str, str]] | None = None
+        # Plan rows visible under the current height budget.
+        self._max_plan_visible: int = 0
 
         # -- confirmation state (set when confirm() is active) --------------
         self._confirming: bool = False
@@ -525,6 +555,8 @@ class StreamingRenderer(Renderer):
         self._errors.clear()
         self._max_tools_visible = 0
         self._max_errors_visible = 0
+        self._plan_steps = None
+        self._max_plan_visible = 0
         self._live.start()
         self._refresh(force=True)
 
@@ -551,6 +583,9 @@ class StreamingRenderer(Renderer):
         # Disable panel-height clipping so that flush_to_console()
         # renders the full markdown into the terminal scrollback.
         self._max_panel_height = 0
+        # Show every plan row in the final flush as well.
+        if self._plan_steps:
+            self._max_plan_visible = len(self._plan_steps)
 
     def _build_truncation_notice(self, filepath: Path) -> Panel:
         """Build a clickable truncation notice with OSC 8 file link."""
@@ -830,6 +865,28 @@ class StreamingRenderer(Renderer):
         self._text = event.plan.format_for_display()
         self._refresh(force=True)
 
+    def on_plan_step_update(self, event: PlanStepUpdate) -> None:
+        """Seed or patch the Plan panel snapshot from the event's triples.
+
+        The first emission (all steps) seeds the list; later emissions
+        patch matching ids in place, appending any ids the panel has not
+        seen yet.
+        """
+        if self._plan_steps is None:
+            self._plan_steps = list(event.steps)
+        else:
+            updates = {
+                sid: (sid, desc, status)
+                for sid, desc, status in event.steps
+            }
+            patched = [
+                updates.get(step[0], step) for step in self._plan_steps
+            ]
+            known = {step[0] for step in patched}
+            patched.extend(step for step in event.steps if step[0] not in known)
+            self._plan_steps = patched
+        self._refresh()
+
     # ------------------------------------------------------------------
     # Streaming event handlers
     # ------------------------------------------------------------------
@@ -916,12 +973,13 @@ class StreamingRenderer(Renderer):
 
         Reserves space for all other visible elements — the output panel's
         own chrome, a dismiss hint, the confirm table — then greedily fits
-        error panels and tool rows (in that order, cheapest-first) into what
-        remains above a guaranteed output minimum.
+        error panels, plan rows, and tool rows (in that order,
+        cheapest-first) into what remains above a guaranteed output
+        minimum.
 
-        Sets ``_max_tools_visible`` and ``_max_errors_visible`` as side
-        effects so ``_build_renderable()`` can cap those panels to the same
-        budget.
+        Sets ``_max_tools_visible``, ``_max_plan_visible``, and
+        ``_max_errors_visible`` as side effects so
+        ``_build_renderable()`` can cap those panels to the same budget.
 
         When ``console.height`` is unavailable (e.g. piped output), falls
         back to ``_configured_max_panel_height`` (0 = no clipping).
@@ -932,6 +990,8 @@ class StreamingRenderer(Renderer):
             # and show all tools / errors (no capping).
             self._max_tools_visible = len(self._tools)
             self._max_errors_visible = len(self._errors)
+            if self._plan_steps is not None:
+                self._max_plan_visible = len(self._plan_steps)
             return self._configured_max_panel_height
 
         # Budget after reserving the output panel's own chrome.
@@ -950,7 +1010,17 @@ class StreamingRenderer(Renderer):
         )
         remaining = allocatable - self._max_errors_visible * _ERR_PANEL_LINES
 
-        # Tools second: fixed overhead (header + chrome) before any row fits.
+        # Plan next — rows only, no fixed header.  Prioritized over the
+        # tools panel so step statuses stay visible on small terminals.
+        if self._plan_steps is not None and remaining >= _PANEL_CHROME_LINES:
+            self._max_plan_visible = min(
+                len(self._plan_steps), remaining - _PANEL_CHROME_LINES,
+            )
+            remaining -= _PANEL_CHROME_LINES + self._max_plan_visible
+        else:
+            self._max_plan_visible = 0
+
+        # Tools third: fixed overhead (header + chrome) before any row fits.
         if self._tools and remaining >= _TOOLS_FIXED_LINES + 1:
             self._max_tools_visible = min(
                 len(self._tools), remaining - _TOOLS_FIXED_LINES
@@ -964,8 +1034,15 @@ class StreamingRenderer(Renderer):
             else 0
         )
         errors_reserved = self._max_errors_visible * _ERR_PANEL_LINES
+        plan_reserved = (
+            _PANEL_CHROME_LINES + self._max_plan_visible
+            if self._max_plan_visible > 0
+            else 0
+        )
 
-        output_height = max(0, budget - tools_reserved - errors_reserved)
+        output_height = max(
+            0, budget - tools_reserved - errors_reserved - plan_reserved
+        )
         # Floor at the minimum — or the whole budget on tiny terminals.
         output_height = max(
             output_height, min(_MIN_OUTPUT_LINES, max(0, budget))
@@ -1103,6 +1180,34 @@ class StreamingRenderer(Renderer):
             border_style="yellow",
         )
 
+    def _build_plan_panel(self) -> Panel | None:
+        """Build the plan step list panel, or ``None`` when hidden.
+
+        Shows the most recent steps within the height cap (tail-first, so
+        the current step stays visible as the list grows).  Rows are
+        single-line (no wrap, ellipsis-truncated) so the panel never
+        exceeds the line budget computed by
+        :meth:`_compute_dynamic_panel_height`.
+        """
+        if self._plan_steps is None or self._max_plan_visible <= 0:
+            return None
+        plan_lines = [
+            Text(
+                f"{_PLAN_ICONS.get(status, '⬜')} {step_id}: {description}",
+                style=_PLAN_STYLES.get(status, ""),
+                no_wrap=True,
+                overflow="ellipsis",
+            )
+            for step_id, description, status
+            in self._plan_steps[-self._max_plan_visible:]
+        ]
+        return Panel(
+            Group(*plan_lines),
+            title="Plan",
+            title_align="left",
+            border_style="cyan",
+        )
+
     # ------------------------------------------------------------------
     # Build renderable
     # ------------------------------------------------------------------
@@ -1130,6 +1235,10 @@ class StreamingRenderer(Renderer):
         )
 
         elements: list = [output_panel]
+
+        plan_panel = self._build_plan_panel()
+        if plan_panel is not None:
+            elements.append(plan_panel)
 
         if self._tools and self._max_tools_visible > 0:
             table = Table(show_header=True, box=None, padding=(0, 1))

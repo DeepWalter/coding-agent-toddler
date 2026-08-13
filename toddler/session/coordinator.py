@@ -13,7 +13,7 @@ from pathlib import Path
 
 from toddler.agent.events import AgentEvent, AgentFinished
 from toddler.agent.loop import AgentLoop
-from toddler.agent.planner import Planner
+from toddler.agent.planner import Plan, Planner, PlanState
 from toddler.agent.state_machine import AgentMode, AgentStateMachine
 from toddler.checkpoint import create_checkpoint_callback
 from toddler.checkpoint.manager import CheckpointManager
@@ -30,6 +30,7 @@ from toddler.session.storage import StorageManager
 from toddler.tools import create_default_registry
 from toddler.tools.base import PermissionManager, PermissionMode
 from toddler.tools.executor import ToolExecutor
+from toddler.tools.plan import PlanUpdateTool
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +87,11 @@ class SessionCoordinator:
         # AgentLoop and ToolExecutor.  Mode changes (via /mode or
         # plan approval) take effect immediately without rebuilding.
         self._perm_mgr = PermissionManager()
+
+        # Shared plan holder — the plan_update tool mutates it during
+        # PLAN_EXECUTING; the coordinator diffs it after each event to
+        # emit PlanStepUpdate.  Only set while a plan is executing.
+        self._plan_state = PlanState()
 
         # Build tool system
         self._registry = create_default_registry()
@@ -245,19 +251,16 @@ class SessionCoordinator:
                 self._sm.mark_finished()
                 return
 
-            plan_text = self.planner.plan.format_for_prompt()
-            user_input = (
-                "I have reviewed and approved the following plan. "
-                "Execute it step by step, reporting progress after "
-                f"each step:\n\n{plan_text}"
-            )
             mode_hint = "plan_executing"
             self._sm.transition(AgentMode.PLAN_EXECUTING)
         else:
             mode_hint = "execute"
 
         # --- Execute ---
-        async for event in self._run_phase(user_input, mode_hint):
+        async for event in self._run_execution(
+            user_input, mode_hint,
+            plan_mode=mode == AgentMode.PLAN_EXPLORING,
+        ):
             yield event
         self._sm.mark_finished()
 
@@ -424,6 +427,77 @@ class SessionCoordinator:
                     self._session.id, usage,
                 )
             await self.save()
+
+    # ------------------------------------------------------------------
+    # Plan execution tracking
+    # ------------------------------------------------------------------
+
+    async def _run_execution(
+        self, user_input: str, mode_hint: str, *, plan_mode: bool,
+    ) -> AsyncIterator[AgentEvent]:
+        """Run the execution phase, with plan tracking on plan turns.
+
+        Plan tracking is armed inside the guard so an early consumer exit
+        can never leak a stale ``plan_update`` tool into the next turn.
+        After each agent event the shared :class:`PlanState` is diffed so
+        mutations made by plan_update tool calls surface as
+        PlanStepUpdate events, and a final full emission lets renderers
+        show the complete last-known statuses.
+        """
+        try:
+            if plan_mode:
+                user_input = self._activate_plan_execution(self.planner.plan)
+                # Initial full emission so the UI shows the step list
+                # immediately (all pending at this point).
+                yield self._plan_state.full_update()
+
+            async for event in self._run_phase(user_input, mode_hint):
+                yield event
+                update = self._plan_state.take_update()
+                if update is not None:
+                    yield update
+
+            # Final full emission — the streaming panel already flushes
+            # with these statuses; one-shot mode gets a closing block.
+            if self._plan_state.plan is not None:
+                yield self._plan_state.full_update()
+        finally:
+            self._deactivate_plan_execution()
+
+    def _activate_plan_execution(self, plan: Plan) -> str:
+        """Arm plan tracking and return the execution-phase user message.
+
+        Exposes *plan* through the shared :class:`PlanState` (so the
+        ``plan_update`` tool can mutate it and update detection is armed),
+        and registers the tool so the LLM sees it only during this phase.
+        """
+        self._plan_state.activate(plan)
+        if "plan_update" not in self._registry:
+            self._registry.register(
+                PlanUpdateTool(get_plan=lambda: self._plan_state.plan),
+            )
+        plan_text = plan.format_for_prompt()
+        return (
+            "I have reviewed and approved the following plan. "
+            "Execute it step by step. Use the plan_update tool to "
+            "report progress: call plan_update(step_id=..., "
+            "status='in_progress') before starting each step, and "
+            "plan_update(step_id=..., status='completed') after "
+            "finishing it. When all steps are done, end with a brief "
+            "summary of what was accomplished, noting any deviations "
+            f"from the plan:\n\n{plan_text}"
+        )
+
+    def _deactivate_plan_execution(self) -> None:
+        """Tear down plan tracking after the execution phase.
+
+        Idempotent — safe to call even when no plan was activated this
+        turn (deregister silently pops a missing name; deactivate just
+        re-clears).  Unconditional so a partially completed activation
+        can never leak ``plan_update`` into a later turn.
+        """
+        self._registry.deregister("plan_update")
+        self._plan_state.deactivate()
 
     # ==================================================================
     # Conversation management

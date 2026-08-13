@@ -28,6 +28,7 @@ from toddler.agent.events import (
     AgentEvent,
     AgentFinished,
     PlanProposed,
+    PlanStepUpdate,
 )
 from toddler.agent.state_machine import AgentMode, AgentStateMachine
 from toddler.llm import Message
@@ -39,7 +40,7 @@ if TYPE_CHECKING:
     from toddler.context.manager import ContextManager
     from toddler.llm.base import BaseLLMProvider
 
-__all__ = ["Plan", "PlanStep", "Planner", "plan_proposal_prompt"]
+__all__ = ["Plan", "PlanState", "PlanStep", "Planner", "plan_proposal_prompt"]
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,16 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 # Plan data models
 # ============================================================================
+
+
+def _single_line(text: str) -> str:
+    """Collapse whitespace and newlines in *text* to single spaces.
+
+    Plan title/summary/description render as ``Prefix: {value}`` one-liners
+    in the prompt and as single rows in the renderer Plan panel, so
+    multi-line values from LLM-generated JSON would break both.
+    """
+    return " ".join(text.split())
 
 
 @dataclass
@@ -76,14 +87,16 @@ class PlanStep:
     tool_calls_expected: list[str] = field(default_factory=list)
     files_affected: list[str] = field(default_factory=list)
     depends_on: list[str] = field(default_factory=list)
-    status: str = "pending"  # "pending" | "in_progress" | "completed"
+    # Valid values are PLAN_STEP_STATUSES (toddler.tools.plan) — the
+    # single source of truth for this vocabulary.
+    status: str = "pending"
 
     @classmethod
     def from_dict(cls, d: dict) -> PlanStep:
         """Build a ``PlanStep`` from a JSON-decoded dict."""
         return cls(
             id=d.get("id", ""),
-            description=d.get("description", ""),
+            description=_single_line(d.get("description", "")),
             tool_calls_expected=d.get("tool_calls_expected", []),
             files_affected=d.get("files_affected", []),
             depends_on=d.get("depends_on", []),
@@ -180,11 +193,14 @@ class Plan:
 
         return cls(
             id=data.get("id", uuid.uuid4().hex),
-            title=data.get("title", "Untitled Plan"),
-            summary=data.get("summary", ""),
+            title=_single_line(data.get("title", "Untitled Plan")),
+            summary=_single_line(data.get("summary", "")),
             steps=steps,
-            rationale=data.get("rationale", ""),
-            risks=data.get("risks", []),
+            rationale=_single_line(data.get("rationale", "")),
+            risks=[
+                _single_line(r) if isinstance(r, str) else r
+                for r in data.get("risks", [])
+            ],
             estimated_files_touched=data.get(
                 "estimated_files_touched", len(steps),
             ),
@@ -253,7 +269,9 @@ class Plan:
         """Render the plan compactly for inclusion in the system prompt.
 
         Used during ``PLAN_EXECUTING`` mode so the agent remembers the plan
-        without re-reading it from the conversation.
+        without re-reading it from the conversation.  Step statuses are
+        deliberately not rendered — the text is frozen at approval time,
+        before any step runs, so icons would always show ``pending``.
         """
         lines: list[str] = [
             f"## Approved Plan: {self.title}",
@@ -262,12 +280,7 @@ class Plan:
             "Steps:",
         ]
         for step in self.steps:
-            status_icon = {
-                "pending": "⬜",
-                "in_progress": "▶️",
-                "completed": "✅",
-            }.get(step.status, "⬜")
-            lines.append(f"  {status_icon} {step.id}: {step.description}")
+            lines.append(f"  {step.id}: {step.description}")
         return "\n".join(lines)
 
     # ------------------------------------------------------------------
@@ -302,6 +315,89 @@ class Plan:
                 s.status = status
                 return True
         return False
+
+
+@dataclass
+class PlanState:
+    """Tracks the active execution plan.
+
+    Owned by :class:`SessionCoordinator`; the ``plan_update`` tool reads
+    the active plan from it through an injected getter — the same
+    shared-holder pattern as ``PermissionManager``.  ``plan`` is set when
+    PLAN_EXECUTING begins and cleared when the turn ends.
+
+    Also owns update detection: the coordinator calls :meth:`take_update`
+    after each agent event, and the method diffs the current step statuses
+    against the last emitted snapshot, returning a
+    :class:`~toddler.agent.events.PlanStepUpdate` when something changed.
+    """
+
+    plan: Plan | None = None
+    _last_snap: tuple[tuple[str, str], ...] | None = field(
+        default=None, repr=False,
+    )
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    def activate(self, plan: Plan) -> None:
+        """Arm tracking for *plan*.
+
+        Baselines the snapshot at the current statuses (all pending at
+        activation time), so the first :meth:`take_update` returns an
+        event only once something actually changes.
+        """
+        self.plan = plan
+        self._last_snap = self._status_snapshot()
+
+    def deactivate(self) -> None:
+        """Tear down tracking after the execution phase."""
+        self.plan = None
+        self._last_snap = None
+
+    # ------------------------------------------------------------------
+    # Update detection
+    # ------------------------------------------------------------------
+
+    def full_update(self) -> PlanStepUpdate | None:
+        """Return an event describing all current steps.
+
+        Used for the initial seed right after :meth:`activate` (so the UI
+        shows the step list before any tool call) and for the final
+        emission at phase end (so renderers can show the complete
+        last-known statuses).  Returns ``None`` when no plan is active,
+        mirroring :meth:`take_update`.
+        """
+        if self.plan is None:
+            return None
+        return PlanStepUpdate(steps=self._step_triples())
+
+    def take_update(self) -> PlanStepUpdate | None:
+        """Return a :class:`PlanStepUpdate` when step statuses changed.
+
+        Carries only the changed steps, computed by diffing against the
+        last emitted snapshot (which is then advanced).  Returns ``None``
+        when no plan is active or nothing changed.
+        """
+        if self.plan is None or self._last_snap is None:
+            return None
+        last = dict(self._last_snap)
+        changed = [
+            (s.id, s.description, s.status)
+            for s in self.plan.steps
+            if last.get(s.id) != s.status
+        ]
+        if not changed:
+            return None
+        self._last_snap = self._status_snapshot()
+        return PlanStepUpdate(steps=changed)
+
+    def _step_triples(self) -> list[tuple[str, str, str]]:
+        return [(s.id, s.description, s.status) for s in self.plan.steps]
+
+    def _status_snapshot(self) -> tuple[tuple[str, str], ...]:
+        return tuple((s.id, s.status) for s in self.plan.steps)
 
 
 # ============================================================================

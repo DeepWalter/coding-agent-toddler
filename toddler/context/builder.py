@@ -68,9 +68,16 @@ If you encounter unexpected issues (files that don't exist, conflicting
 changes, errors), pause and report them — do not silently deviate from
 the plan.
 
+Use the plan_update tool to keep progress visible: call
+plan_update(step_id=..., status="in_progress") immediately before starting
+a step, and plan_update(step_id=..., status="completed") once the step is
+finished.
+
 - Execute one step at a time, in dependency order.
 - After each step, briefly confirm what was done.
-- If a step cannot be completed as planned, explain why and wait for guidance."""
+- If a step cannot be completed as planned, explain why and wait for guidance.
+- When all steps are complete, finish with a brief summary of what was
+  accomplished and any deviations from the plan."""
 
 # ---------------------------------------------------------------------------
 # Compact variants — shorter versions for long conversations
@@ -83,7 +90,10 @@ style; report what you did; adapt on errors."""
 
 _COMPACT_EXECUTING = "Mode: EXECUTE — make changes, be concise."
 _COMPACT_PLAN_EXPLORING = "Mode: PLAN (Research) — READ ONLY, gather context."
-_COMPACT_PLAN_EXECUTING = "Mode: PLAN (Execute) — follow plan steps in order."
+_COMPACT_PLAN_EXECUTING = (
+    "Mode: PLAN (Execute) — follow plan steps in order; "
+    "mark each step with plan_update."
+)
 
 # ---------------------------------------------------------------------------
 # Builder

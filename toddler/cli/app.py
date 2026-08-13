@@ -16,6 +16,7 @@ from toddler.agent.events import (
     AgentFinished,
     AgentPaused,
     PlanProposed,
+    PlanStepUpdate,
     TextDelta,
     ToolCallDelta,
     ToolCallEnd,
@@ -206,6 +207,9 @@ class CLIApp:
 
                 case ToolCallEnd():
                     self._renderer.on_tool_call_end(event)
+
+                case PlanStepUpdate():
+                    self._renderer.on_plan_step_update(event)
 
                 case AgentPaused():
                     result = await self._renderer.confirm(

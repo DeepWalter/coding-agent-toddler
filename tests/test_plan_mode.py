@@ -14,18 +14,23 @@ from toddler.agent.events import (
     AgentError,
     AgentFinished,
     PlanProposed,
+    PlanStepUpdate,
+)
+from toddler.agent.planner import (
+    Plan,
+    PlanState,
+    PlanStep,
+    plan_proposal_prompt,
 )
 from toddler.agent.state_machine import (
     AgentMode,
     AgentStateMachine,
     classify_complexity,
 )
-from toddler.agent.planner import Plan, PlanStep, plan_proposal_prompt
-from toddler.tools.base import PermissionMode
 from toddler.llm import ContentBlock, LLMResponse, Message, TokenUsage
 from toddler.llm.base import BaseLLMProvider
-
-
+from toddler.tools.base import Permission, PermissionMode
+from toddler.tools.plan import PlanUpdateTool
 
 # ============================================================================
 # Helper — build a Plan with a generated id
@@ -42,6 +47,36 @@ def _plan(**kwargs) -> Plan:
     }
     defaults.update(kwargs)
     return Plan(**defaults)
+
+
+def _end_turn_response(text: str = "Research complete.") -> LLMResponse:
+    """Build a plain end-turn LLMResponse."""
+    return LLMResponse(
+        messages=[Message.assistant([ContentBlock.text_block(text)])],
+        stop_reason="end_turn",
+        usage=TokenUsage(input_tokens=10, output_tokens=5),
+    )
+
+
+def _tool_use_response(
+    tool_name: str, tool_input: dict, *, tool_id: str = "t1",
+) -> LLMResponse:
+    """Build a single tool_use LLMResponse."""
+    return LLMResponse(
+        messages=[Message.assistant([
+            ContentBlock.tool_use_block(tool_id, tool_name, tool_input),
+        ])],
+        stop_reason="tool_use",
+        usage=TokenUsage(input_tokens=10, output_tokens=5),
+    )
+
+
+def _plan_tool(
+    plan: Plan | None = None,
+) -> tuple[PlanUpdateTool, PlanState]:
+    """Build a plan_update tool wired to a fresh PlanState holder."""
+    holder = PlanState(plan=plan)
+    return PlanUpdateTool(get_plan=lambda: holder.plan), holder
 
 
 # ============================================================================
@@ -215,6 +250,23 @@ class TestPlanSerialization:
         assert plan is not None
         assert plan.title == "Fenced"
 
+    def test_plan_from_json_collapses_multiline_fields(self):
+        # LLM-generated JSON escapes newlines inside string values;
+        # from_json turns them back into real newlines.  Fields rendered
+        # as one-liners (prompt rows, renderer panel rows) must collapse.
+        data = {
+            "title": "Multi\nline title",
+            "summary": "First sentence.\nSecond sentence.",
+            "steps": [
+                {"id": "s1", "description": "Do this.\n  Then do that."},
+            ],
+        }
+        plan = Plan.from_json(json.dumps(data))
+        assert plan is not None
+        assert plan.title == "Multi line title"
+        assert plan.summary == "First sentence. Second sentence."
+        assert plan.steps[0].description == "Do this. Then do that."
+
     def test_plan_from_json_invalid_returns_none(self):
         assert Plan.from_json("not json at all") is None
         assert Plan.from_json("") is None
@@ -328,21 +380,135 @@ class TestPlanStepTracking:
 
 
 # ============================================================================
+# PlanUpdateTool (LLM-driven step status tracking)
+# ============================================================================
+
+
+class TestPlanUpdateTool:
+
+    @pytest.mark.asyncio
+    async def test_successful_update_mutates_step_status(self):
+        plan = _plan()
+        tool, _ = _plan_tool(plan)
+        result = await tool.execute(step_id="step-1", status="completed")
+        assert result.success is True
+        assert plan.steps[0].status == "completed"
+
+    @pytest.mark.asyncio
+    async def test_unknown_step_returns_error(self):
+        tool, _ = _plan_tool(_plan())
+        result = await tool.execute(step_id="nope", status="completed")
+        assert result.success is False
+        assert result.error is not None
+        assert "nope" in result.error
+
+    @pytest.mark.asyncio
+    async def test_no_active_plan_returns_error(self):
+        tool, _ = _plan_tool()
+        result = await tool.execute(step_id="step-1", status="completed")
+        assert result.success is False
+        assert result.error is not None
+        assert "No approved plan" in result.error
+
+    @pytest.mark.asyncio
+    async def test_invalid_status_returns_error(self):
+        tool, _ = _plan_tool(_plan())
+        result = await tool.execute(step_id="step-1", status="bogus")
+        assert result.success is False
+        assert result.error is not None
+        assert "bogus" in result.error
+
+    def test_permission_is_read(self):
+        tool, _ = _plan_tool()
+        assert tool.permission is Permission.READ
+
+    def test_schema_enum_lists_valid_statuses(self):
+        tool, _ = _plan_tool()
+        enum = tool.parameters["properties"]["status"]["enum"]
+        assert enum == ["pending", "in_progress", "completed"]
+
+
+class TestPlanState:
+
+    def test_take_update_returns_event_only_when_statuses_change(self):
+        state = PlanState()
+        state.activate(_plan())
+        # Baseline snapshot matches the fresh plan — nothing to emit.
+        assert state.take_update() is None
+        state.plan.mark_step("step-1", "in_progress")
+        update = state.take_update()
+        assert update is not None
+        assert update.steps == [("step-1", "Do it", "in_progress")]
+        # Snapshot advanced — no further event without a new change.
+        assert state.take_update() is None
+
+    def test_take_update_returns_none_when_inactive(self):
+        assert PlanState().take_update() is None
+
+    def test_full_update_returns_none_when_inactive(self):
+        assert PlanState().full_update() is None
+
+    def test_take_update_triples_are_immutable_snapshots(self):
+        state = PlanState()
+        state.activate(_plan(steps=[
+            PlanStep(id="step-1", description="One"),
+            PlanStep(id="step-2", description="Two"),
+        ]))
+        state.plan.mark_step("step-1", "completed")
+        update = state.take_update()
+        assert update is not None
+        assert update.steps == [("step-1", "One", "completed")]
+        # Mutating the live plan afterwards must not change the event.
+        state.plan.mark_step("step-2", "in_progress")
+        assert update.steps == [("step-1", "One", "completed")]
+        # The next diff reports only the newly changed step.
+        assert state.take_update().steps == [("step-2", "Two", "in_progress")]
+
+    def test_full_update_carries_all_steps(self):
+        state = PlanState()
+        state.activate(_plan())
+        state.plan.mark_step("step-1", "completed")
+        assert state.full_update().steps == [("step-1", "Do it", "completed")]
+
+    def test_activate_baselines_and_deactivate_clears(self):
+        state = PlanState()
+        state.activate(_plan())
+        state.plan.mark_step("step-1", "completed")
+        assert state.take_update() is not None
+        state.deactivate()
+        assert state.plan is None
+        assert state.take_update() is None
+        # Re-activating with a fresh plan re-arms detection cleanly.
+        state.activate(_plan())
+        assert state.take_update() is None
+
+
+# ============================================================================
 # SessionCoordinator plan workflow (integration test with mock LLM)
 # ============================================================================
 
 
 class MockPlanLLMProvider(BaseLLMProvider):
     """Mock LLM that returns a valid plan JSON for plan proposal calls,
-    and a simple end-turn for agent phases.
+    scripted responses for tool-carrying agent calls, and a simple
+    end-turn once the script is exhausted.
     """
 
-    def __init__(self, plan_json: dict | None = None):
+    def __init__(
+        self,
+        plan_json: dict | None = None,
+        sequence: list[LLMResponse] | None = None,
+    ):
         self._plan_json = plan_json or {
             "title": "Mock Plan",
             "summary": "A mocked plan for testing.",
             "steps": [{"id": "step-1", "description": "Do the thing"}],
         }
+        # Responses consumed by agent calls that carry tools (explore and
+        # execute phases, in order).  Plan-proposal calls (no tools)
+        # bypass the sequence.
+        self._sequence = sequence or []
+        self._seq_index = 0
         self.call_count = 0
         self.messages_history: list[list[Message]] = []
 
@@ -361,6 +527,12 @@ class MockPlanLLMProvider(BaseLLMProvider):
                 stop_reason="end_turn",
                 usage=TokenUsage(input_tokens=50, output_tokens=50),
             )
+
+        # Scripted agent-call response.
+        if self._seq_index < len(self._sequence):
+            response = self._sequence[self._seq_index]
+            self._seq_index += 1
+            return response
 
         # Standard agent call → simple end-turn.
         return LLMResponse(
@@ -461,6 +633,83 @@ class TestSessionCoordinatorPlanWorkflow:
         remaining = await self._collect(gen)
         finished = [e for e in remaining if isinstance(e, AgentFinished)]
         assert len(finished) == 1
+
+    # ------------------------------------------------------------------
+    # Plan execution status tracking
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_plan_execution_starts_with_initial_step_update(
+        self, coordinator,
+    ):
+        """Approving a plan yields an initial all-pending PlanStepUpdate."""
+        gen = coordinator.process_turn("refactor the database layer")
+        async for event in gen:
+            if isinstance(event, PlanProposed):
+                break
+        coordinator.approve_plan()
+        remaining = await self._collect(gen)
+        updates = [e for e in remaining if isinstance(e, PlanStepUpdate)]
+        assert updates, "expected at least one PlanStepUpdate"
+        assert all(st[2] == "pending" for st in updates[0].steps)
+        # The final emission re-sends all steps as the closing block.
+        assert len(updates[-1].steps) == len(updates[0].steps)
+        finished = [e for e in remaining if isinstance(e, AgentFinished)]
+        assert len(finished) == 1
+
+    @pytest.mark.asyncio
+    async def test_plan_update_tool_advances_step_statuses(
+        self, coordinator, llm,
+    ):
+        """plan_update tool calls surface as PlanStepUpdate events."""
+        llm._sequence = [
+            _end_turn_response(),  # explore phase
+            _tool_use_response(
+                "plan_update", {"step_id": "step-1", "status": "in_progress"},
+                tool_id="t1",
+            ),
+            _tool_use_response(
+                "plan_update", {"step_id": "step-1", "status": "completed"},
+                tool_id="t2",
+            ),
+        ]
+        gen = coordinator.process_turn("refactor the database layer")
+        async for event in gen:
+            if isinstance(event, PlanProposed):
+                break
+        coordinator.approve_plan()
+        remaining = await self._collect(gen)
+        updates = [e for e in remaining if isinstance(e, PlanStepUpdate)]
+        assert updates, "expected PlanStepUpdate events"
+        statuses = [
+            next(st[2] for st in e.steps if st[0] == "step-1")
+            for e in updates
+        ]
+        assert statuses[0] == "pending"
+        assert "in_progress" in statuses
+        assert statuses[-1] == "completed"
+        # The final emission carries the complete list.
+        assert [st[0] for st in updates[-1].steps] == ["step-1"]
+
+    @pytest.mark.asyncio
+    async def test_plan_tracking_torn_down_after_phase(self, coordinator):
+        """The plan_update tool and shared plan are cleared after the turn."""
+        gen = coordinator.process_turn("refactor the database layer")
+        async for event in gen:
+            if isinstance(event, PlanProposed):
+                break
+        coordinator.approve_plan()
+        await self._collect(gen)
+        assert coordinator._registry.get("plan_update") is None
+        assert coordinator._plan_state.plan is None
+
+    @pytest.mark.asyncio
+    async def test_simple_execution_has_no_plan_events(self, coordinator):
+        """Non-plan turns emit no PlanStepUpdate and never register the tool."""
+        gen = coordinator.process_turn("fix a typo")
+        events = await self._collect(gen)
+        assert not any(isinstance(e, PlanStepUpdate) for e in events)
+        assert coordinator._registry.get("plan_update") is None
 
     @pytest.mark.asyncio
     async def test_reject_plan_outright_finishes(self, coordinator):
@@ -774,7 +1023,7 @@ class TestPermissionMode:
         assert mgr.mode == PermissionMode.AUTO
 
     def test_needs_confirmation_delegates(self):
-        from toddler.tools.base import PermissionManager, Permission
+        from toddler.tools.base import Permission, PermissionManager
         mgr = PermissionManager()
         # READ never needs confirmation
         assert not mgr.needs_confirmation(Permission.READ)

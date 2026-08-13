@@ -72,6 +72,18 @@ class PlanProposed(AgentEvent):
     plan: Plan  # forward reference to agent.planner.Plan
 
 
+@dataclass
+class PlanStepUpdate(AgentEvent):
+    """One or more plan steps changed status during execution.
+
+    Carries ``(id, description, status)`` triples — only the changed
+    steps.  The initial and final emissions carry all steps so renderers
+    can seed or print the complete list without diffing themselves.
+    """
+
+    steps: list[tuple[str, str, str]]  # (id, description, status)
+
+
 # ---------------------------------------------------------------------------
 # Interaction events
 # ---------------------------------------------------------------------------
