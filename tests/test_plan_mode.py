@@ -48,6 +48,18 @@ def _plan(**kwargs) -> Plan:
     return Plan(**defaults)
 
 
+def _two_step_plan_json() -> dict:
+    """Proposal JSON for a two-step plan (for MockPlanLLMProvider)."""
+    return {
+        "title": "Two-Step Plan",
+        "summary": "A two-step mocked plan.",
+        "steps": [
+            {"id": "step-1", "description": "First thing"},
+            {"id": "step-2", "description": "Second thing"},
+        ],
+    }
+
+
 def _end_turn_response(text: str = "Research complete.") -> LLMResponse:
     """Build a plain end-turn LLMResponse."""
     return LLMResponse(
@@ -352,7 +364,7 @@ class TestPlanStepTracking:
             PlanStep(id="1", description="A"),
             PlanStep(id="2", description="B"),
         ]))
-        assert state.full_update() == [
+        assert state.steps == [
             ("1", "A", "pending"),
             ("2", "B", "pending"),
         ]
@@ -367,7 +379,7 @@ class TestPlanStepTracking:
         ]))
         assert state.mark_step("1", "completed") is True
         assert state.mark_step("2", "in_progress") is True
-        assert state.full_update() == [
+        assert state.steps == [
             ("1", "A", "completed"),
             ("2", "B", "in_progress"),
             ("3", "C", "pending"),
@@ -401,7 +413,7 @@ class TestPlanUpdateTool:
         tool, state = _plan_tool(plan)
         result = await tool.execute(step_id="step-1", status="completed")
         assert result.success is True
-        assert state.full_update() == [("step-1", "Do it", "completed")]
+        assert state.steps == [("step-1", "Do it", "completed")]
 
     @pytest.mark.asyncio
     async def test_unknown_step_returns_error(self):
@@ -439,56 +451,114 @@ class TestPlanUpdateTool:
 
 class TestPlanState:
 
-    def test_take_update_returns_triples_only_when_statuses_change(self):
+    def test_take_update_returns_none_until_something_changes(self):
         state = PlanState()
         state.activate(_plan())
-        # Baseline snapshot matches the fresh plan — nothing to emit.
+        # Emitted baseline matches activation — nothing to update.
         assert state.take_update() is None
+
+    def test_take_update_returns_full_list_on_step_start(self):
+        state = PlanState()
+        state.activate(_plan(steps=[
+            PlanStep(id="step-1", description="One"),
+            PlanStep(id="step-2", description="Two"),
+        ]))
         state.mark_step("step-1", "in_progress")
-        update = state.take_update()
-        assert update == [("step-1", "Do it", "in_progress")]
-        # Snapshot advanced — no further update without a new change.
+        assert state.take_update() == [
+            ("step-1", "One", "in_progress"),
+            ("step-2", "Two", "pending"),
+        ]
+        # Emitted baseline advanced — no update without a new change.
         assert state.take_update() is None
 
-    def test_take_update_returns_none_when_inactive(self):
-        assert PlanState().take_update() is None
-
-    def test_full_update_returns_none_when_inactive(self):
-        assert PlanState().full_update() is None
-
-    def test_take_update_triples_are_immutable_snapshots(self):
+    def test_bare_completed_is_held_back_and_folds_into_next_render(self):
         state = PlanState()
         state.activate(_plan(steps=[
             PlanStep(id="step-1", description="One"),
             PlanStep(id="step-2", description="Two"),
         ]))
         state.mark_step("step-1", "completed")
-        update = state.take_update()
-        assert update == [("step-1", "One", "completed")]
-        # Mutating the live statuses afterwards must not change the
-        # returned list.
+        # A completed alone renders nothing — it folds into the next
+        # step's start instead of double-rendering with it.
+        assert state.take_update() is None
         state.mark_step("step-2", "in_progress")
-        assert update == [("step-1", "One", "completed")]
-        # The next diff reports only the newly changed step.
-        assert state.take_update() == [("step-2", "Two", "in_progress")]
+        assert state.take_update() == [
+            ("step-1", "One", "completed"),
+            ("step-2", "Two", "in_progress"),
+        ]
 
-    def test_full_update_carries_all_steps(self):
+    def test_completing_the_final_step_renders(self):
+        state = PlanState()
+        state.activate(_plan(steps=[
+            PlanStep(id="step-1", description="One"),
+            PlanStep(id="step-2", description="Two"),
+        ]))
+        state.mark_step("step-1", "in_progress")
+        assert state.take_update() is not None
+        state.mark_step("step-1", "completed")
+        assert state.take_update() is None
+        state.mark_step("step-2", "completed")
+        # All steps done — the closing snapshot renders.
+        assert state.take_update() == [
+            ("step-1", "One", "completed"),
+            ("step-2", "Two", "completed"),
+        ]
+
+    def test_take_update_returns_none_when_inactive(self):
+        assert PlanState().take_update() is None
+
+    def test_flush_update_renders_held_back_changes(self):
+        state = PlanState()
+        state.activate(_plan(steps=[
+            PlanStep(id="step-1", description="One"),
+            PlanStep(id="step-2", description="Two"),
+        ]))
+        state.mark_step("step-1", "completed")
+        # Held back by the trigger filter mid-run...
+        assert state.take_update() is None
+        # ...but the phase-end flush emits any change at all.
+        assert state.flush_update() == [
+            ("step-1", "One", "completed"),
+            ("step-2", "Two", "pending"),
+        ]
+        # Emitted baseline advanced — nothing new without a change.
+        assert state.flush_update() is None
+
+    def test_flush_update_returns_none_when_inactive(self):
+        assert PlanState().flush_update() is None
+
+    def test_steps_empty_when_inactive(self):
+        assert PlanState().steps == []
+
+    def test_returned_triples_are_a_fresh_list(self):
+        state = PlanState()
+        state.activate(_plan())
+        state.mark_step("step-1", "in_progress")
+        update = state.take_update()
+        assert update is not None
+        update.clear()
+        # Mutating the returned list must not change the tracked state.
+        assert state.steps == [("step-1", "Do it", "in_progress")]
+
+    def test_steps_read_carries_all_steps(self):
         state = PlanState()
         state.activate(_plan())
         state.mark_step("step-1", "completed")
-        assert state.full_update() == [("step-1", "Do it", "completed")]
+        assert state.steps == [("step-1", "Do it", "completed")]
 
     def test_activate_baselines_and_deactivate_clears(self):
         state = PlanState()
         state.activate(_plan())
-        state.mark_step("step-1", "completed")
+        state.mark_step("step-1", "in_progress")
         assert state.take_update() is not None
         state.deactivate()
         assert state.is_active is False
         assert state.take_update() is None
+        assert state.flush_update() is None
         # Re-activating with a fresh plan re-arms detection cleanly.
         state.activate(_plan())
         assert state.take_update() is None
+        assert state.flush_update() is None
 
 
 # ============================================================================
@@ -647,10 +717,10 @@ class TestSessionCoordinatorPlanWorkflow:
     # ------------------------------------------------------------------
 
     @pytest.mark.asyncio
-    async def test_plan_execution_starts_with_initial_step_update(
+    async def test_plan_execution_without_status_updates_emits_nothing(
         self, coordinator,
     ):
-        """Approving a plan yields an initial all-pending PlanStepUpdate."""
+        """A plan run that never calls plan_update emits no step events."""
         gen = coordinator.process_turn("refactor the database layer")
         async for event in gen:
             if isinstance(event, PlanProposed):
@@ -658,10 +728,9 @@ class TestSessionCoordinatorPlanWorkflow:
         coordinator.approve_plan()
         remaining = await self._collect(gen)
         updates = [e for e in remaining if isinstance(e, PlanStepUpdate)]
-        assert updates, "expected at least one PlanStepUpdate"
-        assert all(st[2] == "pending" for st in updates[0].steps)
-        # The final emission re-sends all steps as the closing block.
-        assert len(updates[-1].steps) == len(updates[0].steps)
+        # No initial all-pending emission — it carries no information,
+        # and the final emission dedups against the activation baseline.
+        assert updates == []
         finished = [e for e in remaining if isinstance(e, AgentFinished)]
         assert len(finished) == 1
 
@@ -693,11 +762,107 @@ class TestSessionCoordinatorPlanWorkflow:
             next(st[2] for st in e.steps if st[0] == "step-1")
             for e in updates
         ]
-        assert statuses[0] == "pending"
-        assert "in_progress" in statuses
-        assert statuses[-1] == "completed"
-        # The final emission carries the complete list.
+        assert statuses == ["in_progress", "completed"]
+        # Every event carries the complete list; completing the only step
+        # is the closing snapshot, so the final emission dedups to zero.
         assert [st[0] for st in updates[-1].steps] == ["step-1"]
+        assert len(updates) == 2
+
+    @pytest.mark.asyncio
+    async def test_completed_then_in_progress_renders_once(
+        self, coordinator, llm,
+    ):
+        """A bare completed folds into the next step's start — one render."""
+        llm._plan_json = _two_step_plan_json()
+        llm._sequence = [
+            _end_turn_response(),  # explore phase
+            _tool_use_response(
+                "plan_update", {"step_id": "step-1", "status": "completed"},
+                tool_id="t1",
+            ),
+            _tool_use_response(
+                "plan_update", {"step_id": "step-2", "status": "in_progress"},
+                tool_id="t2",
+            ),
+        ]
+        gen = coordinator.process_turn("refactor the database layer")
+        async for event in gen:
+            if isinstance(event, PlanProposed):
+                break
+        coordinator.approve_plan()
+        remaining = await self._collect(gen)
+        updates = [e for e in remaining if isinstance(e, PlanStepUpdate)]
+        # One emission at the step-2 start — the lone completed never
+        # rendered on its own, it folds into this snapshot.
+        assert len(updates) == 1
+        assert [st[2] for st in updates[0].steps] == ["completed", "in_progress"]
+
+    @pytest.mark.asyncio
+    async def test_all_steps_completed_emits_closing_snapshot(
+        self, coordinator, llm,
+    ):
+        """Completing the final step emits the closing snapshot once."""
+        llm._plan_json = _two_step_plan_json()
+        llm._sequence = [
+            _end_turn_response(),  # explore phase
+            _tool_use_response(
+                "plan_update", {"step_id": "step-1", "status": "in_progress"},
+                tool_id="t1",
+            ),
+            _tool_use_response(
+                "plan_update", {"step_id": "step-1", "status": "completed"},
+                tool_id="t2",
+            ),
+            _tool_use_response(
+                "plan_update", {"step_id": "step-2", "status": "in_progress"},
+                tool_id="t3",
+            ),
+            _tool_use_response(
+                "plan_update", {"step_id": "step-2", "status": "completed"},
+                tool_id="t4",
+            ),
+        ]
+        gen = coordinator.process_turn("refactor the database layer")
+        async for event in gen:
+            if isinstance(event, PlanProposed):
+                break
+        coordinator.approve_plan()
+        remaining = await self._collect(gen)
+        updates = [e for e in remaining if isinstance(e, PlanStepUpdate)]
+        statuses = [[st[2] for st in e.steps] for e in updates]
+        assert statuses == [
+            ["in_progress", "pending"],
+            ["completed", "in_progress"],
+            ["completed", "completed"],
+        ]
+        # The closing snapshot was already emitted — the final emission
+        # dedups to zero.
+        assert len(updates) == 3
+
+    @pytest.mark.asyncio
+    async def test_lone_completed_flushed_at_phase_end(
+        self, coordinator, llm,
+    ):
+        """A completed with no follow-up trigger is flushed at phase end."""
+        llm._plan_json = _two_step_plan_json()
+        llm._sequence = [
+            _end_turn_response(),  # explore phase
+            _tool_use_response(
+                "plan_update", {"step_id": "step-1", "status": "completed"},
+                tool_id="t1",
+            ),
+        ]
+        gen = coordinator.process_turn("refactor the database layer")
+        async for event in gen:
+            if isinstance(event, PlanProposed):
+                break
+        coordinator.approve_plan()
+        remaining = await self._collect(gen)
+        updates = [e for e in remaining if isinstance(e, PlanStepUpdate)]
+        # Nothing rendered mid-run; the final emission flushes the
+        # un-emitted completed status.
+        assert len(updates) == 1
+        assert [st[2] for st in updates[0].steps] == ["completed", "pending"]
 
     @pytest.mark.asyncio
     async def test_plan_tracking_torn_down_after_phase(self, coordinator):

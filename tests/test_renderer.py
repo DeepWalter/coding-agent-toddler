@@ -44,18 +44,20 @@ class TestNonStreamingPlanStepUpdates:
         assert "⬜ step-1: First thing" in output
         assert "⬜ step-2: Second thing" in output
 
-    def test_delta_update_prints_only_changed_steps(self):
+    def test_each_event_reprints_the_complete_list(self):
         renderer, buf = self._renderer()
+        plan = _plan_with_two_steps()
         renderer.on_plan_step_update(
-            PlanStepUpdate(steps=_triples(_plan_with_two_steps()))
+            PlanStepUpdate(steps=_triples(plan))
         )
-        renderer.on_plan_step_update(
-            PlanStepUpdate(steps=[("step-1", "First thing", "in_progress")])
-        )
+        steps = _triples(plan)
+        steps[0] = ("step-1", "First thing", "in_progress")
+        renderer.on_plan_step_update(PlanStepUpdate(steps=steps))
         output = buf.getvalue()
         assert "▶️ step-1: First thing" in output
-        # step-2 appeared once (initial emission), not again in the delta.
-        assert output.count("step-2") == 1
+        # The second event also carried step-2 — every event prints the
+        # complete list, never just the changed step.
+        assert output.count("step-2") == 2
 
     def test_handler_is_stateless(self):
         # The same event printed twice prints twice — no stored state.
@@ -67,8 +69,8 @@ class TestNonStreamingPlanStepUpdates:
 
 
 class TestStreamingPlanStepUpdates:
-    """The TUI handler seeds or patches step tuples; the panel is
-    built later.
+    """The TUI handler replaces its step snapshot from each event; the
+    panel is built later.
     """
 
     def _renderer(self) -> StreamingRenderer:
@@ -85,17 +87,18 @@ class TestStreamingPlanStepUpdates:
             ("step-2", "Second thing", "pending"),
         ]
 
-    def test_delta_update_patches_only_matching_steps(self):
+    def test_update_replaces_the_step_list(self):
         renderer = self._renderer()
         renderer.on_plan_step_update(
             PlanStepUpdate(steps=_triples(_plan_with_two_steps()))
         )
+        # A later event carries only one step — the panel must replace,
+        # not patch, so the missing step disappears.
         renderer.on_plan_step_update(
-            PlanStepUpdate(steps=[("step-2", "Second thing", "completed")])
+            PlanStepUpdate(steps=[("step-1", "First thing", "completed")])
         )
         assert renderer._plan_steps == [
-            ("step-1", "First thing", "pending"),
-            ("step-2", "Second thing", "completed"),
+            ("step-1", "First thing", "completed"),
         ]
 
     def test_plan_panel_hidden_without_updates(self):

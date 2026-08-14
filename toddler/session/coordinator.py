@@ -439,20 +439,16 @@ class SessionCoordinator:
 
         Plan tracking is armed inside the guard so an early consumer exit
         can never leak a stale ``plan_update`` tool into the next turn.
-        After each agent event the shared :class:`PlanState` is diffed so
-        status changes made through plan_update tool calls surface as
-        PlanStepUpdate events (the state returns plain triples — the
-        coordinator wraps them into events), and a final full emission
-        lets renderers show the complete last-known statuses.
+        After each agent event the shared :class:`PlanState` is asked
+        for updates — it returns the COMPLETE step list only when
+        something render-worthy changed (a step starting, or all steps
+        completed), holding back bare ``completed`` changes so the UI
+        never double-renders a completed + in_progress pair.  A final
+        flush emits any held-back statuses at phase end.
         """
         try:
             if plan_mode:
                 user_input = self._activate_plan_execution(self.planner.plan)
-                # Initial full emission so the UI shows the step list
-                # immediately (all pending at this point).
-                update = self._plan_state.full_update()
-                if update is not None:
-                    yield PlanStepUpdate(steps=update)
 
             async for event in self._run_phase(user_input, mode_hint):
                 yield event
@@ -460,12 +456,11 @@ class SessionCoordinator:
                 if update is not None:
                     yield PlanStepUpdate(steps=update)
 
-            # Final full emission — the streaming panel already flushes
-            # with these statuses; one-shot mode gets a closing block.
-            if self._plan_state.is_active:
-                update = self._plan_state.full_update()
-                if update is not None:
-                    yield PlanStepUpdate(steps=update)
+            # Final emission — flush any status changes held back
+            # because no trigger fired (e.g. a lone completed mid-run).
+            update = self._plan_state.flush_update()
+            if update is not None:
+                yield PlanStepUpdate(steps=update)
         finally:
             self._deactivate_plan_execution()
 

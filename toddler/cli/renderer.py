@@ -354,9 +354,9 @@ class Renderer(ABC):
     def on_plan_step_update(self, event: PlanStepUpdate) -> None:
         """Print one line per step in the event (one-shot mode).
 
-        Events carry only the changed steps, so each arrival prints
-        exactly the new statuses; the initial and final emissions carry
-        all steps and print the complete list.
+        Events always carry the complete step list, so each arrival
+        prints the full current picture — the coordinator decides when
+        to send one (step start, all completed, phase end).
         """
         for step_id, description, status in event.steps:
             icon = _PLAN_ICONS.get(status, "⬜")
@@ -866,25 +866,12 @@ class StreamingRenderer(Renderer):
         self._refresh(force=True)
 
     def on_plan_step_update(self, event: PlanStepUpdate) -> None:
-        """Seed or patch the Plan panel snapshot from the event's triples.
+        """Replace the Plan panel snapshot with the event's step list.
 
-        The first emission (all steps) seeds the list; later emissions
-        patch matching ids in place, appending any ids the panel has not
-        seen yet.
+        Events always carry the complete list, so the panel is rebuilt
+        from each arrival instead of being patched in place.
         """
-        if self._plan_steps is None:
-            self._plan_steps = list(event.steps)
-        else:
-            updates = {
-                sid: (sid, desc, status)
-                for sid, desc, status in event.steps
-            }
-            patched = [
-                updates.get(step[0], step) for step in self._plan_steps
-            ]
-            known = {step[0] for step in patched}
-            patched.extend(step for step in event.steps if step[0] not in known)
-            self._plan_steps = patched
+        self._plan_steps = list(event.steps)
         self._refresh()
 
     # ------------------------------------------------------------------

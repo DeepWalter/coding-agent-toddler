@@ -74,11 +74,13 @@ class PlanProposed(AgentEvent):
 
 @dataclass
 class PlanStepUpdate(AgentEvent):
-    """One or more plan steps changed status during execution.
+    """Plan step statuses should be (re)displayed.
 
-    Carries ``(id, description, status)`` triples — only the changed
-    steps.  The initial and final emissions carry all steps so renderers
-    can seed or print the complete list without diffing themselves.
+    Always carries the complete ``(id, description, status)`` triple
+    list, so renderers replace their snapshot without diffing.  The
+    coordinator emits it at meaningful moments — a step starting, all
+    steps completed, and phase end (flushing any status changes that
+    never hit a trigger).
     """
 
     steps: list[tuple[str, str, str]]  # (id, description, status)
