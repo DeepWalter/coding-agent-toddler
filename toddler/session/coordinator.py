@@ -11,9 +11,9 @@ import logging
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-from toddler.agent.events import AgentEvent, AgentFinished
+from toddler.agent.events import AgentEvent, AgentFinished, PlanStepUpdate
 from toddler.agent.loop import AgentLoop
-from toddler.agent.planner import Plan, Planner, PlanState
+from toddler.agent.planner import Plan, Planner
 from toddler.agent.state_machine import AgentMode, AgentStateMachine
 from toddler.checkpoint import create_checkpoint_callback
 from toddler.checkpoint.manager import CheckpointManager
@@ -30,7 +30,7 @@ from toddler.session.storage import StorageManager
 from toddler.tools import create_default_registry
 from toddler.tools.base import PermissionManager, PermissionMode
 from toddler.tools.executor import ToolExecutor
-from toddler.tools.plan import PlanUpdateTool
+from toddler.tools.plan import PlanState, PlanUpdateTool
 
 logger = logging.getLogger(__name__)
 
@@ -88,9 +88,9 @@ class SessionCoordinator:
         # plan approval) take effect immediately without rebuilding.
         self._perm_mgr = PermissionManager()
 
-        # Shared plan holder — the plan_update tool mutates it during
-        # PLAN_EXECUTING; the coordinator diffs it after each event to
-        # emit PlanStepUpdate.  Only set while a plan is executing.
+        # Shared plan step-status tracker — the plan_update tool mutates
+        # it during PLAN_EXECUTING; the coordinator diffs it after each
+        # event to emit PlanStepUpdate.  Only armed while a plan runs.
         self._plan_state = PlanState()
 
         # Build tool system
@@ -440,42 +440,45 @@ class SessionCoordinator:
         Plan tracking is armed inside the guard so an early consumer exit
         can never leak a stale ``plan_update`` tool into the next turn.
         After each agent event the shared :class:`PlanState` is diffed so
-        mutations made by plan_update tool calls surface as
-        PlanStepUpdate events, and a final full emission lets renderers
-        show the complete last-known statuses.
+        status changes made through plan_update tool calls surface as
+        PlanStepUpdate events (the state returns plain triples — the
+        coordinator wraps them into events), and a final full emission
+        lets renderers show the complete last-known statuses.
         """
         try:
             if plan_mode:
                 user_input = self._activate_plan_execution(self.planner.plan)
                 # Initial full emission so the UI shows the step list
                 # immediately (all pending at this point).
-                yield self._plan_state.full_update()
+                update = self._plan_state.full_update()
+                if update is not None:
+                    yield PlanStepUpdate(steps=update)
 
             async for event in self._run_phase(user_input, mode_hint):
                 yield event
                 update = self._plan_state.take_update()
                 if update is not None:
-                    yield update
+                    yield PlanStepUpdate(steps=update)
 
             # Final full emission — the streaming panel already flushes
             # with these statuses; one-shot mode gets a closing block.
-            if self._plan_state.plan is not None:
-                yield self._plan_state.full_update()
+            if self._plan_state.is_active:
+                update = self._plan_state.full_update()
+                if update is not None:
+                    yield PlanStepUpdate(steps=update)
         finally:
             self._deactivate_plan_execution()
 
     def _activate_plan_execution(self, plan: Plan) -> str:
         """Arm plan tracking and return the execution-phase user message.
 
-        Exposes *plan* through the shared :class:`PlanState` (so the
-        ``plan_update`` tool can mutate it and update detection is armed),
-        and registers the tool so the LLM sees it only during this phase.
+        Captures *plan*'s steps in the shared :class:`PlanState` (arming
+        update detection) and registers the tool so the LLM sees it only
+        during this phase.
         """
         self._plan_state.activate(plan)
         if "plan_update" not in self._registry:
-            self._registry.register(
-                PlanUpdateTool(get_plan=lambda: self._plan_state.plan),
-            )
+            self._registry.register(PlanUpdateTool(self._plan_state))
         plan_text = plan.format_for_prompt()
         return (
             "I have reviewed and approved the following plan. "

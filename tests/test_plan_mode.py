@@ -18,7 +18,6 @@ from toddler.agent.events import (
 )
 from toddler.agent.planner import (
     Plan,
-    PlanState,
     PlanStep,
     plan_proposal_prompt,
 )
@@ -30,7 +29,7 @@ from toddler.agent.state_machine import (
 from toddler.llm import ContentBlock, LLMResponse, Message, TokenUsage
 from toddler.llm.base import BaseLLMProvider
 from toddler.tools.base import Permission, PermissionMode
-from toddler.tools.plan import PlanUpdateTool
+from toddler.tools.plan import PlanState, PlanUpdateTool
 
 # ============================================================================
 # Helper — build a Plan with a generated id
@@ -74,9 +73,11 @@ def _tool_use_response(
 def _plan_tool(
     plan: Plan | None = None,
 ) -> tuple[PlanUpdateTool, PlanState]:
-    """Build a plan_update tool wired to a fresh PlanState holder."""
-    holder = PlanState(plan=plan)
-    return PlanUpdateTool(get_plan=lambda: holder.plan), holder
+    """Build a plan_update tool wired to a PlanState tracking *plan*."""
+    state = PlanState()
+    if plan is not None:
+        state.activate(plan)
+    return PlanUpdateTool(state), state
 
 
 # ============================================================================
@@ -296,9 +297,9 @@ class TestPlanSerialization:
         plan = _plan(
             title="Execute Plan",
             steps=[
-                PlanStep(id="1", description="Step one", status="completed"),
-                PlanStep(id="2", description="Step two", status="in_progress"),
-                PlanStep(id="3", description="Step three", status="pending"),
+                PlanStep(id="1", description="Step one"),
+                PlanStep(id="2", description="Step two"),
+                PlanStep(id="3", description="Step three"),
             ],
         )
         output = plan.format_for_prompt()
@@ -346,37 +347,45 @@ class TestPlanProposalPrompt:
 class TestPlanStepTracking:
 
     def test_all_steps_start_pending(self):
-        plan = _plan(steps=[
+        state = PlanState()
+        state.activate(_plan(steps=[
             PlanStep(id="1", description="A"),
             PlanStep(id="2", description="B"),
-        ])
-        # current_step returns the first pending step.
-        assert plan.current_step is not None
-        assert plan.current_step.id == "1"
-        assert plan.completed_steps == []
-        assert plan.is_complete is False
+        ]))
+        assert state.full_update() == [
+            ("1", "A", "pending"),
+            ("2", "B", "pending"),
+        ]
+        assert state.is_complete is False
 
     def test_mark_step_advances_progress(self):
-        plan = _plan(steps=[
+        state = PlanState()
+        state.activate(_plan(steps=[
             PlanStep(id="1", description="A"),
             PlanStep(id="2", description="B"),
             PlanStep(id="3", description="C"),
-        ])
-        assert plan.mark_step("1", "completed") is True
-        assert plan.steps[0].status == "completed"
-        assert len(plan.completed_steps) == 1
-
-        assert plan.mark_step("2", "in_progress") is True
-        assert plan.steps[1].status == "in_progress"
+        ]))
+        assert state.mark_step("1", "completed") is True
+        assert state.mark_step("2", "in_progress") is True
+        assert state.full_update() == [
+            ("1", "A", "completed"),
+            ("2", "B", "in_progress"),
+            ("3", "C", "pending"),
+        ]
 
     def test_mark_step_unknown_id_returns_false(self):
-        plan = _plan(steps=[PlanStep(id="1", description="A")])
-        assert plan.mark_step("nonexistent", "completed") is False
+        state = PlanState()
+        state.activate(_plan(steps=[PlanStep(id="1", description="A")]))
+        assert state.mark_step("nonexistent", "completed") is False
+
+    def test_mark_step_inactive_returns_false(self):
+        assert PlanState().mark_step("1", "completed") is False
 
     def test_is_complete_when_all_done(self):
-        plan = _plan(steps=[PlanStep(id="1", description="A")])
-        plan.mark_step("1", "completed")
-        assert plan.is_complete is True
+        state = PlanState()
+        state.activate(_plan(steps=[PlanStep(id="1", description="A")]))
+        state.mark_step("1", "completed")
+        assert state.is_complete is True
 
 
 # ============================================================================
@@ -389,10 +398,10 @@ class TestPlanUpdateTool:
     @pytest.mark.asyncio
     async def test_successful_update_mutates_step_status(self):
         plan = _plan()
-        tool, _ = _plan_tool(plan)
+        tool, state = _plan_tool(plan)
         result = await tool.execute(step_id="step-1", status="completed")
         assert result.success is True
-        assert plan.steps[0].status == "completed"
+        assert state.full_update() == [("step-1", "Do it", "completed")]
 
     @pytest.mark.asyncio
     async def test_unknown_step_returns_error(self):
@@ -430,16 +439,15 @@ class TestPlanUpdateTool:
 
 class TestPlanState:
 
-    def test_take_update_returns_event_only_when_statuses_change(self):
+    def test_take_update_returns_triples_only_when_statuses_change(self):
         state = PlanState()
         state.activate(_plan())
         # Baseline snapshot matches the fresh plan — nothing to emit.
         assert state.take_update() is None
-        state.plan.mark_step("step-1", "in_progress")
+        state.mark_step("step-1", "in_progress")
         update = state.take_update()
-        assert update is not None
-        assert update.steps == [("step-1", "Do it", "in_progress")]
-        # Snapshot advanced — no further event without a new change.
+        assert update == [("step-1", "Do it", "in_progress")]
+        # Snapshot advanced — no further update without a new change.
         assert state.take_update() is None
 
     def test_take_update_returns_none_when_inactive(self):
@@ -454,29 +462,29 @@ class TestPlanState:
             PlanStep(id="step-1", description="One"),
             PlanStep(id="step-2", description="Two"),
         ]))
-        state.plan.mark_step("step-1", "completed")
+        state.mark_step("step-1", "completed")
         update = state.take_update()
-        assert update is not None
-        assert update.steps == [("step-1", "One", "completed")]
-        # Mutating the live plan afterwards must not change the event.
-        state.plan.mark_step("step-2", "in_progress")
-        assert update.steps == [("step-1", "One", "completed")]
+        assert update == [("step-1", "One", "completed")]
+        # Mutating the live statuses afterwards must not change the
+        # returned list.
+        state.mark_step("step-2", "in_progress")
+        assert update == [("step-1", "One", "completed")]
         # The next diff reports only the newly changed step.
-        assert state.take_update().steps == [("step-2", "Two", "in_progress")]
+        assert state.take_update() == [("step-2", "Two", "in_progress")]
 
     def test_full_update_carries_all_steps(self):
         state = PlanState()
         state.activate(_plan())
-        state.plan.mark_step("step-1", "completed")
-        assert state.full_update().steps == [("step-1", "Do it", "completed")]
+        state.mark_step("step-1", "completed")
+        assert state.full_update() == [("step-1", "Do it", "completed")]
 
     def test_activate_baselines_and_deactivate_clears(self):
         state = PlanState()
         state.activate(_plan())
-        state.plan.mark_step("step-1", "completed")
+        state.mark_step("step-1", "completed")
         assert state.take_update() is not None
         state.deactivate()
-        assert state.plan is None
+        assert state.is_active is False
         assert state.take_update() is None
         # Re-activating with a fresh plan re-arms detection cleanly.
         state.activate(_plan())
@@ -701,7 +709,7 @@ class TestSessionCoordinatorPlanWorkflow:
         coordinator.approve_plan()
         await self._collect(gen)
         assert coordinator._registry.get("plan_update") is None
-        assert coordinator._plan_state.plan is None
+        assert not coordinator._plan_state.is_active
 
     @pytest.mark.asyncio
     async def test_simple_execution_has_no_plan_events(self, coordinator):

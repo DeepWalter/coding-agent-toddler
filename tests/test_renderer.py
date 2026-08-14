@@ -24,7 +24,8 @@ def _plan_with_two_steps() -> Plan:
 
 
 def _triples(plan: Plan) -> list[tuple[str, str, str]]:
-    return [(s.id, s.description, s.status) for s in plan.steps]
+    """Build all-pending step triples from a Plan."""
+    return [(s.id, s.description, "pending") for s in plan.steps]
 
 
 class TestNonStreamingPlanStepUpdates:
@@ -76,8 +77,9 @@ class TestStreamingPlanStepUpdates:
     def test_full_update_seeds_step_list(self):
         renderer = self._renderer()
         plan = _plan_with_two_steps()
-        plan.steps[0].status = "completed"
-        renderer.on_plan_step_update(PlanStepUpdate(steps=_triples(plan)))
+        steps = _triples(plan)
+        steps[0] = ("step-1", "First thing", "completed")
+        renderer.on_plan_step_update(PlanStepUpdate(steps=steps))
         assert renderer._plan_steps == [
             ("step-1", "First thing", "completed"),
             ("step-2", "Second thing", "pending"),
