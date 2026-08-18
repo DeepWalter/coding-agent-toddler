@@ -227,7 +227,7 @@ class SessionCoordinator:
 
         # --- Classify ---
         self._sm.reset()
-        mode = self._sm.classify_and_transition(
+        self._sm.classify_and_transition(
             user_input, force_plan=force_plan,
         )
 
@@ -237,7 +237,7 @@ class SessionCoordinator:
             self._ctx.set_cross_conversation_context(prior_titles)
 
         # --- Plan path ---
-        if mode == AgentMode.PLAN_EXPLORING:
+        if self._sm.current_mode == AgentMode.PLAN_EXPLORING:
             # Every plan cycle starts from the safe baseline — the
             # approval UI then lets the user explicitly choose AUTO.
             self._perm_mgr.set_mode(PermissionMode.MANUAL)
@@ -250,16 +250,14 @@ class SessionCoordinator:
             if self.planner.plan is None:
                 self._sm.mark_finished()
                 return
-
-            mode_hint = "plan_executing"
-            self._sm.transition(AgentMode.PLAN_EXECUTING)
-        else:
-            mode_hint = "execute"
+            # Approved — approve_plan() already moved the state machine
+            # to PLAN_EXECUTING, so no transition is needed here.
 
         # --- Execute ---
         async for event in self._run_execution(
-            user_input, mode_hint,
-            plan_mode=mode == AgentMode.PLAN_EXPLORING,
+            user_input,
+            self._sm.get_mode_hint(),
+            plan_mode=self._sm.current_mode == AgentMode.PLAN_EXECUTING,
         ):
             yield event
         self._sm.mark_finished()

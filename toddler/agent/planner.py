@@ -426,7 +426,7 @@ class Planner:
 
             if current_mode == AgentMode.PLAN_EXPLORING:
                 async for event in self._agent_loop.run(
-                    explore_input, mode="plan_exploring",
+                    explore_input, mode=self._sm.get_mode_hint(),
                 ):
                     yield event
                 self._sm.transition(AgentMode.PLAN_PROPOSING)
