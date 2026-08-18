@@ -512,13 +512,21 @@ class Planner:
     def approve_plan(self) -> bool:
         """Approve the current plan and unblock :meth:`run`.
 
-        Returns ``True`` if the plan was successfully approved.
+        Returns ``True`` if the plan is approved (including when it was
+        already approved — a duplicate approval is a no-op, not an error).
         """
         if self._plan is None:
             logger.warning("Cannot approve: no plan is set.")
             self._sm.mark_finished()
             self._plan_decision_event.set()
             return False
+        if self._sm.current_mode == AgentMode.PLAN_EXECUTING:
+            # Already approved — a second approval must not fail the
+            # transition (PLAN_EXECUTING → PLAN_EXECUTING is invalid)
+            # and kill the turn.  Set the event (harmless if already
+            # set) so the generator resumes and executes normally.
+            self._plan_decision_event.set()
+            return True
         success = self._sm.transition(AgentMode.PLAN_EXECUTING)
         if not success:
             self._sm.mark_finished()
@@ -530,7 +538,18 @@ class Planner:
 
         When *feedback* is provided the agent will re-explore and propose
         a revised plan.  Otherwise the turn finishes.
+
+        Ignored (with a warning) when a decision has already been made —
+        the machine only waits on a decision in ``PLAN_WAITING``, so a
+        rejection arriving in any other mode is stale input and must not
+        clobber the earlier decision's state.
         """
+        if self._sm.current_mode != AgentMode.PLAN_WAITING:
+            logger.warning(
+                "Cannot reject: not waiting on a decision "
+                "(mode is %s).", self._sm.current_mode.value,
+            )
+            return
         self._plan_feedback = feedback
         self._plan = None
         if feedback:

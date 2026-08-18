@@ -715,6 +715,75 @@ class TestSessionCoordinatorPlanWorkflow:
         finished = [e for e in remaining if isinstance(e, AgentFinished)]
         assert len(finished) == 1
 
+    @pytest.mark.asyncio
+    async def test_double_approve_executes_once(self, coordinator, llm):
+        """A second approve_plan() is a no-op success — the plan is
+        already approved, so the turn still executes exactly once, with
+        plan tracking armed."""
+        gen = coordinator.process_turn("refactor the database layer")
+        async for event in gen:
+            if isinstance(event, PlanProposed):
+                break
+        assert coordinator.approve_plan() is True
+        # Approving again is idempotent — the machine is already
+        # PLAN_EXECUTING, so the call succeeds without re-transitioning.
+        assert coordinator.approve_plan() is True
+        remaining = await self._collect(gen)
+        # Exactly one execution phase ran: explore + proposal + execute.
+        assert llm.call_count == 3
+        # Execution used the plan prompt, not the raw user request.
+        # (The stored list is mutated by the loop afterwards, so scan
+        # every message in the last call rather than just the tail.)
+        last_msgs = "\n".join(m.text for m in llm.messages_history[-1])
+        assert "I have reviewed and approved" in last_msgs
+        finished = [e for e in remaining if isinstance(e, AgentFinished)]
+        assert len(finished) == 1
+
+    @pytest.mark.asyncio
+    async def test_reject_after_approve_is_ignored(self, coordinator, llm):
+        """A rejection arriving after approval is stale input — ignored,
+        so the approved plan still executes."""
+        gen = coordinator.process_turn("refactor the database layer")
+        async for event in gen:
+            if isinstance(event, PlanProposed):
+                break
+        assert coordinator.approve_plan() is True
+        coordinator.reject_plan(feedback="too late")
+        remaining = await self._collect(gen)
+        # The rejection didn't clobber the plan or the state machine.
+        assert coordinator.planner.plan is not None
+        assert llm.call_count == 3
+        finished = [e for e in remaining if isinstance(e, AgentFinished)]
+        assert len(finished) == 1
+
+    @pytest.mark.asyncio
+    async def test_double_reject_with_feedback_keeps_first_feedback(
+        self, coordinator, llm,
+    ):
+        """A second reject_plan() while a decision is pending is stale
+        input — ignored, so the FIRST feedback survives and drives the
+        re-exploration."""
+        gen = coordinator.process_turn("refactor the database layer")
+        async for event in gen:
+            if isinstance(event, PlanProposed):
+                break
+        coordinator.reject_plan(feedback="avoid sqlite")
+        coordinator.reject_plan(feedback="stale feedback")
+        second_plan = None
+        async for event in gen:
+            if isinstance(event, PlanProposed):
+                second_plan = event
+                break
+        assert second_plan is not None
+        # The feedback loop ran once: explore + propose + re-explore
+        # + re-propose.
+        assert llm.call_count == 4
+        # The re-exploration used the FIRST feedback — the stale second
+        # rejection never touched the state.
+        texts = "\n".join(m.text for m in coordinator.context.messages)
+        assert "avoid sqlite" in texts
+        assert "stale feedback" not in texts
+
     # ------------------------------------------------------------------
     # Plan execution status tracking
     # ------------------------------------------------------------------
@@ -1122,6 +1191,77 @@ class TestPlanner:
             if "Add more steps" in (m.text or "")
         ]
         assert len(feedback_msgs) == 1
+
+    @pytest.mark.asyncio
+    async def test_double_approve_is_idempotent(
+        self, settings, llm, agent_loop, ctx,
+    ):
+        """Approving an already-approved plan is a no-op success — it
+        must not fail the transition and kill the turn."""
+        planner = self._make_planner(settings, llm, ctx, agent_loop)
+        gen = planner.run("refactor the database layer")
+        async for event in gen:
+            if isinstance(event, PlanProposed):
+                break
+
+        assert planner.approve_plan() is True
+        assert planner.approve_plan() is True
+        assert planner.current_mode == AgentMode.PLAN_EXECUTING
+        assert planner.plan is not None
+        assert planner.plan.title == "Mock Plan"
+
+    @pytest.mark.asyncio
+    async def test_reject_after_approve_is_ignored(
+        self, settings, llm, agent_loop, ctx,
+    ):
+        """A rejection arriving after approval is stale input — the
+        approval stands and the plan is not cleared."""
+        planner = self._make_planner(settings, llm, ctx, agent_loop)
+        gen = planner.run("refactor the database layer")
+        async for event in gen:
+            if isinstance(event, PlanProposed):
+                break
+
+        assert planner.approve_plan() is True
+        planner.reject_plan(feedback="too late")
+        assert planner.current_mode == AgentMode.PLAN_EXECUTING
+        assert planner.plan is not None
+
+    @pytest.mark.asyncio
+    async def test_double_reject_keeps_first_feedback(
+        self, settings, llm, agent_loop, ctx,
+    ):
+        """A second reject_plan() while a decision is pending is stale
+        input — the first feedback survives and drives the
+        re-exploration."""
+        planner = self._make_planner(settings, llm, ctx, agent_loop)
+        gen = planner.run("refactor the database layer")
+        async for event in gen:
+            if isinstance(event, PlanProposed):
+                break
+
+        planner.reject_plan(feedback="avoid sqlite")
+        planner.reject_plan(feedback="stale feedback")
+        assert planner.current_mode == AgentMode.PLAN_EXPLORING
+        assert planner.plan is None
+
+        # Resume past the wait so the feedback injection runs.
+        try:
+            await gen.__anext__()
+        except StopAsyncIteration:
+            pass
+
+        # Only the FIRST feedback reached the context.
+        feedback_msgs = [
+            m for m in ctx._appended
+            if "avoid sqlite" in (m.text or "")
+        ]
+        assert len(feedback_msgs) == 1
+        stale_msgs = [
+            m for m in ctx._appended
+            if "stale feedback" in (m.text or "")
+        ]
+        assert len(stale_msgs) == 0
 
     @pytest.mark.asyncio
     async def test_plan_generation_failure(
