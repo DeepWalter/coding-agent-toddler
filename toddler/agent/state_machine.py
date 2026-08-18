@@ -283,6 +283,21 @@ class AgentStateMachine:
         """Whether ``/plan`` was used and the next message should trigger."""
         return self._plan_pending
 
+    @property
+    def is_plan_exploring(self) -> bool:
+        """Whether the machine is in the plan exploration phase."""
+        return self._mode == AgentMode.PLAN_EXPLORING
+
+    @property
+    def is_plan_executing(self) -> bool:
+        """Whether the machine is executing an approved plan."""
+        return self._mode == AgentMode.PLAN_EXECUTING
+
+    @property
+    def is_executing(self) -> bool:
+        """Whether the machine is in an execution phase — plain or plan."""
+        return self._mode in (AgentMode.EXECUTING, AgentMode.PLAN_EXECUTING)
+
     # ------------------------------------------------------------------
     # Transitions
     # ------------------------------------------------------------------

@@ -257,22 +257,37 @@ class Plan:
         return "\n".join(lines)
 
     def format_for_prompt(self) -> str:
-        """Render the plan compactly for inclusion in the system prompt.
+        """Render the full execution prompt: instructions plus the plan.
 
-        Used during ``PLAN_EXECUTING`` mode so the agent remembers the plan
-        without re-reading it from the conversation.  The text is frozen at
-        approval time; live step statuses are tracked separately at runtime
-        and never rendered here.
+        Used during ``PLAN_EXECUTING`` mode as the user message that kicks
+        off execution — it tells the agent to run the steps in order and
+        report progress via the ``plan_update`` tool, then appends the plan
+        body.  The plan body is frozen at approval time; live step statuses
+        are tracked separately at runtime and never rendered here.
         """
-        lines: list[str] = [
+        plan_lines: list[str] = [
             f"## Approved Plan: {self.title}",
             f"Summary: {self.summary}",
             "",
             "Steps:",
         ]
         for step in self.steps:
-            lines.append(f"  {step.id}: {step.description}")
-        return "\n".join(lines)
+            plan_lines.append(f"  {step.id}: {step.description}")
+        plan_text = "\n".join(plan_lines)
+
+        return (
+            "I have reviewed and approved the following plan. "
+            "Execute it step by step. Use the plan_update tool to "
+            "report progress: call plan_update(step_id=..., "
+            "status='in_progress') before starting each step, and "
+            "plan_update(step_id=..., status='completed') after "
+            "finishing it. When marking the final step completed, "
+            "call plan_update alone in its own response — do not "
+            "write any text alongside it. Once the tool result "
+            "returns, end with a brief summary of what was "
+            "accomplished, noting any deviations "
+            f"from the plan:\n\n{plan_text}"
+        )
 
 
 # ============================================================================

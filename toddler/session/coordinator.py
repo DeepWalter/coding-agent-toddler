@@ -14,7 +14,7 @@ from pathlib import Path
 from toddler.agent.events import AgentEvent, AgentFinished, PlanStepUpdate
 from toddler.agent.loop import AgentLoop
 from toddler.agent.planner import Plan, Planner
-from toddler.agent.state_machine import AgentMode, AgentStateMachine
+from toddler.agent.state_machine import AgentStateMachine
 from toddler.checkpoint import create_checkpoint_callback
 from toddler.checkpoint.manager import CheckpointManager
 from toddler.checkpoint.models import (
@@ -237,7 +237,7 @@ class SessionCoordinator:
             self._ctx.set_cross_conversation_context(prior_titles)
 
         # --- Plan path ---
-        if self._sm.current_mode == AgentMode.PLAN_EXPLORING:
+        if self._sm.is_plan_exploring:
             # Every plan cycle starts from the safe baseline — the
             # approval UI then lets the user explicitly choose AUTO.
             self._perm_mgr.set_mode(PermissionMode.MANUAL)
@@ -252,14 +252,25 @@ class SessionCoordinator:
                 return
             # Approved — approve_plan() already moved the state machine
             # to PLAN_EXECUTING, so no transition is needed here.
+            user_input = self.planner.plan.format_for_prompt()
 
         # --- Execute ---
-        async for event in self._run_execution(
-            user_input,
-            self._sm.get_mode_hint(),
-            plan_mode=self._sm.current_mode == AgentMode.PLAN_EXECUTING,
-        ):
-            yield event
+        # Run the agent only when the machine says we're executing.  A
+        # failed approval transition leaves it in FINISHED, in which case
+        # the turn simply ends (and the execution prompt above goes
+        # unused rather than being handed to an untracked run).
+        if self._sm.is_executing:
+            async for event in self._run_execution(
+                user_input,
+                self._sm.get_mode_hint(),
+                plan_mode=self._sm.is_plan_executing,
+            ):
+                yield event
+        else:
+            logger.debug(
+                "Skipping execution; state machine is in %s mode.",
+                self._sm.current_mode.value,
+            )
         self._sm.mark_finished()
 
     def set_permission_mode(self, mode: PermissionMode) -> None:
@@ -446,7 +457,7 @@ class SessionCoordinator:
         """
         try:
             if plan_mode:
-                user_input = self._activate_plan_execution(self.planner.plan)
+                self._activate_plan_execution(self.planner.plan)
 
             async for event in self._run_phase(user_input, mode_hint):
                 yield event
@@ -462,8 +473,8 @@ class SessionCoordinator:
         finally:
             self._deactivate_plan_execution()
 
-    def _activate_plan_execution(self, plan: Plan) -> str:
-        """Arm plan tracking and return the execution-phase user message.
+    def _activate_plan_execution(self, plan: Plan) -> None:
+        """Arm plan tracking.
 
         Captures *plan*'s steps in the shared :class:`PlanState` (arming
         update detection) and registers the tool so the LLM sees it only
@@ -472,20 +483,6 @@ class SessionCoordinator:
         self._plan_state.activate(plan)
         if "plan_update" not in self._registry:
             self._registry.register(PlanUpdateTool(self._plan_state))
-        plan_text = plan.format_for_prompt()
-        return (
-            "I have reviewed and approved the following plan. "
-            "Execute it step by step. Use the plan_update tool to "
-            "report progress: call plan_update(step_id=..., "
-            "status='in_progress') before starting each step, and "
-            "plan_update(step_id=..., status='completed') after "
-            "finishing it. When marking the final step completed, "
-            "call plan_update alone in its own response — do not "
-            "write any text alongside it. Once the tool result "
-            "returns, end with a brief summary of what was "
-            "accomplished, noting any deviations "
-            f"from the plan:\n\n{plan_text}"
-        )
 
     def _deactivate_plan_execution(self) -> None:
         """Tear down plan tracking after the execution phase.

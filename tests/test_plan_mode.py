@@ -317,6 +317,9 @@ class TestPlanSerialization:
         output = plan.format_for_prompt()
         assert "Execute Plan" in output
         assert "Step one" in output
+        # Execution instructions lead the prompt.
+        assert "plan_update" in output
+        assert output.startswith("I have reviewed and approved")
 
 
 # ============================================================================
