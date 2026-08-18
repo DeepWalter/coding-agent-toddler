@@ -481,8 +481,11 @@ class SessionCoordinator:
             "report progress: call plan_update(step_id=..., "
             "status='in_progress') before starting each step, and "
             "plan_update(step_id=..., status='completed') after "
-            "finishing it. When all steps are done, end with a brief "
-            "summary of what was accomplished, noting any deviations "
+            "finishing it. When marking the final step completed, "
+            "call plan_update alone in its own response — do not "
+            "write any text alongside it. Once the tool result "
+            "returns, end with a brief summary of what was "
+            "accomplished, noting any deviations "
             f"from the plan:\n\n{plan_text}"
         )
 
