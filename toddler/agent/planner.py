@@ -56,7 +56,7 @@ def _single_line(text: str) -> str:
     in the prompt and as single rows in the renderer Plan panel, so
     multi-line values from LLM-generated JSON would break both.
     """
-    return " ".join(text.split())
+    return " ".join(str(text).split())
 
 
 @dataclass
@@ -188,10 +188,7 @@ class Plan:
             summary=_single_line(data.get("summary", "")),
             steps=steps,
             rationale=_single_line(data.get("rationale", "")),
-            risks=[
-                _single_line(r) if isinstance(r, str) else r
-                for r in data.get("risks", [])
-            ],
+            risks=[_single_line(r) for r in data.get("risks", [])],
             estimated_files_touched=data.get(
                 "estimated_files_touched", len(steps),
             ),
