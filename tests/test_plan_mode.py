@@ -936,6 +936,15 @@ class TestSessionCoordinatorPlanWorkflow:
         # un-emitted completed status.
         assert len(updates) == 1
         assert [st[2] for st in updates[0].steps] == ["completed", "pending"]
+        # The flush lands BEFORE AgentFinished so streaming mode can
+        # still paint it (its Live display stops on AgentFinished).
+        finished_idx = next(
+            i for i, e in enumerate(remaining) if isinstance(e, AgentFinished)
+        )
+        update_idx = next(
+            i for i, e in enumerate(remaining) if isinstance(e, PlanStepUpdate)
+        )
+        assert update_idx < finished_idx
 
     @pytest.mark.asyncio
     async def test_plan_tracking_torn_down_after_phase(self, coordinator):

@@ -452,24 +452,36 @@ class SessionCoordinator:
         for updates — it returns the COMPLETE step list only when
         something render-worthy changed (a step starting, or all steps
         completed), holding back bare ``completed`` changes so the UI
-        never double-renders a completed + in_progress pair.  A final
-        flush emits any held-back statuses at phase end.
+        never double-renders a completed + in_progress pair.
+
+        Held-back changes are flushed before :class:`AgentFinished` —
+        streaming mode stops its Live display on that event, so any
+        PlanStepUpdate yielded after it would never be painted.
         """
         try:
             if plan_mode:
                 self._activate_plan_execution(self.planner.plan)
 
             async for event in self._run_phase(user_input, mode_hint):
+                if isinstance(event, AgentFinished):
+                    # Flush pending statuses BEFORE AgentFinished — the
+                    # renderer stops on it, so a later update would
+                    # never render in streaming mode.  take_update()
+                    # already ran after every event, so only held-back
+                    # changes (e.g. a lone completed) can remain here —
+                    # the unfiltered flush catches exactly those.  And
+                    # nothing further can change the statuses:
+                    # AgentFinished is the phase's last event.
+                    update = self._plan_state.flush_update()
+                    if update is not None:
+                        yield PlanStepUpdate(steps=update)
+                    yield event
+                    continue
+
                 yield event
                 update = self._plan_state.take_update()
                 if update is not None:
                     yield PlanStepUpdate(steps=update)
-
-            # Final emission — flush any status changes held back
-            # because no trigger fired (e.g. a lone completed mid-run).
-            update = self._plan_state.flush_update()
-            if update is not None:
-                yield PlanStepUpdate(steps=update)
         finally:
             self._deactivate_plan_execution()
 
