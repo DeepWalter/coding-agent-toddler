@@ -259,25 +259,35 @@ class CLIApp:
 
                     match result.decision:
                         case "approve_with_manual":
-                            self._coordinator.approve_plan(
+                            accepted = self._coordinator.approve_plan(
+                                plan_id=event.plan.id,
                                 permission_mode=PermissionMode.MANUAL,
                             )
-                            # Reset content for execution phase.
-                            self._renderer.start(
-                                turn_number=turn_number,
-                                output_path=output_path,
-                            )
+                            if accepted:
+                                # Reset content for execution phase.
+                                # A stale approval (ignored by the
+                                # planner) leaves the turn waiting on
+                                # the current plan's decision, so the
+                                # renderer must stay on the plan panel.
+                                self._renderer.start(
+                                    turn_number=turn_number,
+                                    output_path=output_path,
+                                )
                         case "approve_with_auto":
-                            self._coordinator.approve_plan(
+                            accepted = self._coordinator.approve_plan(
+                                plan_id=event.plan.id,
                                 permission_mode=PermissionMode.AUTO,
                             )
-                            # Reset content for execution phase.
-                            self._renderer.start(
-                                turn_number=turn_number,
-                                output_path=output_path,
-                            )
+                            if accepted:
+                                # Reset content for execution phase.
+                                # See approve_with_manual above.
+                                self._renderer.start(
+                                    turn_number=turn_number,
+                                    output_path=output_path,
+                                )
                         case "feedback":
                             self._coordinator.reject_plan(
+                                plan_id=event.plan.id,
                                 feedback=result.feedback or "",
                             )
                             if result.feedback:
@@ -288,7 +298,9 @@ class CLIApp:
                                     output_path=output_path,
                                 )
                         case "deny":
-                            self._coordinator.reject_plan()
+                            self._coordinator.reject_plan(
+                                plan_id=event.plan.id,
+                            )
                             # Renderer stays stopped (or will be
                             # stopped by AgentFinished handler).
 

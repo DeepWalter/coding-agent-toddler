@@ -711,7 +711,9 @@ class TestSessionCoordinatorPlanWorkflow:
         async for event in gen:
             if isinstance(event, PlanProposed):
                 break
-        coordinator.approve_plan()
+        coordinator.approve_plan(
+            plan_id=event.plan.id,
+        )
         remaining = await self._collect(gen)
         finished = [e for e in remaining if isinstance(e, AgentFinished)]
         assert len(finished) == 1
@@ -725,10 +727,15 @@ class TestSessionCoordinatorPlanWorkflow:
         async for event in gen:
             if isinstance(event, PlanProposed):
                 break
-        assert coordinator.approve_plan() is True
+        coordinator.approve_plan(
+            plan_id=event.plan.id,
+        )
         # Approving again is idempotent — the machine is already
-        # PLAN_EXECUTING, so the call succeeds without re-transitioning.
-        assert coordinator.approve_plan() is True
+        # PLAN_EXECUTING, so the call is a no-op that must not fail the
+        # turn.
+        coordinator.approve_plan(
+            plan_id=event.plan.id,
+        )
         remaining = await self._collect(gen)
         # Exactly one execution phase ran: explore + proposal + execute.
         assert llm.call_count == 3
@@ -748,8 +755,12 @@ class TestSessionCoordinatorPlanWorkflow:
         async for event in gen:
             if isinstance(event, PlanProposed):
                 break
-        assert coordinator.approve_plan() is True
-        coordinator.reject_plan(feedback="too late")
+        coordinator.approve_plan(
+            plan_id=event.plan.id,
+        )
+        coordinator.reject_plan(
+            plan_id=event.plan.id, feedback="too late",
+        )
         remaining = await self._collect(gen)
         # The rejection didn't clobber the plan or the state machine.
         assert coordinator.planner.plan is not None
@@ -768,8 +779,12 @@ class TestSessionCoordinatorPlanWorkflow:
         async for event in gen:
             if isinstance(event, PlanProposed):
                 break
-        coordinator.reject_plan(feedback="avoid sqlite")
-        coordinator.reject_plan(feedback="stale feedback")
+        coordinator.reject_plan(
+            plan_id=event.plan.id, feedback="avoid sqlite",
+        )
+        coordinator.reject_plan(
+            plan_id=event.plan.id, feedback="stale feedback",
+        )
         second_plan = None
         async for event in gen:
             if isinstance(event, PlanProposed):
@@ -785,6 +800,58 @@ class TestSessionCoordinatorPlanWorkflow:
         assert "avoid sqlite" in texts
         assert "stale feedback" not in texts
 
+    @pytest.mark.asyncio
+    async def test_approve_after_reject_with_feedback_is_ignored(
+        self, coordinator, llm,
+    ):
+        """An approval arriving after a feedback rejection is stale input —
+        ignored, so the machine stays in the plan workflow and re-proposes
+        instead of being clobbered into FINISHED.  A stale approval must
+        not flip the permission gating either."""
+        gen = coordinator.process_turn("refactor the database layer")
+        async for event in gen:
+            if isinstance(event, PlanProposed):
+                first_plan = event.plan
+                break
+        coordinator.reject_plan(plan_id=first_plan.id, feedback="avoid sqlite")
+        # Stale approval — must not mark the machine FINISHED, and must
+        # not switch gating to AUTO (which would auto-approve the
+        # re-exploration's tool calls).
+        assert (
+            coordinator.approve_plan(
+                plan_id=first_plan.id,
+                permission_mode=PermissionMode.AUTO,
+            )
+            is False
+        )
+        assert coordinator.permission_mode == PermissionMode.MANUAL
+        # The feedback loop still runs: explore + propose + re-explore
+        # + re-propose.  (Before the guard, the approval clobbered the
+        # machine into FINISHED and the generator ended here silently.)
+        second_plan = None
+        async for event in gen:
+            if isinstance(event, PlanProposed):
+                second_plan = event
+                break
+        assert second_plan is not None
+        assert second_plan.plan.title == "Mock Plan"
+        assert llm.call_count == 4
+        # The feedback still drove the re-exploration.
+        texts = "\n".join(m.text for m in coordinator.context.messages)
+        assert "avoid sqlite" in texts
+        # An accepted approval for the CURRENT plan flips gating as usual.
+        assert (
+            coordinator.approve_plan(
+                plan_id=second_plan.plan.id,
+                permission_mode=PermissionMode.AUTO,
+            )
+            is True
+        )
+        assert coordinator.permission_mode == PermissionMode.AUTO
+        remaining = await self._collect(gen)
+        finished = [e for e in remaining if isinstance(e, AgentFinished)]
+        assert len(finished) == 1
+
     # ------------------------------------------------------------------
     # Plan execution status tracking
     # ------------------------------------------------------------------
@@ -798,7 +865,9 @@ class TestSessionCoordinatorPlanWorkflow:
         async for event in gen:
             if isinstance(event, PlanProposed):
                 break
-        coordinator.approve_plan()
+        coordinator.approve_plan(
+            plan_id=event.plan.id,
+        )
         remaining = await self._collect(gen)
         updates = [e for e in remaining if isinstance(e, PlanStepUpdate)]
         # No initial all-pending emission — it carries no information,
@@ -827,7 +896,9 @@ class TestSessionCoordinatorPlanWorkflow:
         async for event in gen:
             if isinstance(event, PlanProposed):
                 break
-        coordinator.approve_plan()
+        coordinator.approve_plan(
+            plan_id=event.plan.id,
+        )
         remaining = await self._collect(gen)
         updates = [e for e in remaining if isinstance(e, PlanStepUpdate)]
         assert updates, "expected PlanStepUpdate events"
@@ -862,7 +933,9 @@ class TestSessionCoordinatorPlanWorkflow:
         async for event in gen:
             if isinstance(event, PlanProposed):
                 break
-        coordinator.approve_plan()
+        coordinator.approve_plan(
+            plan_id=event.plan.id,
+        )
         remaining = await self._collect(gen)
         updates = [e for e in remaining if isinstance(e, PlanStepUpdate)]
         # One emission at the step-2 start — the lone completed never
@@ -899,7 +972,9 @@ class TestSessionCoordinatorPlanWorkflow:
         async for event in gen:
             if isinstance(event, PlanProposed):
                 break
-        coordinator.approve_plan()
+        coordinator.approve_plan(
+            plan_id=event.plan.id,
+        )
         remaining = await self._collect(gen)
         updates = [e for e in remaining if isinstance(e, PlanStepUpdate)]
         statuses = [[st[2] for st in e.steps] for e in updates]
@@ -929,7 +1004,9 @@ class TestSessionCoordinatorPlanWorkflow:
         async for event in gen:
             if isinstance(event, PlanProposed):
                 break
-        coordinator.approve_plan()
+        coordinator.approve_plan(
+            plan_id=event.plan.id,
+        )
         remaining = await self._collect(gen)
         updates = [e for e in remaining if isinstance(e, PlanStepUpdate)]
         # Nothing rendered mid-run; the final emission flushes the
@@ -953,7 +1030,9 @@ class TestSessionCoordinatorPlanWorkflow:
         async for event in gen:
             if isinstance(event, PlanProposed):
                 break
-        coordinator.approve_plan()
+        coordinator.approve_plan(
+            plan_id=event.plan.id,
+        )
         await self._collect(gen)
         assert coordinator._registry.get("plan_update") is None
         assert not coordinator._plan_state.is_active
@@ -972,7 +1051,7 @@ class TestSessionCoordinatorPlanWorkflow:
         async for event in gen:
             if isinstance(event, PlanProposed):
                 break
-        coordinator.reject_plan()
+        coordinator.reject_plan(plan_id=event.plan.id)
         remaining = await self._collect(gen)
         finished = [e for e in remaining if isinstance(e, AgentFinished)]
         assert len(finished) == 1
@@ -984,7 +1063,9 @@ class TestSessionCoordinatorPlanWorkflow:
         async for event in gen:
             if isinstance(event, PlanProposed):
                 break
-        coordinator.reject_plan(feedback="Add more steps")
+        coordinator.reject_plan(
+            plan_id=event.plan.id, feedback="Add more steps",
+        )
         second_plan = None
         async for event in gen:
             if isinstance(event, PlanProposed):
@@ -1150,11 +1231,28 @@ class TestPlanner:
                 break
 
         assert planner.current_mode == AgentMode.PLAN_WAITING
-        result = planner.approve_plan()
-        assert result is True
+        planner.approve_plan(plan_id=planner.plan.id)
         assert planner.current_mode == AgentMode.PLAN_EXECUTING
         assert planner.plan is not None
         assert planner.plan.title == "Mock Plan"
+
+    @pytest.mark.asyncio
+    async def test_approve_plan_with_numeric_id_is_not_stale(
+        self, settings, llm, agent_loop, ctx,
+    ):
+        """A numeric plan id from the LLM is coerced to str — otherwise
+        ``int != str`` would treat every approval as stale input and the
+        turn would hang waiting for a decision that never takes effect."""
+        llm._plan_json["id"] = 123
+        planner = self._make_planner(settings, llm, ctx, agent_loop)
+        gen = planner.run("refactor the database layer")
+        async for event in gen:
+            if isinstance(event, PlanProposed):
+                break
+
+        assert planner.plan.id == "123"
+        assert planner.approve_plan(plan_id="123") is True
+        assert planner.current_mode == AgentMode.PLAN_EXECUTING
 
     @pytest.mark.asyncio
     async def test_reject_plan_outright(
@@ -1167,7 +1265,7 @@ class TestPlanner:
             if isinstance(event, PlanProposed):
                 break
 
-        planner.reject_plan()
+        planner.reject_plan(plan_id=planner.plan.id)
         assert planner.current_mode == AgentMode.FINISHED
         assert planner.plan is None
 
@@ -1182,7 +1280,9 @@ class TestPlanner:
             if isinstance(event, PlanProposed):
                 break
 
-        planner.reject_plan(feedback="Add more steps")
+        planner.reject_plan(
+            plan_id=planner.plan.id, feedback="Add more steps",
+        )
         assert planner.current_mode == AgentMode.PLAN_EXPLORING
         assert planner.plan is None
 
@@ -1214,11 +1314,32 @@ class TestPlanner:
             if isinstance(event, PlanProposed):
                 break
 
-        assert planner.approve_plan() is True
-        assert planner.approve_plan() is True
+        assert planner.approve_plan(plan_id=planner.plan.id) is True
+        # Second approval is stale input — ignored, not an error.
+        assert planner.approve_plan(plan_id=planner.plan.id) is False
         assert planner.current_mode == AgentMode.PLAN_EXECUTING
         assert planner.plan is not None
         assert planner.plan.title == "Mock Plan"
+
+    @pytest.mark.asyncio
+    async def test_approve_wrong_plan_is_ignored(
+        self, settings, llm, agent_loop, ctx,
+    ):
+        """An approval for a different plan is stale input — the machine
+        keeps waiting on the current plan's own decision."""
+        planner = self._make_planner(settings, llm, ctx, agent_loop)
+        gen = planner.run("refactor the database layer")
+        async for event in gen:
+            if isinstance(event, PlanProposed):
+                break
+
+        current = planner.plan
+        assert planner.approve_plan(plan_id="some-other-plan") is False
+        assert planner.current_mode == AgentMode.PLAN_WAITING
+        assert planner.plan is current
+        # The decision for the current plan still goes through.
+        assert planner.approve_plan(plan_id=current.id) is True
+        assert planner.current_mode == AgentMode.PLAN_EXECUTING
 
     @pytest.mark.asyncio
     async def test_reject_after_approve_is_ignored(
@@ -1232,8 +1353,10 @@ class TestPlanner:
             if isinstance(event, PlanProposed):
                 break
 
-        assert planner.approve_plan() is True
-        planner.reject_plan(feedback="too late")
+        planner.approve_plan(plan_id=planner.plan.id)
+        planner.reject_plan(
+            plan_id=planner.plan.id, feedback="too late",
+        )
         assert planner.current_mode == AgentMode.PLAN_EXECUTING
         assert planner.plan is not None
 
@@ -1250,8 +1373,8 @@ class TestPlanner:
             if isinstance(event, PlanProposed):
                 break
 
-        planner.reject_plan(feedback="avoid sqlite")
-        planner.reject_plan(feedback="stale feedback")
+        planner.reject_plan(plan_id=event.plan.id, feedback="avoid sqlite")
+        planner.reject_plan(plan_id=event.plan.id, feedback="stale feedback")
         assert planner.current_mode == AgentMode.PLAN_EXPLORING
         assert planner.plan is None
 
@@ -1272,6 +1395,27 @@ class TestPlanner:
             if "stale feedback" in (m.text or "")
         ]
         assert len(stale_msgs) == 0
+
+    @pytest.mark.asyncio
+    async def test_reject_wrong_plan_is_ignored(
+        self, settings, llm, agent_loop, ctx,
+    ):
+        """A rejection for a different plan is stale input — the machine
+        keeps waiting on the current plan's own decision."""
+        planner = self._make_planner(settings, llm, ctx, agent_loop)
+        gen = planner.run("refactor the database layer")
+        async for event in gen:
+            if isinstance(event, PlanProposed):
+                break
+
+        current = planner.plan
+        planner.reject_plan(plan_id="some-other-plan", feedback="stale")
+        assert planner.current_mode == AgentMode.PLAN_WAITING
+        assert planner.plan is current
+        # The decision for the current plan still goes through.
+        planner.reject_plan(plan_id=current.id, feedback="real feedback")
+        assert planner.current_mode == AgentMode.PLAN_EXPLORING
+        assert planner.plan is None
 
     @pytest.mark.asyncio
     async def test_plan_generation_failure(

@@ -280,27 +280,33 @@ class SessionCoordinator:
         self._perm_mgr.set_mode(mode)
 
     def approve_plan(
-        self, *, permission_mode: PermissionMode | None = None,
+        self, *, plan_id: str,
+        permission_mode: PermissionMode | None = None,
     ) -> bool:
-        """Approve the current plan and unblock :meth:`process_turn`.
+        """Approve the plan with *plan_id* and unblock :meth:`process_turn`.
 
-        When *permission_mode* is given, the gating mode is switched to it
-        before execution begins (e.g. "approve with auto accept").
+        Returns ``True`` only when the approval took effect.  When
+        *permission_mode* is given, the gating mode is switched to it only
+        for an accepted approval, just before execution begins (e.g.
+        "approve with auto accept") — a stale approval must not flip
+        gating, since that would auto-approve the re-exploration's tool
+        calls.
         """
-        if permission_mode is not None:
+        if self._planner is None:
+            return False
+        accepted = self._planner.approve_plan(plan_id=plan_id)
+        if accepted and permission_mode is not None:
             self.set_permission_mode(permission_mode)
-        if self._planner is not None:
-            return self._planner.approve_plan()
-        return False
+        return accepted
 
-    def reject_plan(self, *, feedback: str = "") -> None:
-        """Reject the current plan and unblock :meth:`process_turn`.
+    def reject_plan(self, *, plan_id: str, feedback: str = "") -> None:
+        """Reject the plan with *plan_id* and unblock :meth:`process_turn`.
 
         When *feedback* is provided the agent will re-explore and propose
         a revised plan.  Otherwise the turn finishes.
         """
         if self._planner is not None:
-            self._planner.reject_plan(feedback=feedback)
+            self._planner.reject_plan(plan_id=plan_id, feedback=feedback)
 
     # ------------------------------------------------------------------
     # Internal helpers

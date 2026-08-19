@@ -183,7 +183,10 @@ class Plan:
         steps = [PlanStep.from_dict(s) for s in steps_data]
 
         return cls(
-            id=data.get("id", uuid.uuid4().hex),
+            # Coerce to str — a numeric id from the LLM would otherwise
+            # never match the string plan_id passed to approve/reject
+            # (int != str), making every decision stale input.
+            id=str(data.get("id") or uuid.uuid4().hex),
             title=_single_line(data.get("title", "Untitled Plan")),
             summary=_single_line(data.get("summary", "")),
             steps=steps,
@@ -506,46 +509,82 @@ class Planner:
                 )
                 return
 
-    def approve_plan(self) -> bool:
-        """Approve the current plan and unblock :meth:`run`.
+    def approve_plan(self, *, plan_id: str) -> bool:
+        """Approve the plan with *plan_id* and unblock :meth:`run`.
 
-        Returns ``True`` if the plan is approved (including when it was
-        already approved — a duplicate approval is a no-op, not an error).
+        Returns ``True`` when the approval took effect (the machine moved
+        to ``PLAN_EXECUTING``).  Returns ``False`` when the call was
+        ignored as stale input: the machine is not waiting on a decision
+        (e.g. a duplicate approval or an approval arriving after a
+        rejection), or *plan_id* is not the plan currently awaiting a
+        decision.  Stale input must not clobber the state — the machine
+        keeps waiting for the current plan's own decision.
         """
+        if self._sm.current_mode != AgentMode.PLAN_WAITING:
+            logger.warning(
+                "Cannot approve: not waiting on a decision "
+                "(mode is %s).", self._sm.current_mode.value,
+            )
+            return False
+        if self._plan is not None and self._plan.id != plan_id:
+            # Stale — an approval meant for a previous proposal.  The
+            # event is deliberately NOT set: the machine keeps waiting
+            # for the current plan's own decision.
+            logger.warning(
+                "Cannot approve: plan %s is not the current plan.",
+                plan_id,
+            )
+            return False
         if self._plan is None:
+            # Invariant fallback: PLAN_WAITING is normally entered with
+            # a plan set, so this only fires if a reject transition
+            # failed earlier (mode stayed PLAN_WAITING with the plan
+            # cleared).  No plan exists to approve, so end the turn
+            # rather than leave run() blocked forever on the decision
+            # event.
             logger.warning("Cannot approve: no plan is set.")
             self._sm.mark_finished()
             self._plan_decision_event.set()
             return False
-        if self._sm.current_mode == AgentMode.PLAN_EXECUTING:
-            # Already approved — a second approval must not fail the
-            # transition (PLAN_EXECUTING → PLAN_EXECUTING is invalid)
-            # and kill the turn.  Set the event (harmless if already
-            # set) so the generator resumes and executes normally.
-            self._plan_decision_event.set()
-            return True
         success = self._sm.transition(AgentMode.PLAN_EXECUTING)
         if not success:
             self._sm.mark_finished()
         self._plan_decision_event.set()
         return success
 
-    def reject_plan(self, *, feedback: str = "") -> None:
-        """Reject the current plan and unblock :meth:`run`.
+    def reject_plan(self, *, plan_id: str, feedback: str = "") -> None:
+        """Reject the plan with *plan_id* and unblock :meth:`run`.
 
         When *feedback* is provided the agent will re-explore and propose
         a revised plan.  Otherwise the turn finishes.
 
-        Ignored (with a warning) when a decision has already been made —
-        the machine only waits on a decision in ``PLAN_WAITING``, so a
-        rejection arriving in any other mode is stale input and must not
-        clobber the earlier decision's state.
+        Ignored (with a warning) when the machine is not waiting on a
+        decision, or when *plan_id* is not the plan currently awaiting a
+        decision — stale input must not clobber the earlier decision's
+        state or kill the pending proposal.
         """
         if self._sm.current_mode != AgentMode.PLAN_WAITING:
             logger.warning(
                 "Cannot reject: not waiting on a decision "
                 "(mode is %s).", self._sm.current_mode.value,
             )
+            return
+        if self._plan is not None and self._plan.id != plan_id:
+            # Stale — a rejection meant for a previous proposal.  The
+            # event is deliberately NOT set: the machine keeps waiting
+            # for the current plan's own decision.
+            logger.warning(
+                "Cannot reject: plan %s is not the current plan.",
+                plan_id,
+            )
+            return
+        if self._plan is None:
+            # Invariant fallback, mirroring approve_plan(): no plan
+            # exists to reject, so end the turn rather than leave run()
+            # blocked forever on the decision event.
+            logger.warning("Cannot reject: no plan is set.")
+            self._sm.mark_finished()
+            self._plan_decision_event.set()
             return
         self._plan_feedback = feedback
         self._plan = None
