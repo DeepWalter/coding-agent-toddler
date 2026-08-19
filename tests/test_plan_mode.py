@@ -26,6 +26,7 @@ from toddler.agent.state_machine import (
     AgentStateMachine,
     classify_complexity,
 )
+from toddler.cli.renderer import ConfirmResult
 from toddler.llm import ContentBlock, LLMResponse, Message, TokenUsage
 from toddler.llm.base import BaseLLMProvider
 from toddler.tools.base import Permission, PermissionMode
@@ -1353,3 +1354,138 @@ class TestPermissionMode:
 
     # Coordinator-level tests for plan-entry reset are in
     # TestSessionCoordinatorPlanWorkflow below.
+
+
+# ============================================================================
+# CLIApp plan-approval handler
+# ============================================================================
+
+
+class _ScriptedRenderer:
+    """No-op renderer whose confirm() returns scripted decisions.
+
+    Only confirm() is awaited by the CLI handler; every other renderer
+    call is recorded as a no-op so tests can assert dispatch order.
+    """
+
+    def __init__(self, decisions: list[ConfirmResult]) -> None:
+        self._decisions = list(decisions)
+        self.calls: list[str] = []
+
+    async def confirm(
+        self, prompt: str, choices: list[str], *, allow_feedback: bool = False,
+    ) -> ConfirmResult:
+        self.calls.append("confirm")
+        if self._decisions:
+            return self._decisions.pop(0)
+        return ConfirmResult(decision="deny")
+
+    def __getattr__(self, name):
+        def _record(*args, **kwargs):
+            self.calls.append(name)
+
+        return _record
+
+
+class TestCLIAppPlanApproval:
+    """Drive the CLI's PlanProposed handler end-to-end with a real
+    coordinator.
+
+    Regression coverage for the sync approve_plan() / reject_plan()
+    coordinator calls: awaiting them raises TypeError (``bool``/``None``
+    are not awaitable) and crashes the turn, so each decision branch
+    must complete without error.
+    """
+
+    @pytest.fixture
+    def settings(self):
+        from toddler.config.settings import Settings
+        return Settings(streaming_enabled=False)
+
+    @pytest.fixture
+    def storage_mgr(self, tmp_path):
+        from toddler.session.database import SQLiteDatabase
+        from toddler.session.storage import StorageManager
+
+        db_path = tmp_path / "test_plan.db"
+        db = SQLiteDatabase(db_path)
+        db.open()
+        return StorageManager(db)
+
+    @pytest.fixture
+    def llm(self):
+        return MockPlanLLMProvider()
+
+    @pytest.fixture
+    async def coordinator(self, settings, storage_mgr, llm):
+        from toddler.session.coordinator import SessionCoordinator
+
+        coord = SessionCoordinator(
+            settings=settings,
+            storage_manager=storage_mgr,
+            llm=llm,
+        )
+        await coord.resolve()
+        return coord
+
+    @pytest.fixture
+    def cli(self, settings, coordinator):
+        """CLIApp wired to the real coordinator (renderer swapped later)."""
+        from toddler.cli.app import CLIApp
+
+        return CLIApp(settings=settings, session=coordinator)
+
+    async def _run_plan_turn(self, cli, *decisions) -> _ScriptedRenderer:
+        """Run a plan-mode turn, answering the approval prompt with
+        *decisions* in order."""
+        renderer = _ScriptedRenderer(list(decisions))
+        cli._renderer = renderer
+        await cli._run_agent_turn("refactor the database layer")
+        return renderer
+
+    @pytest.mark.asyncio
+    async def test_approve_with_manual_executes(self, cli, coordinator):
+        """approve_with_manual approves the plan and runs execution."""
+        renderer = await self._run_plan_turn(
+            cli, ConfirmResult(decision="approve_with_manual"),
+        )
+
+        assert coordinator.planner.plan is not None
+        assert coordinator.permission_mode == PermissionMode.MANUAL
+        assert renderer.calls.count("confirm") == 1
+        assert "on_agent_finished" in renderer.calls
+
+    @pytest.mark.asyncio
+    async def test_approve_with_auto_switches_gating(self, cli, coordinator):
+        """approve_with_auto approves the plan and switches gating to AUTO."""
+        renderer = await self._run_plan_turn(
+            cli, ConfirmResult(decision="approve_with_auto"),
+        )
+
+        assert coordinator.planner.plan is not None
+        assert coordinator.permission_mode == PermissionMode.AUTO
+        assert "on_agent_finished" in renderer.calls
+
+    @pytest.mark.asyncio
+    async def test_deny_finishes_turn(self, cli, coordinator):
+        """deny rejects the plan outright and ends the turn."""
+        renderer = await self._run_plan_turn(
+            cli, ConfirmResult(decision="deny"),
+        )
+
+        assert coordinator.planner.plan is None
+        assert "on_agent_finished" in renderer.calls
+
+    @pytest.mark.asyncio
+    async def test_feedback_reproposes_then_approves(self, cli, coordinator):
+        """feedback re-enters the explore loop and re-proposes a plan,
+        which is then approved — confirm() is asked twice."""
+        renderer = await self._run_plan_turn(
+            cli,
+            ConfirmResult(decision="feedback", feedback="avoid sqlite"),
+            ConfirmResult(decision="approve_with_manual"),
+        )
+
+        assert renderer.calls.count("confirm") == 2
+        assert coordinator.planner.plan is not None
+        assert "on_agent_finished" in renderer.calls

@@ -217,9 +217,9 @@ class CLIApp:
                         choices=event.choices or ["approve", "deny"],
                     )
                     if result.decision == "approve":
-                        await self._coordinator.agent.approve_tool_call()
+                        self._coordinator.agent.approve_tool_call()
                     else:
-                        await self._coordinator.agent.deny_tool_call()
+                        self._coordinator.agent.deny_tool_call()
 
                 case AgentFinished():
                     self._renderer.stop()
@@ -259,7 +259,7 @@ class CLIApp:
 
                     match result.decision:
                         case "approve_with_manual":
-                            await self._coordinator.approve_plan(
+                            self._coordinator.approve_plan(
                                 permission_mode=PermissionMode.MANUAL,
                             )
                             # Reset content for execution phase.
@@ -268,7 +268,7 @@ class CLIApp:
                                 output_path=output_path,
                             )
                         case "approve_with_auto":
-                            await self._coordinator.approve_plan(
+                            self._coordinator.approve_plan(
                                 permission_mode=PermissionMode.AUTO,
                             )
                             # Reset content for execution phase.
@@ -277,7 +277,7 @@ class CLIApp:
                                 output_path=output_path,
                             )
                         case "feedback":
-                            await self._coordinator.reject_plan(
+                            self._coordinator.reject_plan(
                                 feedback=result.feedback or "",
                             )
                             if result.feedback:
@@ -288,7 +288,7 @@ class CLIApp:
                                     output_path=output_path,
                                 )
                         case "deny":
-                            await self._coordinator.reject_plan()
+                            self._coordinator.reject_plan()
                             # Renderer stays stopped (or will be
                             # stopped by AgentFinished handler).
 

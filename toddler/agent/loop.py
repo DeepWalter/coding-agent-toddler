@@ -278,12 +278,12 @@ class AgentLoop:
     # Confirmation API  (called by external code, e.g. the CLI layer)
     # ==================================================================
 
-    async def approve_tool_call(self, tool_id: str = "") -> None:  # noqa: ARG002
+    def approve_tool_call(self, tool_id: str = "") -> None:  # noqa: ARG002
         """Approve the pending tool confirmation and unblock the loop."""
         self._approval_granted = True
         self._signal_approval()
 
-    async def deny_tool_call(self, tool_id: str = "") -> None:  # noqa: ARG002
+    def deny_tool_call(self, tool_id: str = "") -> None:  # noqa: ARG002
         """Deny the pending tool confirmation and unblock the loop."""
         self._approval_granted = False
         self._signal_approval()

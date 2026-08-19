@@ -23,9 +23,21 @@ from toddler.agent.events import (
 from toddler.agent.loop import AgentLoop
 from toddler.config.settings import Settings
 from toddler.context.manager import ContextManager
+from toddler.llm import (
+    ContentBlock,
+    LLMResponse,
+    Message,
+    StreamEvent,
+    TokenUsage,
+)
 from toddler.llm.base import BaseLLMProvider
-from toddler.llm import ContentBlock, LLMResponse, Message, StreamEvent, TokenUsage
-from toddler.tools.base import BaseTool, Permission, PermissionManager, PermissionMode, ToolResult
+from toddler.tools.base import (
+    BaseTool,
+    Permission,
+    PermissionManager,
+    PermissionMode,
+    ToolResult,
+)
 from toddler.tools.executor import ToolExecutor
 from toddler.tools.registry import ToolRegistry
 
@@ -514,7 +526,7 @@ class TestPermissionGating:
             events.append(event)
             if isinstance(event, AgentPaused):
                 # External code approves
-                await loop.approve_tool_call()
+                loop.approve_tool_call()
 
         paused = [e for e in events if isinstance(e, AgentPaused)]
         assert len(paused) == 1
@@ -549,7 +561,7 @@ class TestPermissionGating:
         async for event in gen:
             events.append(event)
             if isinstance(event, AgentPaused):
-                await loop.deny_tool_call()
+                loop.deny_tool_call()
 
         ends = [e for e in events if isinstance(e, ToolCallEnd)]
         assert len(ends) == 1
@@ -613,7 +625,7 @@ class TestPermissionMode:
         async for event in gen:
             events.append(event)
             if isinstance(event, AgentPaused):
-                await loop.approve_tool_call()
+                loop.approve_tool_call()
 
         paused = [e for e in events if isinstance(e, AgentPaused)]
         assert len(paused) == 0  # WRITE auto-approved in AUTO mode
@@ -650,7 +662,7 @@ class TestPermissionMode:
         async for event in gen:
             events.append(event)
             if isinstance(event, AgentPaused):
-                await loop.approve_tool_call()
+                loop.approve_tool_call()
 
         paused = [e for e in events if isinstance(e, AgentPaused)]
         assert len(paused) == 1
@@ -684,7 +696,7 @@ class TestPermissionMode:
         async for event in gen:
             events.append(event)
             if isinstance(event, AgentPaused):
-                await loop.approve_tool_call()
+                loop.approve_tool_call()
 
         paused = [e for e in events if isinstance(e, AgentPaused)]
         assert len(paused) == 1  # WRITE still pauses in MANUAL mode
@@ -718,7 +730,7 @@ class TestPermissionMode:
         async for event in gen:
             events.append(event)
             if isinstance(event, AgentPaused):
-                await loop.approve_tool_call()
+                loop.approve_tool_call()
 
         paused = [e for e in events if isinstance(e, AgentPaused)]
         assert len(paused) == 1  # WRITE pauses (MANUAL default)
