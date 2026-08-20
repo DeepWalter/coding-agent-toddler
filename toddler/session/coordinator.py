@@ -11,7 +11,12 @@ import logging
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-from toddler.agent.events import AgentEvent, AgentFinished, PlanStepUpdate
+from toddler.agent.events import (
+    AgentEvent,
+    AgentFinished,
+    FatalAgentError,
+    PlanStepUpdate,
+)
 from toddler.agent.loop import AgentLoop
 from toddler.agent.planner import Plan, Planner
 from toddler.agent.state_machine import AgentStateMachine
@@ -203,7 +208,7 @@ class SessionCoordinator:
     # Turn execution
     # ==================================================================
 
-    async def process_turn(
+    async def process_turn(  # noqa: C901
         self,
         user_input: str,
         *,
@@ -216,7 +221,11 @@ class SessionCoordinator:
         complex ones are delegated to :class:`~toddler.agent.planner.Planner`
         for the plan loop (explore → propose → wait), then executed.
 
-        Yields :class:`AgentEvent` objects for the CLI to render.
+        Yields :class:`AgentEvent` objects for the CLI to render.  A plan
+        turn always ends with a terminal event (:class:`AgentFinished` or
+        :class:`FatalAgentError`) — the CLI stops the streaming renderer
+        on those, so ending otherwise would strand the terminal in the
+        alternate screen.
         """
         # --- Conversation-start checkpoint (first turn only) ---
         self._create_conversation_start_checkpoint()
@@ -237,28 +246,50 @@ class SessionCoordinator:
             self._ctx.set_cross_conversation_context(prior_titles)
 
         # --- Plan path ---
+        # Track whether the plan loop emitted a terminal event.  The CLI
+        # stops the streaming renderer (exiting the alt screen) only on
+        # AgentFinished / FatalAgentError, so a plan turn must never
+        # end without one.
+        terminal_event_seen = False
         if self._sm.is_plan_exploring:
             # Every plan cycle starts from the safe baseline — the
             # approval UI then lets the user explicitly choose AUTO.
             self._perm_mgr.set_mode(PermissionMode.MANUAL)
 
             async for event in self.planner.run(user_input):
+                if isinstance(event, (AgentFinished, FatalAgentError)):
+                    terminal_event_seen = True
                 if isinstance(event, AgentFinished):
                     await self._maybe_persist_phase(event)
                 yield event
 
             if self.planner.plan is None:
                 self._sm.mark_finished()
+                if not terminal_event_seen:
+                    # The plan loop ended without a terminal event
+                    # (e.g. an external caller moved the machine to
+                    # FINISHED mid-cycle).  Emit one so the CLI stops
+                    # the streaming renderer — the plan panel (if any)
+                    # re-entered the alt screen, and only a terminal
+                    # event tears it down.
+                    event = AgentFinished(
+                        reason="Plan cycle ended without a decision.",
+                        usage=None,
+                    )
+                    await self._maybe_persist_phase(event)
+                    yield event
                 return
+
             # Approved — approve_plan() already moved the state machine
             # to PLAN_EXECUTING, so no transition is needed here.
             user_input = self.planner.plan.format_for_prompt()
 
         # --- Execute ---
         # Run the agent only when the machine says we're executing.  A
-        # failed approval transition leaves it in FINISHED, in which case
-        # the turn simply ends (and the execution prompt above goes
-        # unused rather than being handed to an untracked run).
+        # failed approval transition leaves it in FINISHED — the turn
+        # then ends with a terminal event (when the plan loop didn't
+        # already emit one) rather than leaving the streaming renderer
+        # parked in the alt screen it re-entered for the plan panel.
         if self._sm.is_executing:
             async for event in self._run_execution(
                 user_input,
@@ -266,11 +297,17 @@ class SessionCoordinator:
                 plan_mode=self._sm.is_plan_executing,
             ):
                 yield event
-        else:
+        elif not terminal_event_seen:
             logger.debug(
                 "Skipping execution; state machine is in %s mode.",
                 self._sm.current_mode.value,
             )
+            event = AgentFinished(
+                reason="Plan did not proceed to execution.",
+                usage=None,
+            )
+            await self._maybe_persist_phase(event)
+            yield event
         self._sm.mark_finished()
 
     def set_permission_mode(self, mode: PermissionMode) -> None:

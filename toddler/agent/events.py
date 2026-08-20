@@ -114,7 +114,31 @@ class AgentFinished(AgentEvent):
 
 @dataclass
 class AgentError(AgentEvent):
-    """A recoverable error occurred during execution."""
+    """Base for errors yielded during a turn — do not instantiate directly.
+
+    The recoverable/fatal distinction is a type-level contract, not a
+    property: consumers stop the streaming renderer (exiting the
+    alternate screen) only on :class:`FatalAgentError`, while a
+    :class:`RecoverableAgentError` keeps the turn running.  Use the
+    concrete subclasses.
+    """
+
+    def __init__(self) -> None:
+        raise NotImplementedError(
+            "AgentError is abstract; use RecoverableAgentError or "
+            "FatalAgentError",
+        )
+
+
+@dataclass
+class RecoverableAgentError(AgentError):
+    """An error the turn can continue past (e.g. a failed LLM call)."""
 
     message: str
-    recoverable: bool = True
+
+
+@dataclass
+class FatalAgentError(AgentError):
+    """An error that ends the turn (e.g. unparseable plan output)."""
+
+    message: str

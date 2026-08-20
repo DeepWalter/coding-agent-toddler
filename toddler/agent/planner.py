@@ -24,9 +24,9 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from toddler.agent.events import (
-    AgentError,
     AgentEvent,
     AgentFinished,
+    FatalAgentError,
     PlanProposed,
 )
 from toddler.agent.state_machine import AgentMode, AgentStateMachine
@@ -451,13 +451,12 @@ class Planner:
                 plan = await self._generate_plan(original_request)
                 if plan is None:
                     self._sm.mark_finished()
-                    yield AgentError(
+                    yield FatalAgentError(
                         message=(
                             "Failed to generate a valid plan. "
                             "The LLM did not produce parseable JSON. "
                             "Try rephrasing your request."
                         ),
-                        recoverable=False,
                     )
                     return
                 self._set_plan(plan)

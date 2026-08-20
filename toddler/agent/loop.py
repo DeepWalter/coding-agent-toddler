@@ -20,10 +20,10 @@ from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 
 from toddler.agent.events import (
-    AgentError,
     AgentEvent,
     AgentFinished,
     AgentPaused,
+    RecoverableAgentError,
     ToolCallEnd,
     ToolCallStart,
 )
@@ -321,7 +321,7 @@ class AgentLoop:
             llm_result.update(handler.get_final_result())
         except Exception as exc:
             logger.exception("LLM call failed")
-            yield AgentError(message=str(exc), recoverable=True)
+            yield RecoverableAgentError(message=str(exc))
             llm_result["assistant_msg"] = None
             llm_result["stop_reason"] = f"LLM error: {exc}"
             llm_result["usage"] = TokenUsage()

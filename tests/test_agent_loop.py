@@ -16,6 +16,7 @@ from toddler.agent.events import (
     AgentError,
     AgentFinished,
     AgentPaused,
+    RecoverableAgentError,
     TextDelta,
     ToolCallEnd,
     ToolCallStart,
@@ -475,7 +476,7 @@ class TestErrorRecovery:
         assert "Unknown tool" in ends[0].result.error
 
     async def test_llm_call_error(self, registry, executor, settings, conv_ctx):
-        """When the LLM call itself raises, AgentError + AgentFinished are yielded."""
+        """When the LLM call itself raises, RecoverableAgentError + AgentFinished are yielded."""
 
         class FailingLLM(MockLLMProvider):
             async def generate(self, messages, tools, *, max_tokens=4096, temperature=0.0, stream=True):
@@ -489,7 +490,7 @@ class TestErrorRecovery:
 
         assert len(errors) == 1
         assert "API connection lost" in errors[0].message
-        assert errors[0].recoverable is True
+        assert isinstance(errors[0], RecoverableAgentError)
         assert len(finishes) == 1
 
 

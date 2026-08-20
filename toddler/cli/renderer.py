@@ -38,8 +38,10 @@ from toddler.agent.events import (
     AgentError,
     AgentFinished,
     AgentPaused,
+    FatalAgentError,
     PlanProposed,
     PlanStepUpdate,
+    RecoverableAgentError,
     TextDelta,
     ToolCallDelta,
     ToolCallEnd,
@@ -338,7 +340,11 @@ class Renderer(ABC):
 
     def on_agent_error(self, event: AgentError) -> None:
         """Render a recoverable or fatal error."""
-        label = "Recoverable" if event.recoverable else "Fatal"
+        label = (
+            "Recoverable"
+            if isinstance(event, RecoverableAgentError)
+            else "Fatal"
+        )
         self._console.print(
             Text(f"⚠ [{label}] {event.message}", style=_TOOL_ERROR)
         )
@@ -934,9 +940,13 @@ class StreamingRenderer(Renderer):
         base implementation (the caller is expected to have called
         :meth:`pause` first to exit the alternate screen).
         """
-        label = "Recoverable" if event.recoverable else "Fatal"
+        label = (
+            "Recoverable"
+            if isinstance(event, RecoverableAgentError)
+            else "Fatal"
+        )
         self._errors.append(f"⚠ [{label}] {event.message}")
-        if not event.recoverable:
+        if isinstance(event, FatalAgentError):
             super().on_agent_error(event)
 
     # ------------------------------------------------------------------

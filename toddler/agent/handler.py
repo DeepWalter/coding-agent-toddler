@@ -19,8 +19,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from toddler.agent.events import (
-    AgentError,
     AgentEvent,
+    RecoverableAgentError,
     TextDelta,
     ToolCallDelta,
     ToolCallStart,
@@ -237,9 +237,7 @@ class StreamHandler(BaseHandler):
                     error_msg = event.data.get(
                         "message", "Unknown streaming error"
                     )
-                    yield AgentError(
-                        message=error_msg, recoverable=True,
-                    )
+                    yield RecoverableAgentError(message=error_msg)
 
                 case "message_start":
                     pass  # No-op — stream lifecycle tracking if needed later.

@@ -15,6 +15,7 @@ from toddler.agent.events import (
     AgentFinished,
     PlanProposed,
     PlanStepUpdate,
+    RecoverableAgentError,
 )
 from toddler.agent.planner import (
     Plan,
@@ -59,6 +60,43 @@ def _two_step_plan_json() -> dict:
             {"id": "step-2", "description": "Second thing"},
         ],
     }
+
+
+class _SilentPlanner:
+    """Planner stub whose plan loop ends without a terminal event.
+
+    Models the abnormal ends the coordinator defends against (a failed
+    approval transition leaving the machine non-executing, or an
+    external caller finishing the machine mid-cycle): ``run`` returns,
+    but no :class:`AgentFinished` or :class:`FatalAgentError` was
+    emitted.  Used to pin the guarantee that a plan turn always ends
+    with a terminal event — the CLI stops the streaming renderer only
+    on those, and the plan panel re-enters the alternate screen.
+    """
+
+    def __init__(
+        self, plan: Plan | None, *,
+        emit_proposal: bool = False,
+        emit_recoverable_error: bool = False,
+    ):
+        self._plan = plan
+        self._emit_proposal = emit_proposal
+        self._emit_recoverable_error = emit_recoverable_error
+
+    @property
+    def plan(self) -> Plan | None:
+        return self._plan
+
+    async def run(self, user_input: str):
+        # A recoverable error is NOT a terminal event — the CLI keeps
+        # the streaming renderer running on those (it only tears the
+        # alt screen down on AgentFinished / FatalAgentError).
+        if self._emit_recoverable_error:
+            yield RecoverableAgentError(
+                message="Simulated LLM hiccup.",
+            )
+        if self._emit_proposal:
+            yield PlanProposed(plan=self._plan)
 
 
 def _end_turn_response(text: str = "Research complete.") -> LLMResponse:
@@ -851,6 +889,78 @@ class TestSessionCoordinatorPlanWorkflow:
         remaining = await self._collect(gen)
         finished = [e for e in remaining if isinstance(e, AgentFinished)]
         assert len(finished) == 1
+
+    @pytest.mark.asyncio
+    async def test_plan_proposed_but_not_executing_still_finishes(
+        self, coordinator,
+    ):
+        """A plan turn that never executes (failed approval transition
+        leaves the machine non-executing) must still end with a terminal
+        event.  The plan panel re-enters the streaming renderer's alt
+        screen, and only AgentFinished stops it."""
+        plan = _plan(
+            title="Stale Plan",
+            steps=[PlanStep(id="step-1", description="Do it")],
+        )
+        # The plan loop ends with a PlanProposed but no terminal event,
+        # and the machine is left in a non-executing mode — the
+        # is_executing gate then skips the execution phase.
+        coordinator._planner = _SilentPlanner(
+            plan, emit_proposal=True,
+        )
+
+        events = await self._collect(
+            coordinator.process_turn("refactor the database layer"),
+        )
+        finished = [e for e in events if isinstance(e, AgentFinished)]
+        assert len(finished) == 1
+        assert finished[0].reason == "Plan did not proceed to execution."
+
+    @pytest.mark.asyncio
+    async def test_plan_loop_silent_finish_ends_with_terminal(
+        self, coordinator,
+    ):
+        """A plan loop that returns without a plan AND without a
+        terminal event (e.g. an external caller finished the machine
+        mid-cycle) must still yield AgentFinished — the coordinator
+        guarantees every plan turn ends with a terminal event."""
+        coordinator._planner = _SilentPlanner(None)
+
+        events = await self._collect(
+            coordinator.process_turn("refactor the database layer"),
+        )
+        finished = [e for e in events if isinstance(e, AgentFinished)]
+        assert len(finished) == 1
+        assert finished[0].reason == "Plan cycle ended without a decision."
+
+    @pytest.mark.asyncio
+    async def test_recoverable_error_before_silent_end_still_finishes(
+        self, coordinator,
+    ):
+        """A recoverable error during exploration must NOT satisfy the
+        terminal-event guarantee — the CLI keeps the streaming renderer
+        running on :class:`RecoverableAgentError` (it tears the alt
+        screen down only on AgentFinished / FatalAgentError), so the
+        coordinator's fallback :class:`AgentFinished` must still fire
+        when the plan loop ends silently after one."""
+        plan = _plan(
+            title="Stale Plan",
+            steps=[PlanStep(id="step-1", description="Do it")],
+        )
+        coordinator._planner = _SilentPlanner(
+            plan, emit_proposal=True, emit_recoverable_error=True,
+        )
+
+        events = await self._collect(
+            coordinator.process_turn("refactor the database layer"),
+        )
+        errors = [
+            e for e in events if isinstance(e, RecoverableAgentError)
+        ]
+        assert len(errors) == 1
+        finished = [e for e in events if isinstance(e, AgentFinished)]
+        assert len(finished) == 1
+        assert finished[0].reason == "Plan did not proceed to execution."
 
     # ------------------------------------------------------------------
     # Plan execution status tracking

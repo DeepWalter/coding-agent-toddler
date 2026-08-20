@@ -20,6 +20,12 @@ flushed.
 
 - [toddler/session/coordinator.py:262](toddler/session/coordinator.py#L262) — the `is_executing` gate removed the old unconditional `_run_phase` backstop.
 - Fix: always yield a terminal event (or stop/flush the renderer) when the gate skips execution.
+- **Fixed**: `process_turn` now tracks whether the plan loop emitted a
+  terminal event and always ends a plan turn with one — the gate's skip
+  path (and a plan loop that returns without a terminal event) yields
+  `AgentFinished` instead of a bare debug log, so the streaming renderer
+  is stopped and flushed on the first terminal event rather than stranding
+  the terminal in the alt screen.  Regression tests pin both exits.
 
 ### Non-streaming mode reprints the full step list on every update
 
