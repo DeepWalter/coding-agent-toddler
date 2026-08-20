@@ -123,7 +123,9 @@ class AgentError(AgentEvent):
     concrete subclasses.
     """
 
-    def __init__(self) -> None:
+    message: str
+
+    def __init__(self, message: str) -> None:
         raise NotImplementedError(
             "AgentError is abstract; use RecoverableAgentError or "
             "FatalAgentError",
@@ -133,12 +135,9 @@ class AgentError(AgentEvent):
 @dataclass
 class RecoverableAgentError(AgentError):
     """An error the turn can continue past (e.g. a failed LLM call)."""
-
-    message: str
-
+    pass
 
 @dataclass
 class FatalAgentError(AgentError):
     """An error that ends the turn (e.g. unparseable plan output)."""
-
-    message: str
+    pass
