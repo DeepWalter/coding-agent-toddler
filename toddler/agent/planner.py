@@ -384,8 +384,7 @@ class Planner:
     agent_loop:
         The :class:`AgentLoop` instance used for exploration phases.
     state_machine:
-        Optional :class:`AgentStateMachine`.  When *None*, a default
-        instance is created.
+        The :class:`AgentStateMachine` backing the plan loop.
     """
 
     def __init__(
@@ -395,13 +394,13 @@ class Planner:
         settings: Settings,
         agent_loop: AgentLoop,
         *,
-        state_machine: AgentStateMachine | None = None,
+        state_machine: AgentStateMachine,
     ) -> None:
         self._llm = llm_provider
         self._ctx = context
         self._settings = settings
         self._agent_loop = agent_loop
-        self._sm = state_machine or AgentStateMachine()
+        self._sm = state_machine
 
         # Plan state — the Planner owns the Plan object lifecycle.
         self._plan: Plan | None = None
@@ -606,11 +605,6 @@ class Planner:
     def plan(self) -> Plan | None:
         """The current plan, or *None* if no plan has been set."""
         return self._plan
-
-    @property
-    def current_mode(self) -> AgentMode:
-        """The current state-machine mode."""
-        return self._sm.current_mode
 
     # ------------------------------------------------------------------
     # Internal helpers

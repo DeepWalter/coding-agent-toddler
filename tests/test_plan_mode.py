@@ -1377,7 +1377,7 @@ class TestPlanner:
         plan_events = [e for e in events if isinstance(e, PlanProposed)]
         assert len(plan_events) == 1
         assert plan_events[0].plan.title == "Mock Plan"
-        assert planner.current_mode == AgentMode.PLAN_WAITING
+        assert planner._sm.current_mode == AgentMode.PLAN_WAITING
 
     @pytest.mark.asyncio
     async def test_approve_plan(self, settings, llm, agent_loop, ctx):
@@ -1388,9 +1388,9 @@ class TestPlanner:
             if isinstance(event, PlanProposed):
                 break
 
-        assert planner.current_mode == AgentMode.PLAN_WAITING
+        assert planner._sm.current_mode == AgentMode.PLAN_WAITING
         planner.approve_plan(plan_id=planner.plan.id)
-        assert planner.current_mode == AgentMode.PLAN_EXECUTING
+        assert planner._sm.current_mode == AgentMode.PLAN_EXECUTING
         assert planner.plan is not None
         assert planner.plan.title == "Mock Plan"
 
@@ -1410,7 +1410,7 @@ class TestPlanner:
 
         assert planner.plan.id == "123"
         assert planner.approve_plan(plan_id="123") is True
-        assert planner.current_mode == AgentMode.PLAN_EXECUTING
+        assert planner._sm.current_mode == AgentMode.PLAN_EXECUTING
 
     @pytest.mark.asyncio
     async def test_reject_plan_outright(
@@ -1424,7 +1424,7 @@ class TestPlanner:
                 break
 
         planner.reject_plan(plan_id=planner.plan.id)
-        assert planner.current_mode == AgentMode.FINISHED
+        assert planner._sm.current_mode == AgentMode.FINISHED
         assert planner.plan is None
 
     @pytest.mark.asyncio
@@ -1441,7 +1441,7 @@ class TestPlanner:
         planner.reject_plan(
             plan_id=planner.plan.id, feedback="Add more steps",
         )
-        assert planner.current_mode == AgentMode.PLAN_EXPLORING
+        assert planner._sm.current_mode == AgentMode.PLAN_EXPLORING
         assert planner.plan is None
 
         # Advance the generator one step so the feedback injection code
@@ -1475,7 +1475,7 @@ class TestPlanner:
         assert planner.approve_plan(plan_id=planner.plan.id) is True
         # Second approval is stale input — ignored, not an error.
         assert planner.approve_plan(plan_id=planner.plan.id) is False
-        assert planner.current_mode == AgentMode.PLAN_EXECUTING
+        assert planner._sm.current_mode == AgentMode.PLAN_EXECUTING
         assert planner.plan is not None
         assert planner.plan.title == "Mock Plan"
 
@@ -1493,11 +1493,11 @@ class TestPlanner:
 
         current = planner.plan
         assert planner.approve_plan(plan_id="some-other-plan") is False
-        assert planner.current_mode == AgentMode.PLAN_WAITING
+        assert planner._sm.current_mode == AgentMode.PLAN_WAITING
         assert planner.plan is current
         # The decision for the current plan still goes through.
         assert planner.approve_plan(plan_id=current.id) is True
-        assert planner.current_mode == AgentMode.PLAN_EXECUTING
+        assert planner._sm.current_mode == AgentMode.PLAN_EXECUTING
 
     @pytest.mark.asyncio
     async def test_reject_after_approve_is_ignored(
@@ -1515,7 +1515,7 @@ class TestPlanner:
         planner.reject_plan(
             plan_id=planner.plan.id, feedback="too late",
         )
-        assert planner.current_mode == AgentMode.PLAN_EXECUTING
+        assert planner._sm.current_mode == AgentMode.PLAN_EXECUTING
         assert planner.plan is not None
 
     @pytest.mark.asyncio
@@ -1533,7 +1533,7 @@ class TestPlanner:
 
         planner.reject_plan(plan_id=event.plan.id, feedback="avoid sqlite")
         planner.reject_plan(plan_id=event.plan.id, feedback="stale feedback")
-        assert planner.current_mode == AgentMode.PLAN_EXPLORING
+        assert planner._sm.current_mode == AgentMode.PLAN_EXPLORING
         assert planner.plan is None
 
         # Resume past the wait so the feedback injection runs.
@@ -1568,11 +1568,11 @@ class TestPlanner:
 
         current = planner.plan
         planner.reject_plan(plan_id="some-other-plan", feedback="stale")
-        assert planner.current_mode == AgentMode.PLAN_WAITING
+        assert planner._sm.current_mode == AgentMode.PLAN_WAITING
         assert planner.plan is current
         # The decision for the current plan still goes through.
         planner.reject_plan(plan_id=current.id, feedback="real feedback")
-        assert planner.current_mode == AgentMode.PLAN_EXPLORING
+        assert planner._sm.current_mode == AgentMode.PLAN_EXPLORING
         assert planner.plan is None
 
     @pytest.mark.asyncio
@@ -1587,7 +1587,7 @@ class TestPlanner:
 
         errors = [e for e in events if isinstance(e, AgentError)]
         assert len(errors) >= 1
-        assert planner.current_mode == AgentMode.FINISHED
+        assert planner._sm.current_mode == AgentMode.FINISHED
         assert planner.plan is None
 
     @pytest.mark.asyncio
@@ -1604,7 +1604,7 @@ class TestPlanner:
 
         # State machine should be the same instance and in PLAN_WAITING.
         assert sm.current_mode == AgentMode.PLAN_WAITING
-        assert planner.current_mode == AgentMode.PLAN_WAITING
+        assert planner._sm.current_mode == AgentMode.PLAN_WAITING
 
 
 class TestModeDisplayLabel:
