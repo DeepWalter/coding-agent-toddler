@@ -27,16 +27,6 @@ flushed.
   is stopped and flushed on the first terminal event rather than stranding
   the terminal in the alt screen.  Regression tests pin both exits.
 
-### Non-streaming mode reprints the full step list on every update
-
-The base renderer's `on_plan_step_update` prints the complete plan block on
-each `PlanStepUpdate` (every step start plus the phase-end flush), so a
-5-step plan yields up to 6 full copies of the plan, burying the agent's
-actual output.
-
-- [toddler/cli/renderer.py:354](toddler/cli/renderer.py#L354)
-- Fix: diff against the previously printed snapshot and print only changed rows.
-
 ### Duplicate step ids silently collapse
 
 `PlanState.activate` builds an `OrderedDict` keyed by step id; nothing in
@@ -47,6 +37,16 @@ with the approved plan text.
 
 - [toddler/tools/plan.py:91](toddler/tools/plan.py#L91)
 - Fix: validate/reject duplicate ids at parse time, or key steps by position.
+- **Fixed**: step ids are now canonical — `Plan.from_json` assigns
+  `step-N` from position and ignores LLM-proposed ids, so duplicates,
+  missing ids, and arbitrary ids all normalize to the same scheme (and
+  the proposal prompt no longer asks the LLM for an `id` at all).
+  `depends_on` was removed entirely (steps execute strictly
+  top-to-bottom), so id references exist only via the execution prompt.
+  `PlanState.activate` logs loudly if a hand-built plan ever breaks the
+  uniqueness invariant.  Regression tests pin canonicalization
+  (dup/missing/arbitrary ids → `step-N`), stray-`depends_on` tolerance,
+  and the id-free prompt schema.
 
 ### `estimated_files_touched` defaults to the step count
 
@@ -77,15 +77,6 @@ contract changed and there is now no way to abort an executing plan.
 
 - [toddler/agent/planner.py:566](toddler/agent/planner.py#L566)
 - Decide and document: reject-during-execution should either abort the turn or the contract change should be explicit.
-
-### `to_json`/`from_dict` silently drops `status`
-
-`PlanStep.to_dict` no longer emits `status` and `from_dict` drops it on
-restore. No in-tree code serializes plans today, so this is a schema
-contract change for persisted/external plan blobs rather than active data
-loss.
-
-- [toddler/agent/planner.py:98-106](toddler/agent/planner.py#L98-L106)
 
 ### Regression to `pending` is never rendered
 

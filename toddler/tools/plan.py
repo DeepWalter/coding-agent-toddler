@@ -4,6 +4,7 @@ and the LLM-facing ``plan_update`` tool.
 
 from __future__ import annotations
 
+import logging
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -14,6 +15,8 @@ if TYPE_CHECKING:
     from toddler.agent.planner import Plan
 
 __all__ = ["PLAN_STEP_STATUSES", "PlanState", "PlanUpdateTool"]
+
+logger = logging.getLogger(__name__)
 
 # Canonical plan step status values — the single source of truth for the
 # model's status vocabulary, the tool schema enum, and PlanState.
@@ -88,9 +91,18 @@ class PlanState:
         statuses, so the first :meth:`take_update` returns content only
         once something render-worthy moves.
         """
-        self._statuses = OrderedDict(
-            (s.id, "pending") for s in plan.steps
-        )
+        ids = [s.id for s in plan.steps]
+        if len(set(ids)) != len(ids):
+            # Invariant guard: :meth:`Plan.from_json` canonicalizes ids
+            # to ``step-N``, so duplicates can only come from a plan
+            # constructed by hand.  Log loudly instead of silently
+            # collapsing rows.
+            logger.error(
+                "Plan has duplicate step ids (%d unique of %d) — "
+                "tracking will collapse rows.",
+                len(set(ids)), len(ids),
+            )
+        self._statuses = OrderedDict((s.id, "pending") for s in plan.steps)
         self._descriptions = {s.id: s.description for s in plan.steps}
         self._last_emitted = self._status_snapshot()
         self._active = True

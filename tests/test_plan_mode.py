@@ -247,7 +247,7 @@ class TestPlanSerialization:
                 PlanStep(
                     id="step-2", description="Update imports in main.py",
                     tool_calls_expected=["edit_file", "read_file"],
-                    files_affected=["main.py"], depends_on=["step-1"],
+                    files_affected=["main.py"],
                 ),
             ],
             rationale="Better separation of concerns.",
@@ -259,13 +259,12 @@ class TestPlanSerialization:
         data = json.loads(json_str)
         assert data["title"] == "Refactor Auth"
         assert len(data["steps"]) == 2
-        assert data["steps"][1]["depends_on"] == ["step-1"]
+        assert "depends_on" not in data["steps"][1]
 
         restored = Plan.from_json(json_str)
         assert restored is not None
         assert restored.title == "Refactor Auth"
         assert len(restored.steps) == 2
-        assert restored.steps[1].depends_on == ["step-1"]
         assert restored.risks == ["Breaking import paths", "Session state loss"]
 
     def test_plan_from_json_minimal(self):
@@ -278,8 +277,51 @@ class TestPlanSerialization:
         assert plan is not None
         assert plan.title == "Minimal Plan"
         assert len(plan.steps) == 1
+        assert plan.steps[0].id == "step-1"  # canonicalized, not "s1"
         assert plan.rationale == ""
         assert plan.risks == []
+
+    def test_plan_from_json_canonicalizes_step_ids(self):
+        # LLM-proposed ids are ignored — ids are assigned from position,
+        # so duplicate, missing, or arbitrary ids cannot collapse
+        # tracking rows in PlanState.
+        data = {
+            "title": "Canonical Ids",
+            "summary": "",
+            "steps": [
+                {"id": "step-1", "description": "First"},
+                {"id": "step-1", "description": "Second"},   # duplicate
+                {"description": "Third"},                    # missing
+                {"id": "weird-id", "description": "Fourth"},  # arbitrary
+            ],
+        }
+        plan = Plan.from_json(json.dumps(data))
+        assert plan is not None
+        assert [s.id for s in plan.steps] == [
+            "step-1", "step-2", "step-3", "step-4",
+        ]
+
+    def test_plan_from_json_ignores_stray_depends_on(self):
+        # depends_on was removed — steps execute top-to-bottom.  The LLM
+        # may still emit the key (it appeared in older prompt schemas),
+        # and must not crash on a list or null.
+        data = {
+            "title": "Deps",
+            "summary": "",
+            "steps": [
+                {"id": "step-1", "description": "First",
+                 "depends_on": []},
+                {"id": "step-2", "description": "Second",
+                 "depends_on": ["step-1", "nope"]},
+                {"id": "step-3", "description": "Third",
+                 "depends_on": None},
+            ],
+        }
+        plan = Plan.from_json(json.dumps(data))
+        assert plan is not None
+        assert [s.id for s in plan.steps] == [
+            "step-1", "step-2", "step-3",
+        ]
 
     def test_plan_from_json_with_markdown_fences(self):
         data = {
@@ -386,6 +428,12 @@ class TestPlanProposalPrompt:
         assert "JSON" in prompt
         assert "title" in prompt
         assert "steps" in prompt
+
+    def test_prompt_does_not_ask_for_step_ids(self):
+        # Step ids are canonical, position-derived — the LLM must not
+        # invent ids that could collide or dangle.
+        prompt = plan_proposal_prompt("fix bugs")
+        assert '"id"' not in prompt
 
     def test_prompt_without_context_omits_context_block(self):
         prompt = plan_proposal_prompt("do something")

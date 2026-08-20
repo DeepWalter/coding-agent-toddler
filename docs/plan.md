@@ -219,8 +219,7 @@ class PlanStep:
     id: str                          # e.g., "step-1"
     description: str                 # "Read auth.py to understand current login flow"
     tool_calls_expected: list[str]   # Tool names likely needed
-    files_affected: list[str]
-    depends_on: list[str]            # Step IDs that must complete first
+    files_affected: list[str]        # Steps execute strictly top-to-bottom
 
 @dataclass
 class Plan:

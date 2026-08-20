@@ -66,7 +66,10 @@ class PlanStep:
     Parameters
     ----------
     id:
-        Unique step identifier, e.g. ``"step-1"``.
+        Canonical step identifier, e.g. ``"step-1"``.  Assigned from
+        position at parse time (see :meth:`Plan.from_json`) — ids
+        proposed by the LLM are ignored, so duplicates and missing ids
+        cannot reach tracking.
     description:
         Human-readable description of what this step accomplishes, e.g.
         ``"Read auth.py to understand the current login flow"``.
@@ -74,25 +77,25 @@ class PlanStep:
         Tool names that are likely to be called during this step.
     files_affected:
         File paths expected to be read or modified.
-    depends_on:
-        IDs of steps that must complete before this step can begin.
     """
 
     id: str
     description: str
     tool_calls_expected: list[str] = field(default_factory=list)
     files_affected: list[str] = field(default_factory=list)
-    depends_on: list[str] = field(default_factory=list)
 
     @classmethod
-    def from_dict(cls, d: dict) -> PlanStep:
-        """Build a ``PlanStep`` from a JSON-decoded dict."""
+    def from_dict(cls, d: dict, *, step_id: str) -> PlanStep:
+        """Build a ``PlanStep`` from a JSON-decoded dict.
+
+        *step_id* is the canonical, position-derived id — stray keys in
+        *d* (``"id"``, legacy ``"depends_on"``) are deliberately ignored.
+        """
         return cls(
-            id=d.get("id", ""),
+            id=step_id,
             description=_single_line(d.get("description", "")),
             tool_calls_expected=d.get("tool_calls_expected", []),
             files_affected=d.get("files_affected", []),
-            depends_on=d.get("depends_on", []),
         )
 
     def to_dict(self) -> dict:
@@ -102,7 +105,6 @@ class PlanStep:
             "description": self.description,
             "tool_calls_expected": self.tool_calls_expected,
             "files_affected": self.files_affected,
-            "depends_on": self.depends_on,
         }
 
 
@@ -180,7 +182,13 @@ class Plan:
             return None
 
         steps_data = data.get("steps", [])
-        steps = [PlanStep.from_dict(s) for s in steps_data]
+        # Step ids are canonical, position-derived: LLM-proposed ids are
+        # ignored, so duplicates and missing ids cannot collapse rows in
+        # PlanState tracking or mismatch the execution prompt.
+        steps = [
+            PlanStep.from_dict(s, step_id=f"step-{i}")
+            for i, s in enumerate(steps_data, 1)
+        ]
 
         return cls(
             # Coerce to str — a numeric id from the LLM would otherwise
@@ -238,17 +246,12 @@ class Plan:
 
         lines.append(f"**Steps** ({len(self.steps)}):")
         for i, step in enumerate(self.steps, 1):
-            deps = (
-                f" (depends on: {', '.join(step.depends_on)})"
-                if step.depends_on
-                else ""
-            )
             files = (
                 f" [{', '.join(step.files_affected)}]"
                 if step.files_affected
                 else ""
             )
-            lines.append(f"{i}. **{step.description}**{deps}{files}")
+            lines.append(f"{i}. **{step.description}**{files}")
 
         lines.append("")
         lines.append(
@@ -332,11 +335,9 @@ Respond with a JSON plan object in this exact format:
   "summary": "2-3 sentence overview of what this plan will accomplish",
   "steps": [
     {{
-      "id": "step-1",
       "description": "Detailed description of this step",
       "tool_calls_expected": ["tool_name_1", "tool_name_2"],
-      "files_affected": ["path/to/file.py"],
-      "depends_on": []
+      "files_affected": ["path/to/file.py"]
     }}
   ],
   "rationale": "Why this approach was chosen",
