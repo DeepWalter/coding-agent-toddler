@@ -336,14 +336,22 @@ class SessionCoordinator:
             self.set_permission_mode(permission_mode)
         return accepted
 
-    def reject_plan(self, *, plan_id: str, feedback: str = "") -> None:
+    def reject_plan(self, *, plan_id: str, feedback: str = "") -> bool:
         """Reject the plan with *plan_id* and unblock :meth:`process_turn`.
 
         When *feedback* is provided the agent will re-explore and propose
         a revised plan.  Otherwise the turn finishes.
+
+        Returns ``True`` only when the rejection took effect.  Rejection
+        is honored only while the machine is parked in ``PLAN_WAITING`` —
+        a rejection arriving while a plan is executing is ignored
+        (``False``) and the execution phase runs to completion.
         """
-        if self._planner is not None:
-            self._planner.reject_plan(plan_id=plan_id, feedback=feedback)
+        if self._planner is None:
+            return False
+        return self._planner.reject_plan(
+            plan_id=plan_id, feedback=feedback,
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers

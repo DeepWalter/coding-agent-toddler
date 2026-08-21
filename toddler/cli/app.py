@@ -287,13 +287,17 @@ class CLIApp:
                                     output_path=output_path,
                                 )
                         case "feedback":
-                            self._coordinator.reject_plan(
+                            rejected = self._coordinator.reject_plan(
                                 plan_id=event.plan.id,
                                 feedback=result.feedback or "",
                             )
-                            if result.feedback:
+                            if rejected and result.feedback:
                                 # Feedback loop: reset content for
-                                # new explore phase.
+                                # new explore phase.  A stale rejection
+                                # (ignored by the planner) leaves the
+                                # turn waiting on the current plan's
+                                # decision, so the renderer must stay
+                                # on the plan panel.
                                 self._renderer.start(
                                     turn_number=turn_number,
                                     output_path=output_path,

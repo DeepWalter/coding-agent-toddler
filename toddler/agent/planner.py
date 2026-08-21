@@ -554,23 +554,31 @@ class Planner:
         self._plan_decision_event.set()
         return success
 
-    def reject_plan(self, *, plan_id: str, feedback: str = "") -> None:
+    def reject_plan(self, *, plan_id: str, feedback: str = "") -> bool:
         """Reject the plan with *plan_id* and unblock :meth:`run`.
 
         When *feedback* is provided the agent will re-explore and propose
-        a revised plan.  Otherwise the turn finishes.
+        a revised plan. Otherwise the turn finishes.
 
-        Ignored (with a warning) when the machine is not waiting on a
-        decision, or when *plan_id* is not the plan currently awaiting a
-        decision — stale input must not clobber the earlier decision's
-        state or kill the pending proposal.
+        Returns ``True`` when the rejection took effect (the machine moved
+        to ``PLAN_EXPLORING`` or ``FINISHED``).  Returns ``False`` when
+        the call was ignored as stale input — the machine is not waiting
+        on a decision, or *plan_id* is not the plan currently awaiting a
+        decision.  Stale input must not clobber the state — the machine
+        keeps waiting for the current plan's own decision.
+
+        Rejection is honored only while the machine is parked in
+        ``PLAN_WAITING``.  A rejection arriving while the plan is
+        executing is ignored and the execution phase runs to completion —
+        aborting an executing plan is the turn executor's concern, not
+        the decision API's.
         """
         if self._sm.current_mode != AgentMode.PLAN_WAITING:
             logger.warning(
                 "Cannot reject: not waiting on a decision "
                 "(mode is %s).", self._sm.current_mode.value,
             )
-            return
+            return False
         if self._plan is not None and self._plan.id != plan_id:
             # Stale — a rejection meant for a previous proposal.  The
             # event is deliberately NOT set: the machine keeps waiting
@@ -579,7 +587,7 @@ class Planner:
                 "Cannot reject: plan %s is not the current plan.",
                 plan_id,
             )
-            return
+            return False
         if self._plan is None:
             # Invariant fallback, mirroring approve_plan(): no plan
             # exists to reject, so end the turn rather than leave run()
@@ -587,7 +595,7 @@ class Planner:
             logger.warning("Cannot reject: no plan is set.")
             self._sm.mark_finished()
             self._plan_decision_event.set()
-            return
+            return False
         self._plan_feedback = feedback
         self._plan = None
         if feedback:
@@ -599,6 +607,7 @@ class Planner:
             logger.info("Plan rejected outright; finishing.")
             self._sm.transition(AgentMode.FINISHED)
         self._plan_decision_event.set()
+        return True
 
     # ------------------------------------------------------------------
     # Properties

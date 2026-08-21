@@ -92,6 +92,22 @@ contract changed and there is now no way to abort an executing plan.
 
 - [toddler/agent/planner.py:566](toddler/agent/planner.py#L566)
 - Decide and document: reject-during-execution should either abort the turn or the contract change should be explicit.
+- **Fixed**: the contract change is now explicit and symmetrical with
+  `approve_plan` — `Planner.reject_plan` / `SessionCoordinator.reject_plan`
+  return `bool` (`True` = rejection took effect, `False` = ignored as
+  stale/not-waiting), and the docstrings state the contract outright:
+  rejection is honored only while parked in `PLAN_WAITING`; a rejection
+  arriving while the plan executes is ignored and the execution runs to
+  completion.  Decision: abort-during-execution is *not* implemented —
+  the pre-guard code never actually stopped the running agent loop either
+  (it only cleared the plan and moved the machine while execution
+  continued), and no shipped caller can reach it (the REPL input loop is
+  inactive while a turn runs), so a true abort is a turn-executor
+  cancellation feature, not a decision-API concern.  The CLI feedback
+  branch now resets the renderer only when the rejection took effect
+  (mirroring the stale-approval handling).  Tests pin the bool contract
+  on both layers, including reject-during-execution → `False` with state
+  untouched.
 
 ### Regression to `pending` is never rendered
 

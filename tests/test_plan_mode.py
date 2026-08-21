@@ -846,9 +846,12 @@ class TestSessionCoordinatorPlanWorkflow:
         coordinator.approve_plan(
             plan_id=event.plan.id,
         )
-        coordinator.reject_plan(
+        # The contract is explicit: a rejection arriving while the plan
+        # executes is ignored (False) — there is no way to abort an
+        # executing plan through the decision API.
+        assert coordinator.reject_plan(
             plan_id=event.plan.id, feedback="too late",
-        )
+        ) is False
         remaining = await self._collect(gen)
         # The rejection didn't clobber the plan or the state machine.
         assert coordinator.planner.plan is not None
@@ -867,12 +870,12 @@ class TestSessionCoordinatorPlanWorkflow:
         async for event in gen:
             if isinstance(event, PlanProposed):
                 break
-        coordinator.reject_plan(
+        assert coordinator.reject_plan(
             plan_id=event.plan.id, feedback="avoid sqlite",
-        )
-        coordinator.reject_plan(
+        ) is True
+        assert coordinator.reject_plan(
             plan_id=event.plan.id, feedback="stale feedback",
-        )
+        ) is False
         second_plan = None
         async for event in gen:
             if isinstance(event, PlanProposed):
@@ -901,7 +904,9 @@ class TestSessionCoordinatorPlanWorkflow:
             if isinstance(event, PlanProposed):
                 first_plan = event.plan
                 break
-        coordinator.reject_plan(plan_id=first_plan.id, feedback="avoid sqlite")
+        assert coordinator.reject_plan(
+            plan_id=first_plan.id, feedback="avoid sqlite",
+        ) is True
         # Stale approval — must not mark the machine FINISHED, and must
         # not switch gating to AUTO (which would auto-approve the
         # re-exploration's tool calls).
@@ -1211,7 +1216,7 @@ class TestSessionCoordinatorPlanWorkflow:
         async for event in gen:
             if isinstance(event, PlanProposed):
                 break
-        coordinator.reject_plan(plan_id=event.plan.id)
+        assert coordinator.reject_plan(plan_id=event.plan.id) is True
         remaining = await self._collect(gen)
         finished = [e for e in remaining if isinstance(e, AgentFinished)]
         assert len(finished) == 1
@@ -1223,9 +1228,9 @@ class TestSessionCoordinatorPlanWorkflow:
         async for event in gen:
             if isinstance(event, PlanProposed):
                 break
-        coordinator.reject_plan(
+        assert coordinator.reject_plan(
             plan_id=event.plan.id, feedback="Add more steps",
-        )
+        ) is True
         second_plan = None
         async for event in gen:
             if isinstance(event, PlanProposed):
@@ -1425,7 +1430,7 @@ class TestPlanner:
             if isinstance(event, PlanProposed):
                 break
 
-        planner.reject_plan(plan_id=planner.plan.id)
+        assert planner.reject_plan(plan_id=planner.plan.id) is True
         assert planner._sm.current_mode == AgentMode.FINISHED
         assert planner.plan is None
 
@@ -1440,9 +1445,9 @@ class TestPlanner:
             if isinstance(event, PlanProposed):
                 break
 
-        planner.reject_plan(
+        assert planner.reject_plan(
             plan_id=planner.plan.id, feedback="Add more steps",
-        )
+        ) is True
         assert planner._sm.current_mode == AgentMode.PLAN_EXPLORING
         assert planner.plan is None
 
@@ -1514,9 +1519,12 @@ class TestPlanner:
                 break
 
         planner.approve_plan(plan_id=planner.plan.id)
-        planner.reject_plan(
+        # The contract is explicit: a rejection outside PLAN_WAITING is
+        # ignored and reports False — an executing plan runs to
+        # completion.
+        assert planner.reject_plan(
             plan_id=planner.plan.id, feedback="too late",
-        )
+        ) is False
         assert planner._sm.current_mode == AgentMode.PLAN_EXECUTING
         assert planner.plan is not None
 
@@ -1533,8 +1541,12 @@ class TestPlanner:
             if isinstance(event, PlanProposed):
                 break
 
-        planner.reject_plan(plan_id=event.plan.id, feedback="avoid sqlite")
-        planner.reject_plan(plan_id=event.plan.id, feedback="stale feedback")
+        assert planner.reject_plan(
+            plan_id=event.plan.id, feedback="avoid sqlite",
+        ) is True
+        assert planner.reject_plan(
+            plan_id=event.plan.id, feedback="stale feedback",
+        ) is False
         assert planner._sm.current_mode == AgentMode.PLAN_EXPLORING
         assert planner.plan is None
 
@@ -1569,11 +1581,15 @@ class TestPlanner:
                 break
 
         current = planner.plan
-        planner.reject_plan(plan_id="some-other-plan", feedback="stale")
+        assert planner.reject_plan(
+            plan_id="some-other-plan", feedback="stale",
+        ) is False
         assert planner._sm.current_mode == AgentMode.PLAN_WAITING
         assert planner.plan is current
         # The decision for the current plan still goes through.
-        planner.reject_plan(plan_id=current.id, feedback="real feedback")
+        assert planner.reject_plan(
+            plan_id=current.id, feedback="real feedback",
+        ) is True
         assert planner._sm.current_mode == AgentMode.PLAN_EXPLORING
         assert planner.plan is None
 
