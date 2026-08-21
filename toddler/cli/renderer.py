@@ -126,6 +126,34 @@ _CONFIRM_FIXED_LINES = 1 + _PANEL_CHROME_LINES    # 5
 
 
 # ---------------------------------------------------------------------------
+# Plan step-update display policy
+# ---------------------------------------------------------------------------
+
+
+def _plan_snapshot_worth_rendering(
+    steps: list[tuple[str, str, PlanStepStatus]],
+) -> bool:
+    """Return True when a one-shot ``PlanStepUpdate`` should print.
+
+    The one-shot renderer has no frame throttle to absorb back-to-back
+    updates, so it prints only snapshots with something new to say: a
+    step just started (the last non-pending status is ``in_progress``)
+    or the final step completed (the closing snapshot).  A bare
+    ``completed`` mid-plan is skipped — it folds into the next step's
+    start, which prints the pair together.  A pure function of the
+    snapshot, so the policy needs no history across events.
+    """
+    if not steps:
+        return False
+    if steps[-1][2] == PlanStepStatus.COMPLETED:
+        return True
+    for _, _, status in reversed(steps):
+        if status != PlanStepStatus.PENDING:
+            return status == PlanStepStatus.IN_PROGRESS
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Public types
 # ---------------------------------------------------------------------------
 
@@ -366,11 +394,15 @@ class Renderer(ABC):
         self.markdown(event.plan.format_for_display())
 
     def on_plan_step_update(self, event: PlanStepUpdate) -> None:
-        """Print one line per step in the event (one-shot mode).
+        """Print one line per step in the event.
 
         Events always carry the complete step list, so each arrival
-        prints the full current picture — the coordinator decides when
-        to send one (step start, all completed, phase end).
+        prints the full current picture.  When a snapshot prints is the
+        concrete renderer's display policy: the streaming renderer
+        replaces its panel snapshot on every event (its repaint throttle
+        coalesces adjacent frames), while the one-shot renderer prints
+        only render-worthy snapshots and flushes a still-folded one
+        before the turn's completion message.
         """
         for step_id, description, status in event.steps:
             icon = _PLAN_ICONS.get(status, "⬜")
@@ -1381,6 +1413,37 @@ class NonStreamingRenderer(Renderer):
     :meth:`~rich.console.Console.print`.
     """
 
+    def __init__(self, console: Console | None = None) -> None:
+        super().__init__(console=console)
+        # One-shot plan display state: ``_last_seen`` is the most recent
+        # PlanStepUpdate snapshot (printed or folded), ``_last_printed``
+        # the last snapshot actually printed.  The phase-end flush in
+        # :meth:`on_agent_finished` prints ``_last_seen`` only when the
+        # two differ, so a folded snapshot (e.g. a lone completed) is
+        # never lost and a shown one is never duplicated.  Both reset at
+        # the start of each turn and when a new plan is proposed — the
+        # renderer outlives turns, so an earlier turn's terminal
+        # snapshot must not leak forward.
+        self._last_seen: list[tuple[str, str, PlanStepStatus]] | None = None
+        self._last_printed: list[tuple[str, str, PlanStepStatus]] | None = None
+
+    def start(
+        self,
+        turn_number: int = 0,
+        output_path: Path | None = None,
+    ) -> None:
+        """Start a fresh turn — drop any unflushed plan snapshot.
+
+        The renderer outlives turns, and not every exit path flushes:
+        a turn cut short (fatal error, interrupt) never reaches
+        :meth:`on_agent_finished`, so a folded snapshot would otherwise
+        surface in a later turn's summary.  Whatever is folded when the
+        turn ends is stale by the next turn's start.
+        """
+        self._last_seen = None
+        self._last_printed = None
+        super().start(turn_number=turn_number, output_path=output_path)
+
     # ------------------------------------------------------------------
     # Streaming event handlers (one-shot)
     # ------------------------------------------------------------------
@@ -1429,6 +1492,75 @@ class NonStreamingRenderer(Renderer):
                     style=_TOOL_ERROR,
                 ),
             )
+
+    def on_plan_step_update(self, event: PlanStepUpdate) -> None:
+        """Print one line per step in the event (one-shot mode).
+
+        Events always carry the complete step list, so each arrival
+        prints the full current picture — but only when the snapshot is
+        render-worthy (see :func:`_plan_snapshot_worth_rendering`): a
+        step start, or the closing snapshot.  A bare ``completed``
+        mid-plan is folded into the next step's start, so a completed +
+        in_progress pair prints as one combined update instead of two
+        back-to-back prints (there is no frame throttle here to
+        coalesce them).  The snapshot is remembered either way, so
+        :meth:`on_agent_finished` can print it if the turn ends before
+        anything shows it.
+        """
+        self._last_seen = list(event.steps)
+        if not _plan_snapshot_worth_rendering(event.steps):
+            return
+        self._last_printed = list(event.steps)
+        super().on_plan_step_update(event)
+
+    def on_plan_proposed(self, event: PlanProposed) -> None:
+        """Show the proposed plan and start a fresh display context.
+
+        Plan display state from an earlier turn is dropped — a new plan
+        means new statuses, and the renderer outlives turns.
+        """
+        self._last_seen = None
+        self._last_printed = None
+        super().on_plan_proposed(event)
+
+    def _flush_folded_snapshot(self) -> None:
+        """Print the last seen snapshot if it never printed.
+
+        Replays it through the base step-update printer, then advances
+        :attr:`_last_printed`, so an already-shown snapshot is never
+        re-printed and a still-folded one is never lost.
+        """
+        if (
+            self._last_seen is not None
+            and self._last_seen != self._last_printed
+        ):
+            super().on_plan_step_update(
+                PlanStepUpdate(steps=self._last_seen)
+            )
+            self._last_printed = self._last_seen
+
+    def on_agent_finished(self, event: AgentFinished) -> None:
+        """Print the turn's terminal plan picture, then the summary.
+
+        A folded snapshot (e.g. a lone completed with no follow-up) is
+        never printed by :meth:`on_plan_step_update` — if the turn ends
+        with it still unprinted, this is the last chance to show it,
+        before the completion message.
+        """
+        self._flush_folded_snapshot()
+        super().on_agent_finished(event)
+
+    def on_agent_error(self, event: AgentError) -> None:
+        """Flush the terminal plan picture before a fatal error.
+
+        A fatal error ends the turn without :meth:`on_agent_finished`,
+        so a folded snapshot would otherwise surface in a later turn's
+        summary.  Recoverable errors are not terminal — the turn
+        continues, so the fold is preserved for the next render.
+        """
+        if isinstance(event, FatalAgentError):
+            self._flush_folded_snapshot()
+        super().on_agent_error(event)
 
     # ------------------------------------------------------------------
     # Confirmation (console-based, for non-streaming mode)

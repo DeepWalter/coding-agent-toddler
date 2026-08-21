@@ -504,36 +504,17 @@ class SessionCoordinator:
         The shared :class:`PlanState` is asked for updates only after
         :class:`ToolCallEnd` — statuses change only while a tool executes,
         so polling earlier (text deltas, tool-call start/delta) would
-        only rebuild an O(steps) snapshot for nothing.  It returns the
-        COMPLETE step list only when something render-worthy changed (a
-        step starting, or all steps completed), holding back bare
-        ``completed`` changes so the UI never double-renders a
-        completed + in_progress pair.
-
-        Held-back changes are flushed before :class:`AgentFinished` —
-        streaming mode stops its Live display on that event, so any
-        PlanStepUpdate yielded after it would never be painted.
+        only rebuild an O(steps) snapshot for nothing.  Every mutation
+        emits as its own full-list ``PlanStepUpdate`` (no trigger
+        filter), so nothing is ever held back and no phase-end flush is
+        needed: each change lands before :class:`AgentFinished`, which
+        streaming mode stops its Live display on.
         """
         try:
             if plan_mode:
                 self._activate_plan_execution(self.planner.plan)
 
             async for event in self._run_phase(user_input, mode_hint):
-                if isinstance(event, AgentFinished):
-                    # Flush pending statuses BEFORE AgentFinished — the
-                    # renderer stops on it, so a later update would
-                    # never render in streaming mode.  take_update()
-                    # runs only after ToolCallEnd, so held-back changes
-                    # (e.g. a lone completed) can remain here — the
-                    # unfiltered flush catches exactly those.  And
-                    # nothing further can change the statuses:
-                    # AgentFinished is the phase's last event.
-                    update = self._plan_state.flush_update()
-                    if update is not None:
-                        yield PlanStepUpdate(steps=update)
-                    yield event
-                    continue
-
                 yield event
                 if not isinstance(event, ToolCallEnd):
                     continue

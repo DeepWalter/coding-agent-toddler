@@ -79,9 +79,9 @@ class PlanStepUpdate(AgentEvent):
 
     Always carries the complete ``(id, description, status)`` triple
     list, so renderers replace their snapshot without diffing.  The
-    coordinator emits it at meaningful moments — a step starting, all
-    steps completed, and phase end (flushing any status changes that
-    never hit a trigger).
+    coordinator emits it after each ``ToolCallEnd`` that left the shared
+    state changed; adjacent frames are coalesced by the streaming
+    renderer's repaint throttle.
     """
 
     steps: list[tuple[str, str, PlanStepStatus]]  # (id, description, status)

@@ -460,7 +460,6 @@ class TestPlanStepTracking:
             ("1", "A", "pending"),
             ("2", "B", "pending"),
         ]
-        assert state.is_complete is False
 
     def test_mark_step_advances_progress(self):
         state = PlanState()
@@ -484,12 +483,6 @@ class TestPlanStepTracking:
 
     def test_mark_step_inactive_returns_false(self):
         assert PlanState().mark_step("1", "completed") is False
-
-    def test_is_complete_when_all_done(self):
-        state = PlanState()
-        state.activate(_plan(steps=[PlanStep(id="1", description="A")]))
-        state.mark_step("1", "completed")
-        assert state.is_complete is True
 
 
 # ============================================================================
@@ -579,16 +572,19 @@ class TestPlanState:
         # Emitted baseline advanced — no update without a new change.
         assert state.take_update() is None
 
-    def test_bare_completed_is_held_back_and_folds_into_next_render(self):
+    def test_bare_completed_emits_immediately(self):
         state = PlanState()
         state.activate(_plan(steps=[
             PlanStep(id="step-1", description="One"),
             PlanStep(id="step-2", description="Two"),
         ]))
         state.mark_step("step-1", "completed")
-        # A completed alone renders nothing — it folds into the next
-        # step's start instead of double-rendering with it.
-        assert state.take_update() is None
+        # Every mutation emits — no hold-back filter folding a lone
+        # completed into the next render.
+        assert state.take_update() == [
+            ("step-1", "One", "completed"),
+            ("step-2", "Two", "pending"),
+        ]
         state.mark_step("step-2", "in_progress")
         assert state.take_update() == [
             ("step-1", "One", "completed"),
@@ -604,7 +600,10 @@ class TestPlanState:
         state.mark_step("step-1", "in_progress")
         assert state.take_update() is not None
         state.mark_step("step-1", "completed")
-        assert state.take_update() is None
+        assert state.take_update() == [
+            ("step-1", "One", "completed"),
+            ("step-2", "Two", "pending"),
+        ]
         state.mark_step("step-2", "completed")
         # All steps done — the closing snapshot renders.
         assert state.take_update() == [
@@ -614,26 +613,6 @@ class TestPlanState:
 
     def test_take_update_returns_none_when_inactive(self):
         assert PlanState().take_update() is None
-
-    def test_flush_update_renders_held_back_changes(self):
-        state = PlanState()
-        state.activate(_plan(steps=[
-            PlanStep(id="step-1", description="One"),
-            PlanStep(id="step-2", description="Two"),
-        ]))
-        state.mark_step("step-1", "completed")
-        # Held back by the trigger filter mid-run...
-        assert state.take_update() is None
-        # ...but the phase-end flush emits any change at all.
-        assert state.flush_update() == [
-            ("step-1", "One", "completed"),
-            ("step-2", "Two", "pending"),
-        ]
-        # Emitted baseline advanced — nothing new without a change.
-        assert state.flush_update() is None
-
-    def test_flush_update_returns_none_when_inactive(self):
-        assert PlanState().flush_update() is None
 
     def test_steps_empty_when_inactive(self):
         assert PlanState().steps == []
@@ -662,11 +641,9 @@ class TestPlanState:
         state.deactivate()
         assert state.is_active is False
         assert state.take_update() is None
-        assert state.flush_update() is None
         # Re-activating with a fresh plan re-arms detection cleanly.
         state.activate(_plan())
         assert state.take_update() is None
-        assert state.flush_update() is None
 
 
 # ============================================================================
@@ -1088,16 +1065,16 @@ class TestSessionCoordinatorPlanWorkflow:
             for e in updates
         ]
         assert statuses == ["in_progress", "completed"]
-        # Every event carries the complete list; completing the only step
-        # is the closing snapshot, so the final emission dedups to zero.
+        # Every event carries the complete list — one emission per
+        # mutation, no folding or phase-end flush.
         assert [st[0] for st in updates[-1].steps] == ["step-1"]
         assert len(updates) == 2
 
     @pytest.mark.asyncio
-    async def test_completed_then_in_progress_renders_once(
+    async def test_completed_then_in_progress_emits_twice(
         self, coordinator, llm,
     ):
-        """A bare completed folds into the next step's start — one render."""
+        """A completed and the next step's start emit separate updates."""
         llm._plan_json = _two_step_plan_json()
         llm._sequence = [
             _end_turn_response(),  # explore phase
@@ -1119,10 +1096,11 @@ class TestSessionCoordinatorPlanWorkflow:
         )
         remaining = await self._collect(gen)
         updates = [e for e in remaining if isinstance(e, PlanStepUpdate)]
-        # One emission at the step-2 start — the lone completed never
-        # rendered on its own, it folds into this snapshot.
-        assert len(updates) == 1
-        assert [st[2] for st in updates[0].steps] == ["completed", "in_progress"]
+        # Each mutation emits at its own ToolCallEnd — the streaming
+        # renderer's repaint throttle coalesces adjacent frames.
+        assert len(updates) == 2
+        assert [st[2] for st in updates[0].steps] == ["completed", "pending"]
+        assert [st[2] for st in updates[1].steps] == ["completed", "in_progress"]
 
     @pytest.mark.asyncio
     async def test_all_steps_completed_emits_closing_snapshot(
@@ -1161,18 +1139,18 @@ class TestSessionCoordinatorPlanWorkflow:
         statuses = [[st[2] for st in e.steps] for e in updates]
         assert statuses == [
             ["in_progress", "pending"],
+            ["completed", "pending"],
             ["completed", "in_progress"],
             ["completed", "completed"],
         ]
-        # The closing snapshot was already emitted — the final emission
-        # dedups to zero.
-        assert len(updates) == 3
+        # One emission per mutation — no folding, no phase-end flush.
+        assert len(updates) == 4
 
     @pytest.mark.asyncio
-    async def test_lone_completed_flushed_at_phase_end(
+    async def test_lone_completed_emits_before_agent_finished(
         self, coordinator, llm,
     ):
-        """A completed with no follow-up trigger is flushed at phase end."""
+        """A completed with no follow-up emits at its own ToolCallEnd."""
         llm._plan_json = _two_step_plan_json()
         llm._sequence = [
             _end_turn_response(),  # explore phase
@@ -1190,11 +1168,11 @@ class TestSessionCoordinatorPlanWorkflow:
         )
         remaining = await self._collect(gen)
         updates = [e for e in remaining if isinstance(e, PlanStepUpdate)]
-        # Nothing rendered mid-run; the final emission flushes the
-        # un-emitted completed status.
+        # The lone completed renders on its own — nothing is held back
+        # for a phase-end flush.
         assert len(updates) == 1
         assert [st[2] for st in updates[0].steps] == ["completed", "pending"]
-        # The flush lands BEFORE AgentFinished so streaming mode can
+        # The emission lands BEFORE AgentFinished so streaming mode can
         # still paint it (its Live display stops on AgentFinished).
         finished_idx = next(
             i for i, e in enumerate(remaining) if isinstance(e, AgentFinished)

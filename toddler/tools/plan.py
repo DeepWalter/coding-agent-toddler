@@ -77,10 +77,10 @@ class PlanState:
     Owned by :class:`SessionCoordinator`.  :meth:`activate` captures the
     plan's steps into an ordered status table (plus a frozen description
     table) and baselines the emitted snapshot; :meth:`take_update` then
-    returns the complete step list only when something render-worthy
-    changed, and :meth:`flush_update` flushes anything held back at
-    phase end.  The coordinator wraps the returned triples into
-    ``PlanStepUpdate`` events.  Never holds the plan itself.
+    returns the complete step list whenever any status changed — every
+    mutation emits, with no trigger filter — and the coordinator wraps
+    the returned triples into ``PlanStepUpdate`` events.  Never holds
+    the plan itself.
     """
 
     _active: bool = field(default=False, repr=False)
@@ -109,18 +109,6 @@ class PlanState:
         return list(self._statuses)
 
     @property
-    def is_complete(self) -> bool:
-        """Return ``True`` when every tracked step is completed."""
-        return (
-            self._active
-            and bool(self._statuses)
-            and all(
-                s == PlanStepStatus.COMPLETED
-                for s in self._statuses.values()
-            )
-        )
-
-    @property
     def steps(self) -> list[tuple[str, str, PlanStepStatus]]:
         """Return current ``(id, description, status)`` triples in plan
         order — a pure read, unlike :meth:`take_update`.  Empty when no
@@ -139,7 +127,7 @@ class PlanState:
         Captures the step ids and descriptions (every status starts
         ``pending``) and baselines the emitted snapshot at the current
         statuses, so the first :meth:`take_update` returns content only
-        once something render-worthy moves.
+        once a status actually moves.
         """
         ids = [s.id for s in plan.steps]
         if len(set(ids)) != len(ids):
@@ -189,52 +177,25 @@ class PlanState:
     # ------------------------------------------------------------------
 
     def take_update(self) -> list[tuple[str, str, PlanStepStatus]] | None:
-        """Return the complete step list when there is something new to show.
+        """Return the complete step list when any status changed.
 
-        Renders only when a step transitioned to ``in_progress`` (a
-        visible step start) or every step is now completed (the closing
-        snapshot).  Bare ``completed`` changes are held back — they fold
-        into the next render, so the UI never double-renders a
-        completed + in_progress pair.  Returns ``None`` when nothing
-        needs updating (the UI keeps the former content).  The emitted
-        baseline advances on render; :meth:`flush_update` is the
-        phase-end counterpart that skips the trigger filter.
+        Emits on every mutation — no trigger filter — so a bare
+        ``completed`` gets its own emission and the coordinator needs no
+        phase-end flush: every mutation happens during a tool call and is
+        picked up at the following ``ToolCallEnd``.  Back-to-back
+        mutations (a completed followed by the next step's start) would
+        otherwise paint two frames close together; the streaming
+        renderer's repaint throttle coalesces adjacent frames instead.
+        Returns ``None`` when nothing changed (the UI keeps the former
+        content).
         """
-        return self._take_update(flush=False)
-
-    def flush_update(self) -> list[tuple[str, str, PlanStepStatus]] | None:
-        """Return the complete step list when anything changed since the
-        last emission.
-
-        Used at phase end to flush changes that never hit a render
-        trigger (e.g. a lone ``completed`` mid-run).  Returns ``None``
-        when nothing changed or no plan is active.
-        """
-        return self._take_update(flush=True)
-
-    def _take_update(
-        self, *, flush: bool,
-    ) -> list[tuple[str, str, PlanStepStatus]] | None:
         if not self._active or self._last_emitted is None:
             return None
         current = self._status_snapshot()
         if current == self._last_emitted:
             return None
-        if not flush and not self._render_due():
-            return None
         self._last_emitted = current
         return self._step_triples()
-
-    def _render_due(self) -> bool:
-        """Return True when the diff since the last emission is worth a
-        render (a step just started, or the plan just completed)."""
-        if self.is_complete:
-            return True
-        last = dict(self._last_emitted or {})
-        return any(
-            status == PlanStepStatus.IN_PROGRESS and last.get(sid) != status
-            for sid, status in self._statuses.items()
-        )
 
     def _step_triples(self) -> list[tuple[str, str, PlanStepStatus]]:
         return [
