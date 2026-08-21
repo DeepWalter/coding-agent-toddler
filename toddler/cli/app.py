@@ -1,7 +1,7 @@
 """CLI application — REPL loop and one-shot mode.
 
 A thin display+input layer that delegates all business logic to
-:class:`~toddler.session.coordinator.SessionCoordinator`.
+:class:`~toddler.session.manager.SessionManager`.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from toddler.cli.commands import (
 from toddler.cli.input_handler import InputHandler
 from toddler.cli.renderer import create_renderer
 from toddler.config.settings import Settings
-from toddler.session.coordinator import SessionCoordinator
+from toddler.session.manager import SessionManager
 from toddler.tools.base import PermissionMode
 
 logger = logging.getLogger(__name__)
@@ -44,23 +44,23 @@ class CLIApp:
     """Thin CLI layer — REPL loop, display, input, slash commands.
 
     All agent execution, session lifecycle, tool wiring, and context
-    management are delegated to :class:`SessionCoordinator`.
+    management are delegated to :class:`SessionManager`.
 
     Parameters
     ----------
     settings:
         Resolved settings from env vars + CLI args.
     session:
-        The session coordinator that owns all agent/context/tools wiring.
+        The session manager that owns all agent/context/tools wiring.
     """
 
     def __init__(
         self,
         settings: Settings,
-        session: SessionCoordinator,
+        session: SessionManager,
     ) -> None:
         self._settings = settings
-        self._coordinator = session
+        self._session_mgr = session
         self._renderer = create_renderer(
             streaming=self._settings.streaming_enabled,
             max_output_lines=self._settings.max_output_lines,
@@ -72,9 +72,9 @@ class CLIApp:
             settings.session_dir / "outputs"
         )
 
-        # Slash-command dispatcher makes direct calls on SessionCoordinator.
+        # Slash-command dispatcher makes direct calls on SessionManager.
         self._cmd_dispatcher = SlashCommandDispatcher(
-            session_coordinator=session,
+            session_mgr=session,
             output_base=self._output_base,
         )
 
@@ -91,9 +91,9 @@ class CLIApp:
             When set, resume the session with this ID.  When *None*,
             a fresh session is created.
         """
-        await self._coordinator.resolve(session_id)
+        await self._session_mgr.resolve(session_id)
         self._renderer.info(
-            f"Session: {self._coordinator.session.id[:12]}..."
+            f"Session: {self._session_mgr.session.id[:12]}..."
         )
 
         self._renderer.banner()
@@ -105,9 +105,9 @@ class CLIApp:
 
         while True:
             self._renderer.prompt_header(
-                mode_label=self._coordinator.mode_label,
+                mode_label=self._session_mgr.mode_label,
                 model=self._settings.model,
-                context_usage_pct=self._coordinator.context_usage_pct,
+                context_usage_pct=self._session_mgr.context_usage_pct,
             )
             try:
                 user_input = await self._input.prompt()
@@ -135,7 +135,7 @@ class CLIApp:
             await self._run_agent_turn(user_input)
 
         # --- Clean up empty session on exit ---
-        await self._coordinator.prune_if_empty()
+        await self._session_mgr.prune_if_empty()
 
     async def run_one_shot(
         self,
@@ -149,12 +149,12 @@ class CLIApp:
         When a session manager is available, the turn is persisted so the
         interaction can be resumed later via ``--session``.
         """
-        await self._coordinator.resolve(session_id)
+        await self._session_mgr.resolve(session_id)
 
         await self._run_agent_turn(query, force_plan=force_plan)
 
         # Persist after one-shot turn.
-        await self._coordinator.save()
+        await self._session_mgr.save()
 
     # ==================================================================
     # Agent turn
@@ -168,7 +168,7 @@ class CLIApp:
     ) -> None:
         """Run one complete agent turn — user input through to finish.
 
-        Delegates turn execution to SessionCoordinator and routes every
+        Delegates turn execution to SessionManager and routes every
         agent event to :class:`Renderer`, which handles streaming vs.
         non-streaming output internally.
         """
@@ -177,8 +177,8 @@ class CLIApp:
 
         # Compute output path scoped by session + conversation
         output_path: Path | None = None
-        session = self._coordinator.session
-        conv = self._coordinator.conversation
+        session = self._session_mgr.session
+        conv = self._session_mgr.conversation
         if session is not None and conv is not None:
             output_path = (
                 self._output_base
@@ -191,7 +191,7 @@ class CLIApp:
             turn_number=turn_number, output_path=output_path,
         )
 
-        gen = self._coordinator.process_turn(
+        gen = self._session_mgr.process_turn(
             user_input, force_plan=force_plan,
         )
 
@@ -218,9 +218,9 @@ class CLIApp:
                         choices=event.choices or ["approve", "deny"],
                     )
                     if result.decision == "approve":
-                        self._coordinator.agent.approve_tool_call()
+                        self._session_mgr.agent.approve_tool_call()
                     else:
-                        self._coordinator.agent.deny_tool_call()
+                        self._session_mgr.agent.deny_tool_call()
 
                 case AgentFinished():
                     self._renderer.stop()
@@ -260,7 +260,7 @@ class CLIApp:
 
                     match result.decision:
                         case "approve_with_manual":
-                            accepted = self._coordinator.approve_plan(
+                            accepted = self._session_mgr.approve_plan(
                                 plan_id=event.plan.id,
                                 permission_mode=PermissionMode.MANUAL,
                             )
@@ -275,7 +275,7 @@ class CLIApp:
                                     output_path=output_path,
                                 )
                         case "approve_with_auto":
-                            accepted = self._coordinator.approve_plan(
+                            accepted = self._session_mgr.approve_plan(
                                 plan_id=event.plan.id,
                                 permission_mode=PermissionMode.AUTO,
                             )
@@ -287,7 +287,7 @@ class CLIApp:
                                     output_path=output_path,
                                 )
                         case "feedback":
-                            rejected = self._coordinator.reject_plan(
+                            rejected = self._session_mgr.reject_plan(
                                 plan_id=event.plan.id,
                                 feedback=result.feedback or "",
                             )
@@ -303,7 +303,7 @@ class CLIApp:
                                     output_path=output_path,
                                 )
                         case "deny":
-                            self._coordinator.reject_plan(
+                            self._session_mgr.reject_plan(
                                 plan_id=event.plan.id,
                             )
                             # Renderer stays stopped (or will be

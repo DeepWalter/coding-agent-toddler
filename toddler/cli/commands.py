@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 from toddler.tools.base import PermissionMode
 
 if TYPE_CHECKING:
-    from toddler.session.coordinator import SessionCoordinator
+    from toddler.session.manager import SessionManager
 
 __all__ = [
     "CommandResult",
@@ -81,12 +81,12 @@ class SlashCommandDispatcher:
     messages and whether to exit the REPL.
 
     Session and conversation commands make direct calls on the
-    :class:`~toddler.session.coordinator.SessionCoordinator` instead of
+    :class:`~toddler.session.manager.SessionManager` instead of
     returning sentinel strings.
 
     Parameters
     ----------
-    session_coordinator:
+    session_mgr:
         Provides the state machine (``/plan``, ``/mode``), session and
         conversation management (``/clear``, ``/resume``, ``/session``,
         ``/rollback``, ``/checkpoints``), and persistence.
@@ -98,10 +98,10 @@ class SlashCommandDispatcher:
     def __init__(
         self,
         *,
-        session_coordinator: SessionCoordinator,
+        session_mgr: SessionManager,
         output_base: Path | None = None,
     ) -> None:
-        self._coordinator = session_coordinator
+        self._session_mgr = session_mgr
         self._output_base = output_base or (
             Path.home() / ".toddler" / "outputs"
         )
@@ -161,13 +161,13 @@ class SlashCommandDispatcher:
         If an optional title is provided, it is set on the current
         conversation before archiving.
         """
-        if self._coordinator is None:
+        if self._session_mgr is None:
             return CommandResult(
                 continue_repl=True,
                 message="Session persistence is disabled.",
             )
         title = args.strip() or None
-        await self._coordinator.new_conversation(title)
+        await self._session_mgr.new_conversation(title)
         return CommandResult(
             continue_repl=True,
             message=(
@@ -195,18 +195,18 @@ class SlashCommandDispatcher:
 
         turn_num = int(turn_str)
         if (
-            self._coordinator is None
-            or self._coordinator.session is None
-            or self._coordinator.context is None
-            or self._coordinator.conversation is None
+            self._session_mgr is None
+            or self._session_mgr.session is None
+            or self._session_mgr.context is None
+            or self._session_mgr.conversation is None
         ):
             return CommandResult(
                 continue_repl=True,
                 message="No active session — cannot resolve output path.",
             )
 
-        sid = self._coordinator.session.id[:12]
-        cid = self._coordinator.conversation.id[:12]
+        sid = self._session_mgr.session.id[:12]
+        cid = self._session_mgr.conversation.id[:12]
         filepath = (
             self._output_base / sid / cid / f"turn-{turn_num:04d}.md"
         )
@@ -224,8 +224,8 @@ class SlashCommandDispatcher:
 
     async def _cmd_plan(self, _args: str) -> CommandResult:
         """``/plan`` — flag the next message for plan mode."""
-        self._coordinator.state_machine.flag_plan_pending()
-        self._coordinator.set_permission_mode(PermissionMode.MANUAL)
+        self._session_mgr.state_machine.flag_plan_pending()
+        self._session_mgr.set_permission_mode(PermissionMode.MANUAL)
         return CommandResult(
             continue_repl=True,
             message=self._format_mode_status(),
@@ -248,15 +248,15 @@ class SlashCommandDispatcher:
             )
 
         if sub in ("p", "plan"):
-            self._coordinator.state_machine.flag_plan_pending()
-            self._coordinator.set_permission_mode(PermissionMode.MANUAL)
+            self._session_mgr.state_machine.flag_plan_pending()
+            self._session_mgr.set_permission_mode(PermissionMode.MANUAL)
             return CommandResult(
                 continue_repl=True,
                 message=self._format_mode_status(),
             )
 
         if sub in ("m", "manual"):
-            self._coordinator.set_permission_mode(PermissionMode.MANUAL)
+            self._session_mgr.set_permission_mode(PermissionMode.MANUAL)
             self._clear_plan_pending()
             return CommandResult(
                 continue_repl=True,
@@ -264,7 +264,7 @@ class SlashCommandDispatcher:
             )
 
         if sub in ("a", "auto"):
-            self._coordinator.set_permission_mode(PermissionMode.AUTO)
+            self._session_mgr.set_permission_mode(PermissionMode.AUTO)
             self._clear_plan_pending()
             return CommandResult(
                 continue_repl=True,
@@ -285,12 +285,12 @@ class SlashCommandDispatcher:
         The complexity heuristic may still trigger plan mode for complex
         requests — this just cancels an explicit ``/plan``.
         """
-        self._coordinator.state_machine.clear_plan_pending()
+        self._session_mgr.state_machine.clear_plan_pending()
 
     def _format_mode_status(self) -> str:
         """Build a one-line mode + gating summary for ``/mode`` output."""
         # -- workflow mode --
-        sm = self._coordinator.state_machine
+        sm = self._session_mgr.state_machine
         if sm.plan_pending:
             workflow = "PLAN (pending)"
         elif sm.current_mode.is_plan_related:
@@ -299,7 +299,7 @@ class SlashCommandDispatcher:
             workflow = "EXECUTE"
 
         # -- gating --
-        gating = self._coordinator.permission_mode.value.upper()
+        gating = self._session_mgr.permission_mode.value.upper()
         if gating == "AUTO":
             detail = "WRITE tools auto-approved; dangerous shell still confirms"  # noqa: E501
         else:
@@ -316,14 +316,14 @@ class SlashCommandDispatcher:
                 message="Usage: /rollback <checkpoint_id or #N>",
             )
 
-        if self._coordinator is None:
+        if self._session_mgr is None:
             return CommandResult(
                 continue_repl=True,
                 message="Checkpoints are not available (no session manager configured).",  # noqa: E501
             )
 
         try:
-            result = self._coordinator.rollback_to(checkpoint_id)
+            result = self._session_mgr.rollback_to(checkpoint_id)
         except ValueError as exc:
             return CommandResult(
                 continue_repl=True,
@@ -368,14 +368,14 @@ class SlashCommandDispatcher:
 
     async def _cmd_checkpoints(self, _args: str) -> CommandResult:
         """``/checkpoints`` — list checkpoints for the current session."""
-        if self._coordinator is None:
+        if self._session_mgr is None:
             return CommandResult(
                 continue_repl=True,
                 message="Checkpoints are not available (no session manager configured).",  # noqa: E501
             )
 
         try:
-            checkpoints = self._coordinator.list_checkpoints()
+            checkpoints = self._session_mgr.list_checkpoints()
         except ValueError as exc:
             return CommandResult(
                 continue_repl=True,
@@ -422,13 +422,13 @@ class SlashCommandDispatcher:
                 continue_repl=True,
                 message="Usage: /resume <conversation_id or #N>",
             )
-        if self._coordinator is None:
+        if self._session_mgr is None:
             return CommandResult(
                 continue_repl=True,
                 message="Session persistence is disabled.",
             )
         try:
-            await self._coordinator.resume_conversation(conv_id)
+            await self._session_mgr.resume_conversation(conv_id)
             return CommandResult(
                 continue_repl=True,
                 message="Resumed conversation.",
@@ -441,14 +441,14 @@ class SlashCommandDispatcher:
 
     async def _cmd_conversations(self, _args: str) -> CommandResult:
         """``/conversations`` — list conversations in the current session."""
-        if self._coordinator is None or self._coordinator.session is None:
+        if self._session_mgr is None or self._session_mgr.session is None:
             return CommandResult(
                 continue_repl=True,
                 message="Session persistence is disabled.",
             )
 
-        mgr = self._coordinator.storage_manager
-        convs = mgr.list_conversations(self._coordinator.session.id)
+        mgr = self._session_mgr.storage_manager
+        convs = mgr.list_conversations(self._session_mgr.session.id)
         if not convs:
             return CommandResult(
                 continue_repl=True,
@@ -456,8 +456,8 @@ class SlashCommandDispatcher:
             )
 
         active_id = (
-            self._coordinator.conversation.id
-            if self._coordinator.conversation
+            self._session_mgr.conversation.id
+            if self._session_mgr.conversation
             else None
         )
 
@@ -505,7 +505,7 @@ class SlashCommandDispatcher:
 
     async def _session_info(self) -> CommandResult:
         """Return session info as a pre-formatted message."""
-        s = self._coordinator.session if self._coordinator else None
+        s = self._session_mgr.session if self._session_mgr else None
         if s is None:
             return CommandResult(
                 continue_repl=True,
@@ -528,13 +528,13 @@ class SlashCommandDispatcher:
 
     async def _session_list(self) -> CommandResult:
         """Return session list as a pre-formatted message."""
-        if self._coordinator is None:
+        if self._session_mgr is None:
             return CommandResult(
                 continue_repl=True,
                 message="Session persistence is disabled.",
             )
         try:
-            sessions = self._coordinator.storage_manager.list_all()
+            sessions = self._session_mgr.storage_manager.list_all()
         except Exception as exc:
             logger.exception("Failed to list sessions.")
             return CommandResult(
@@ -566,14 +566,14 @@ class SlashCommandDispatcher:
 
     async def _session_switch(self, target_id: str) -> CommandResult:
         """Switch to a different session."""
-        if self._coordinator is None:
+        if self._session_mgr is None:
             return CommandResult(
                 continue_repl=True,
                 message="Session persistence is disabled.",
             )
         try:
-            await self._coordinator.switch_session(target_id)
-            s = self._coordinator.session
+            await self._session_mgr.switch_session(target_id)
+            s = self._session_mgr.session
             return CommandResult(
                 continue_repl=True,
                 message=(

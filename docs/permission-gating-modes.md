@@ -69,7 +69,7 @@ def needs_confirmation(
 - `_needs_confirmation()`: replace the inline logic with `return needs_confirmation(perm, self._permission_mode)`.
 - Add `_permission_mode` property: reads live from `self._sm.permission_mode`, falls back to MANUAL when no state machine (test compatibility).
 
-### 5. `toddler/session/coordinator.py` — sync point, approval mode, display
+### 5. `toddler/session/manager.py` — sync point, approval mode, display
 
 - Import `PermissionMode`.
 - `__init__`: create state machine before executor; pass `permission_mode=self._sm.permission_mode` to `ToolExecutor(...)`.
@@ -85,10 +85,10 @@ def needs_confirmation(
 - Rewrite `_cmd_mode()`:
   - No args: show workflow mode AND permission gating mode.
   - `plan`/`p`: unchanged (sets plan pending).
-  - `manual`/`m`: set permission mode to MANUAL via coordinator.
-  - `auto`/`a`: set permission mode to AUTO via coordinator.
+  - `manual`/`m`: set permission mode to MANUAL via the session manager.
+  - `auto`/`a`: set permission mode to AUTO via the session manager.
   - Unknown: updated error message listing `plan, manual, auto`.
-- Add `_set_permission_mode(mode)` helper: goes through coordinator if available, falls back to state machine.
+- Add `_set_permission_mode(mode)` helper: goes through the session manager if available, falls back to state machine.
 - Update `HELP_TEXT`: `/mode [plan / manual / auto]`.
 
 ### 7. `toddler/cli/renderer.py` — new ConfirmResult decisions
@@ -101,8 +101,8 @@ def needs_confirmation(
 ### 8. `toddler/cli/app.py` — split plan approval
 
 - Import `PermissionMode`.
-- `PlanProposed` handler: change choices to `["approve with manual accept", "approve with auto accept", "deny", "feedback"]`.  Match `"approve_with_manual"` → `coordinator.approve_plan(permission_mode=PermissionMode.MANUAL)`; `"approve_with_auto"` → `coordinator.approve_plan(permission_mode=PermissionMode.AUTO)`.
-- `run_repl` header: pass `permission_label=self._coordinator.permission_label` to `prompt_header`.
+- `PlanProposed` handler: change choices to `["approve with manual accept", "approve with auto accept", "deny", "feedback"]`.  Match `"approve_with_manual"` → `session_mgr.approve_plan(permission_mode=PermissionMode.MANUAL)`; `"approve_with_auto"` → `session_mgr.approve_plan(permission_mode=PermissionMode.AUTO)`.
+- `run_repl` header: pass `permission_label=self._session_mgr.permission_label` to `prompt_header`.
 
 ### 9. `toddler/cli/input_handler.py` — autocomplete
 
@@ -121,7 +121,7 @@ def needs_confirmation(
   - `reset()` preserves the mode
   - Plan entry resets to MANUAL
   - Simple (EXECUTING) path does NOT reset an explicitly-set AUTO
-  - Coordinator: `approve_plan(permission_mode=AUTO)` sets the mode on state machine
+  - SessionManager: `approve_plan(permission_mode=AUTO)` sets the mode on state machine
 - Run full suite: `.venv/bin/python -m pytest tests/ -x`
 
 ## Key Design Decisions

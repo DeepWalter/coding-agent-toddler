@@ -213,7 +213,7 @@ class AgentLoop:
 
             # Append every non-empty assistant response to the conversation
             # history so that tool-call/tool-result pairs are always persisted
-            # (the coordinator no longer reconstructs this from events).
+            # (the session manager no longer reconstructs this from events).
             # Skip empty messages — they can occur on streaming errors where
             # the handler assembled no text and no tool calls.
             if assistant_msg.content:

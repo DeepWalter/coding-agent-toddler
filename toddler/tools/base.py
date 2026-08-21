@@ -41,7 +41,7 @@ class PermissionMode(Enum):
 class PermissionManager:
     """Mutable container for the current :class:`PermissionMode`.
 
-    Owned by :class:`~toddler.session.coordinator.SessionCoordinator` and
+    Owned by :class:`~toddler.session.manager.SessionManager` and
     shared with :class:`~toddler.agent.loop.AgentLoop` and
     :class:`~toddler.tools.executor.ToolExecutor` so they always see the
     same live mode without coupling to the state machine.

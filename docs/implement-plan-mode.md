@@ -27,7 +27,7 @@ progress.
 | `plan_proposal_prompt()` | ✅ Built, **never called** |
 | `should_auto_approve_tool()` | ✅ Built, **never called** |
 | `approve_plan()` / `reject_plan()` | ✅ Built, **never called** |
-| Coordinator multi-phase orchestration | ❌ Missing |
+| SessionManager multi-phase orchestration | ❌ Missing |
 | Agent loop plan mode awareness | ❌ Missing |
 | Plan approval/rejection UI | ❌ Missing |
 | Plan display (steps, risks, rationale) | ❌ Partial |
@@ -38,15 +38,15 @@ progress.
 
 ## Design Decisions
 
-### 1. Orchestration lives in `SessionCoordinator.process_turn()`
+### 1. Orchestration lives in `SessionManager.process_turn()`
 
-The coordinator owns both the state machine and the agent loop — it is the
+The session manager owns both the state machine and the agent loop — it is the
 natural place for multi-phase orchestration. `process_turn()` becomes a
 state-machine-driven loop instead of a single pass through the agent.
 
 ### 2. Plan proposal uses a non-streaming LLM call
 
-After exploration finishes, the coordinator sends `plan_proposal_prompt()` as a
+After exploration finishes, the session manager sends `plan_proposal_prompt()` as a
 follow-up message to the LLM (non-streaming, since the JSON response is small).
 This avoids complicating the streaming agent loop with a special proposal phase.
 
@@ -75,7 +75,7 @@ prompt builder interface.
 ### 6. Step tracking is agent-self-reported (not auto-parsed)
 
 The agent in `PLAN_EXECUTING` mode self-reports progress via text. The
-coordinator does not attempt to parse step completions from tool calls — this is
+the session manager does not attempt to parse step completions from tool calls — this is
 simpler and more robust for the initial implementation. The plan's
 `format_for_prompt()` shows step status icons, and the agent can report "Step 2
 complete" naturally.
@@ -105,9 +105,9 @@ hides this). Add a `TYPE_CHECKING` import of `Plan` from
 This enforces the read-only guarantee during `PLAN_EXPLORING` — currently the
 agent is only *instructed* not to mutate, not prevented.
 
-### Step 3: Add non-streaming plan proposal helper to `SessionCoordinator`
+### Step 3: Add non-streaming plan proposal helper to `SessionManager`
 
-**File**: `toddler/session/coordinator.py`
+**File**: `toddler/session/manager.py`
 
 Add a private method `_generate_plan(user_request)` that:
 
@@ -124,7 +124,7 @@ finish.
 
 ### Step 4: Add multi-phase orchestration to `process_turn()`
 
-**File**: `toddler/session/coordinator.py`
+**File**: `toddler/session/manager.py`
 
 First, extract the current agent-run + persist logic into a reusable helper
 `_run_phase(user_input, mode_hint)` to avoid duplication across explore and
@@ -147,7 +147,7 @@ reset sm → classify → while sm.mode != FINISHED:
   elif PLAN_EXECUTING:     _run_phase(input, "plan_executing") → mark finished
 ```
 
-New public methods on `SessionCoordinator`:
+New public methods on `SessionManager`:
 - `approve_plan()` — calls `sm.approve_plan()`, signals the wait event
 - `reject_plan(feedback="")` — calls `sm.reject_plan(feedback=feedback)`,
   signals the wait event
@@ -176,13 +176,13 @@ case PlanProposed():
         allow_feedback=True,
     )
     if result.decision == "approve":
-        await self._coordinator.approve_plan()
+        await self._session_mgr.approve_plan()
     elif result.decision == "feedback":
-        await self._coordinator.reject_plan(
+        await self._session_mgr.reject_plan(
             feedback=result.feedback or ""
         )
     else:
-        await self._coordinator.reject_plan()
+        await self._session_mgr.reject_plan()
     self._renderer.resume()
 ```
 
@@ -201,7 +201,7 @@ touched. Render using Rich markup:
 
 ### Step 7: Inject plan as a user message during execution
 
-**File**: `toddler/session/coordinator.py`
+**File**: `toddler/session/manager.py`
 
 When the user approves a plan in the `PLAN_WAITING` phase, inject the plan
 content into the conversation as a user message via `ctx.append()`:
@@ -233,7 +233,7 @@ Test cases:
 - `Plan.from_json()` / `Plan.to_json()` — round-trip serialization
 - `plan_proposal_prompt()` — output format includes expected fields
 - `should_auto_approve_tool()` — blocks WRITE in PLAN_EXPLORING, allows READ
-- `SessionCoordinator` plan workflow — mock LLM returns a plan JSON, verify
+- `SessionManager` plan workflow — mock LLM returns a plan JSON, verify
   `PlanProposed` is yielded, approve flows to `PLAN_EXECUTING`
 - `CLIApp` plan approval — verify confirm() is called with correct choices
 
@@ -245,7 +245,7 @@ Test cases:
 |------|--------|
 | `toddler/agent/events.py` | Add `TYPE_CHECKING` import of `Plan` |
 | `toddler/agent/loop.py` | Accept `state_machine`, consult in `_needs_confirmation()` |
-| `toddler/session/coordinator.py` | Multi-phase orchestration, `_run_phase()`, `_generate_plan()`, approve/reject API |
+| `toddler/session/manager.py` | Multi-phase orchestration, `_run_phase()`, `_generate_plan()`, approve/reject API |
 | `toddler/cli/app.py` | Plan approval/rejection interaction in `PlanProposed` handler |
 | `toddler/cli/renderer.py` | Enhanced `on_plan_proposed()` with full plan display |
 | `tests/test_plan_mode.py` | New test file covering all plan mode components |

@@ -1,4 +1,4 @@
-"""SessionCoordinator — owns the lifecycle of a session.
+"""SessionManager — owns the lifecycle of a session.
 
 Wires together the Agent, Context, Tools, and Storage layers so the CLI
 layer only needs to talk to ONE object instead of directly importing from
@@ -41,11 +41,11 @@ from toddler.tools.plan import PlanState, PlanUpdateTool
 logger = logging.getLogger(__name__)
 
 # ======================================================================
-# SessionCoordinator
+# SessionManager
 # ======================================================================
 
 
-class SessionCoordinator:
+class SessionManager:
     """Owns the lifecycle of a session — wires Agent, Context, and Storage.
 
     The CLI talks ONLY to this object.  It creates and manages:
@@ -95,7 +95,7 @@ class SessionCoordinator:
         self._perm_mgr = PermissionManager()
 
         # Shared plan step-status tracker — the plan_update tool mutates
-        # it during PLAN_EXECUTING; the coordinator diffs it after each
+        # it during PLAN_EXECUTING; the manager diffs it after each
         # completed tool call to emit PlanStepUpdate.  Only armed while
         # a plan runs.
         self._plan_state = PlanState()
@@ -119,7 +119,7 @@ class SessionCoordinator:
         self._ctx: ContextManager | None = None
         self._agent_impl: AgentLoop | None = None
 
-        # Persistence tracking (coordinator owns this, not the context).
+        # Persistence tracking (manager owns this, not the context).
         self._base_seq: int = 0
 
     # ==================================================================
@@ -386,7 +386,7 @@ class SessionCoordinator:
     async def _activate_context(self) -> None:
         """Load messages from storage and populate the context buffer.
 
-        The coordinator
+        The manager
         reads messages from the DB, builds the initial list (including any
         synthetic compaction summary), and hands it to
         :meth:`ContextManager.load`.

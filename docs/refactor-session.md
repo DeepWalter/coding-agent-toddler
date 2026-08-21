@@ -1,4 +1,4 @@
-# Refactor: CLI + Storage → Session Coordinator
+# Refactor: CLI + Storage → Session Manager
 
 ## Target Architecture
 
@@ -6,7 +6,7 @@
                  CLI
                   |
                   v
-          SessionCoordinator
+          SessionManager
                   |
        +----------+----------+
        |                     |
@@ -21,7 +21,7 @@
 ```
 
 - **CLI** imports ONLY from `session` (and `config` for Settings)
-- **SessionCoordinator** imports from `agent`, `context`, `tools`, `session.manager`
+- **SessionManager** imports from `agent`, `context`, `tools`, `session.manager`
 - **AgentLoop** imports from `tools`, `llm` (already correct)
 - **ConversationContext** imports from `session.manager` (already correct, via
   TYPE_CHECKING)
@@ -77,18 +77,18 @@ their names. This is purely a package rename.
 **Verification**: `git diff --stat` shows only import path changes. All tests
 pass.
 
-## Step 2: Create `SessionCoordinator` in `session/coordinator.py`
+## Step 2: Create `SessionManager` in `session/manager.py`
 
 **Goal**: Extract orchestration logic from `CLIApp` into a new class that owns
-the session lifecycle. `CLIApp` delegates all business logic to the coordinator
+the session lifecycle. `CLIApp` delegates all business logic to the session manager
 and only handles display + input.
 
-**New file**: `toddler/session/coordinator.py`
+**New file**: `toddler/session/manager.py`
 
-### SessionCoordinator API
+### SessionManager API
 
 ```python
-class SessionCoordinator:
+class SessionManager:
     """Owns the lifecycle of a session — wires Agent, Context, and Storage.
 
     The CLI talks ONLY to this object. It creates and manages:
@@ -139,9 +139,9 @@ class SessionCoordinator:
     def context(self) -> ConversationContext: ...
 ```
 
-### What moves from CLIApp → SessionCoordinator
+### What moves from CLIApp → SessionManager
 
-| Responsibility | Current location (CLIApp) | Moves to SessionCoordinator |
+| Responsibility | Current location (CLIApp) | Moves to SessionManager |
 |---|---|---|
 | Tool registry + executor creation | `__init__` | `__init__` |
 | SystemPromptBuilder creation | `__init__` | `__init__` |
@@ -166,13 +166,13 @@ class SessionCoordinator:
 | Rendering events (TextDelta, ToolCallStart, etc.) | Pure display concern |
 | StreamDisplay lifecycle | Pure display concern |
 | Confirmation prompts (AgentPaused) | Requires user input |
-| Slash command dispatch | But dispatch targets call SessionCoordinator, not StorageManager directly |
+| Slash command dispatch | But dispatch targets call SessionManager, not StorageManager directly |
 | Banner, help text | Pure display concern |
 
 ## Step 3: Slim down `CLIApp`
 
 **Goal**: CLIApp becomes a thin display+input layer that delegates to
-SessionCoordinator.
+SessionManager.
 
 ### After refactoring — CLIApp
 
@@ -181,7 +181,7 @@ class CLIApp:
     """Thin CLI layer — REPL loop, display, input, slash commands."""
 
     def __init__(
-        self, settings: Settings, session: SessionCoordinator,
+        self, settings: Settings, session: SessionManager,
     ) -> None:
         self._settings = settings
         self._session = session
@@ -189,7 +189,7 @@ class CLIApp:
         self._input = InputHandler()
         self._cmd_dispatcher = SlashCommandDispatcher(
             state_machine=session.state_machine,
-            session_coordinator=session,  # was storage_manager
+            session_mgr=session,  # was storage_manager
         )
 
     async def run_repl(self, *, session_id: str | None = None) -> None:
@@ -202,7 +202,7 @@ class CLIApp:
                 if not handled:
                     break
                 continue
-            # Delegate turn to coordinator, just render events
+            # Delegate turn to session manager, just render events
             async for event in self._session.process_turn(user_input):
                 self._render_event(event)
         await self._session.prune_if_empty()
@@ -221,20 +221,20 @@ After: 3 packages (session, cli, config)
 
 Specific removed imports:
 - `toddler.agent.events` — events still used for rendering, keep
-- `toddler.agent.loop` — **removed** (AgentLoop created by coordinator)
-- `toddler.agent.state_machine` — **removed** (owned by coordinator)
-- `toddler.checkpoint` — **removed** (wired by coordinator)
+- `toddler.agent.loop` — **removed** (AgentLoop created by session manager)
+- `toddler.agent.state_machine` — **removed** (owned by session manager)
+- `toddler.checkpoint` — **removed** (wired by session manager)
 - `toddler.context.conversation_context` — **removed**
 - `toddler.context.system_prompt` — **removed**
 - `toddler.llm.base` / `toddler.llm.provider` — **removed**
-- `toddler.session.manager` — **removed** (StorageManager accessed via coordinator)
+- `toddler.session.manager` — **removed** (StorageManager accessed via session manager)
 - `toddler.session.models` — keep `Session` for display (or access via
-  `coordinator.session`)
+  `session_mgr.session`)
 - `toddler.tools` / `toddler.tools.executor` — **removed**
 
 ## Step 4: Simplify `main.py`
 
-**Goal**: Reduce main.py's import surface. Wire SessionCoordinator once, pass
+**Goal**: Reduce main.py's import surface. Wire SessionManager once, pass
 to CLIApp.
 
 ### After refactoring — main.py
@@ -257,8 +257,8 @@ def main() -> None:
     # --- Shared services ---
     llm = OpenAICompatibleProvider(settings)
 
-    # --- Session coordinator (owns all wiring) ---
-    session = SessionCoordinator(
+    # --- Session manager (owns all wiring) ---
+    session = SessionManager(
         settings,
         storage_mgr,
         llm,
@@ -289,45 +289,45 @@ After: 4 direct package imports (`session`, `cli`, `config`, `llm`)
 
 ## Step 5: Update `SlashCommandDispatcher`
 
-**Goal**: Commands that mutate session state go through `SessionCoordinator`
+**Goal**: Commands that mutate session state go through `SessionManager`
 instead of calling `StorageManager` directly.
 
 Current sentinel-string protocol (e.g. `"__NEW_CONVERSATION__:title"`) is
-replaced with direct calls on the coordinator:
+replaced with direct calls on the session manager:
 
 ```python
 class SlashCommandDispatcher:
     def __init__(
         self,
         state_machine: AgentStateMachine,
-        session_coordinator: SessionCoordinator,  # was storage_manager
+        session_mgr: SessionManager,  # was storage_manager
         checkpoint_manager_provider: ... = None,
     ): ...
 ```
 
-Sentinel strings that become direct coordinator calls:
+Sentinel strings that become direct session manager calls:
 | Sentinel | Replacement |
 |---|---|
-| `__SESSION_INFO__` | CLI reads `coordinator.session` directly |
-| `__LIST_CONVERSATIONS__` | CLI calls `coordinator.list_conversations()` |
-| `__SESSION_SWITCH__:id` | CLI calls `coordinator.switch_session(id)` |
-| `__NEW_CONVERSATION__:title` | CLI calls `coordinator.new_conversation(title)` |
-| `__RESUME_CONVERSATION__:id` | CLI calls `coordinator.resume_conversation(id)` |
+| `__SESSION_INFO__` | CLI reads `session_mgr.session` directly |
+| `__LIST_CONVERSATIONS__` | CLI calls `session_mgr.list_conversations()` |
+| `__SESSION_SWITCH__:id` | CLI calls `session_mgr.switch_session(id)` |
+| `__NEW_CONVERSATION__:title` | CLI calls `session_mgr.new_conversation(title)` |
+| `__RESUME_CONVERSATION__:id` | CLI calls `session_mgr.resume_conversation(id)` |
 
 ## Files Changed Summary
 
 | File | Change |
 |---|---|
 | `toddler/storage/` → `toddler/session/` | Directory rename |
-| `toddler/session/__init__.py` | Update exports, add `SessionCoordinator` |
-| `toddler/session/coordinator.py` | **NEW** — SessionCoordinator class |
+| `toddler/session/__init__.py` | Update exports, add `SessionManager` |
+| `toddler/session/manager.py` | **NEW** — SessionManager class |
 | `toddler/session/manager.py` | Update internal import paths |
 | `toddler/cli/app.py` | Major deletion — remove orchestration, keep display+I/O |
-| `toddler/cli/commands.py` | Replace `StorageManager` param with `SessionCoordinator` |
-| `toddler/main.py` | Simplify wiring — create SessionCoordinator, pass to CLIApp |
+| `toddler/cli/commands.py` | Replace `StorageManager` param with `SessionManager` |
+| `toddler/main.py` | Simplify wiring — create SessionManager, pass to CLIApp |
 | `toddler/context/conversation_context.py` | Update import paths (`storage` → `session`) |
 | `toddler/checkpoint/manager.py` | Update import paths |
-| Tests | Update imports, add SessionCoordinator tests |
+| Tests | Update imports, add SessionManager tests |
 
 ## What Does NOT Change
 
@@ -346,15 +346,15 @@ Each step is a standalone, testable commit:
 | # | Commit | Scope | Risk |
 |---|--------|-------|------|
 | 1 | `refactor(session): rename storage package to session` | Directory rename + import updates. Zero behavior change. | Low |
-| 2 | `refactor(session): extract SessionCoordinator from CLIApp` | New file. Move turn execution + lifecycle logic. CLIApp delegates. Update tests. | Medium |
-| 3 | `refactor(cli): slim CLIApp to display+input only` | Remove direct agent/context/tools imports from CLI. Route slash commands through coordinator. | Medium |
-| 4 | `refactor(main): simplify wiring via SessionCoordinator` | Reduce main.py imports. Update SlashCommandDispatcher. | Low |
+| 2 | `refactor(session): extract SessionManager from CLIApp` | New file. Move turn execution + lifecycle logic. CLIApp delegates. Update tests. | Medium |
+| 3 | `refactor(cli): slim CLIApp to display+input only` | Remove direct agent/context/tools imports from CLI. Route slash commands through the session manager. | Medium |
+| 4 | `refactor(main): simplify wiring via SessionManager` | Reduce main.py imports. Update SlashCommandDispatcher. | Low |
 
 ### Rollback
 
 Each commit is independently revertible. If Step 2 introduces issues, revert to
 Step 1 (package rename only, no behavioral change). If Step 3 breaks display
-behavior, revert to Step 2 (coordinator exists but CLIApp still has old code
+behavior, revert to Step 2 (session manager exists but CLIApp still has old code
 paths).
 
 ## Decisions
@@ -363,6 +363,6 @@ paths).
    is a separate concern from the CLI → Session boundary refactor.
 
 2. **SlashCommandDispatcher protocol**: Switch to direct method calls on
-   `SessionCoordinator`. The sentinel-string protocol was a workaround for
-   CLIApp not having a proper coordinator to delegate to. With
-   `SessionCoordinator` in place, direct calls are cleaner.
+   `SessionManager`. The sentinel-string protocol was a workaround for
+   CLIApp not having a proper session manager to delegate to. With
+   `SessionManager` in place, direct calls are cleaner.

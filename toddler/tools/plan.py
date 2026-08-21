@@ -74,11 +74,11 @@ PLAN_UPDATE_USAGE = (
 class PlanState:
     """Runtime step-status tracking for an executing plan.
 
-    Owned by :class:`SessionCoordinator`.  :meth:`activate` captures the
+    Owned by :class:`SessionManager`.  :meth:`activate` captures the
     plan's steps into an ordered status table (plus a frozen description
     table) and baselines the emitted snapshot; :meth:`take_update` then
     returns the complete step list whenever any status changed — every
-    mutation emits, with no trigger filter — and the coordinator wraps
+    mutation emits, with no trigger filter — and the session manager wraps
     the returned triples into ``PlanStepUpdate`` events.  Never holds
     the plan itself.
     """
@@ -180,7 +180,7 @@ class PlanState:
         """Return the complete step list when any status changed.
 
         Emits on every mutation — no trigger filter — so a bare
-        ``completed`` gets its own emission and the coordinator needs no
+        ``completed`` gets its own emission and the session manager needs no
         phase-end flush: every mutation happens during a tool call and is
         picked up at the following ``ToolCallEnd``.  Back-to-back
         mutations (a completed followed by the next step's start) would
@@ -211,7 +211,7 @@ class PlanUpdateTool(BaseTool):
     """Update the status of a step in the approved execution plan.
 
     Mutates the shared :class:`PlanState` it was given.  The session
-    coordinator arms that state only while PLAN_EXECUTING is active, and
+    the session manager arms that state only while PLAN_EXECUTING is active, and
     registers this tool dynamically for that phase alone, so the LLM sees
     the tool schema only when a plan is being executed.
     """

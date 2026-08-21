@@ -397,9 +397,9 @@ case AgentPaused():
     self._renderer.on_agent_paused(event)
     approved = await self._confirm(event)
     if approved:
-        await self._coordinator.agent.approve_tool_call()
+        await self._session_mgr.agent.approve_tool_call()
     else:
-        await self._coordinator.agent.deny_tool_call()
+        await self._session_mgr.agent.deny_tool_call()
     self._renderer.resume()
 ```
 
@@ -413,9 +413,9 @@ case AgentPaused():
         choices=event.choices or ["approve", "deny"],
     )
     if result.decision == "approve":
-        await self._coordinator.agent.approve_tool_call()
+        await self._session_mgr.agent.approve_tool_call()
     else:
-        await self._coordinator.agent.deny_tool_call()
+        await self._session_mgr.agent.deny_tool_call()
 ```
 
 The `_confirm()` method on `CLIApp` is removed. Confirmation is fully the
@@ -436,11 +436,11 @@ case PlanProposed():
     )
     match result.decision:
         case "approve":
-            await self._coordinator.agent.approve_plan()
+            await self._session_mgr.agent.approve_plan()
         case "feedback":
-            await self._coordinator.agent.reject_plan(feedback=result.feedback)
+            await self._session_mgr.agent.reject_plan(feedback=result.feedback)
         case "deny":
-            await self._coordinator.agent.reject_plan()
+            await self._session_mgr.agent.reject_plan()
 ```
 
 ## Raw termios details
@@ -476,7 +476,7 @@ codebase, and fully adequate for a 2–3 row selection menu.
 
 ## Non-goals
 
-- The plan orchestration loop (coordinator yielding `PlanProposed`) is out of
+- The plan orchestration loop (session manager yielding `PlanProposed`) is out of
   scope.
 - Mouse support is out of scope — keyboard navigation covers the use case.
 - Multi-line feedback input is out of scope — one line is sufficient for

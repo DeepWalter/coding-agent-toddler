@@ -1,7 +1,7 @@
-"""Session persistence — models, SQLite database, high-level manager, and coordinator."""
+"""Session persistence — models, SQLite database, storage, and session manager."""
 
-from toddler.session.coordinator import SessionCoordinator
 from toddler.session.database import SQLiteDatabase
+from toddler.session.manager import SessionManager
 from toddler.session.models import (
     Conversation,
     ConversationSummary,
@@ -15,7 +15,7 @@ __all__ = [
     "Conversation",
     "ConversationSummary",
     "Session",
-    "SessionCoordinator",
+    "SessionManager",
     "StorageManager",
     "SessionSummary",
     "SQLiteDatabase",

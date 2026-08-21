@@ -79,7 +79,7 @@ class PlanStepUpdate(AgentEvent):
 
     Always carries the complete ``(id, description, status)`` triple
     list, so renderers replace their snapshot without diffing.  The
-    coordinator emits it after each ``ToolCallEnd`` that left the shared
+    session manager emits it after each ``ToolCallEnd`` that left the shared
     state changed; adjacent frames are coalesced by the streaming
     renderer's repaint throttle.
     """

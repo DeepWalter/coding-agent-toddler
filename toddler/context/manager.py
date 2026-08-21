@@ -2,7 +2,7 @@
 
 Provides a single-responsibility message buffer that prepares messages for
 LLM API requests.  It knows nothing about storage, sessions, or persistence
-— those concerns belong to the session layer (:class:`SessionCoordinator`).
+— those concerns belong to the session layer (:class:`SessionManager`).
 
 Wires together three sub-components:
 

@@ -18,7 +18,7 @@ from toddler.cli.app import CLIApp
 from toddler.config.settings import Settings
 from toddler.llm import OpenAICompatibleProvider
 from toddler.session import (
-    SessionCoordinator,
+    SessionManager,
     SQLiteDatabase,
     StorageManager,
     print_sessions,
@@ -54,8 +54,8 @@ def main() -> None:
     # --- Shared LLM provider ---
     llm = OpenAICompatibleProvider(settings)
 
-    # --- Session coordinator (owns all wiring) ---
-    session = SessionCoordinator(
+    # --- Session manager (owns all wiring) ---
+    session = SessionManager(
         settings,
         storage_mgr,
         llm,
