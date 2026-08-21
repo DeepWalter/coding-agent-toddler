@@ -47,6 +47,7 @@ from toddler.agent.events import (
     ToolCallEnd,
     ToolCallStart,
 )
+from toddler.tools.plan import PlanStepStatus
 
 if TYPE_CHECKING:
     from toddler.tools.base import ToolResult
@@ -89,11 +90,18 @@ _STATUS_STYLES = {
     "error": _ICON_ERROR,
 }
 
-_PLAN_ICONS = {"pending": "⬜", "in_progress": "▶️", "completed": "✅"}
+# Keyed by PlanStepStatus members so the display maps can't drift from
+# the canonical vocabulary; lookups work with plain-string statuses too
+# (StrEnum members are strings).
+_PLAN_ICONS = {
+    PlanStepStatus.PENDING: "⬜",
+    PlanStepStatus.IN_PROGRESS: "▶️",
+    PlanStepStatus.COMPLETED: "✅",
+}
 _PLAN_STYLES = {
-    "pending": "dim",
-    "in_progress": "bold yellow",
-    "completed": "bold green",
+    PlanStepStatus.PENDING: "dim",
+    PlanStepStatus.IN_PROGRESS: "bold yellow",
+    PlanStepStatus.COMPLETED: "bold green",
 }
 
 

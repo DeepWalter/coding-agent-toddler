@@ -7,6 +7,7 @@ from __future__ import annotations
 import logging
 from collections import OrderedDict
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from toddler.tools.base import BaseTool, Permission, ToolResult
@@ -15,24 +16,58 @@ if TYPE_CHECKING:
     from toddler.agent.planner import Plan
 
 __all__ = [
-    "PLAN_STEP_STATUSES", "PLAN_UPDATE_STATUSES",
-    "PlanState", "PlanUpdateTool",
+    "PLAN_STEP_STATUSES", "PLAN_UPDATE_STATUSES", "PLAN_UPDATE_USAGE",
+    "PlanStepStatus", "PlanState", "PlanUpdateTool",
 ]
 
 logger = logging.getLogger(__name__)
 
-# Canonical plan step status values — the single source of truth for the
-# model's status vocabulary and PlanState.  Every step starts ``pending``
-# (set by PlanState.activate, never by the model) and moves toward
-# ``completed``.
-PLAN_STEP_STATUSES = ("pending", "in_progress", "completed")
+class PlanStepStatus(StrEnum):
+    """Canonical plan step status values — the single source of truth
+    for the status vocabulary, from which the status tuples, prompt
+    prose, PlanState comparisons, and renderer display maps are all
+    derived.
+
+    Every step starts :attr:`PENDING` (set by ``PlanState.activate``,
+    never by the model) and moves toward :attr:`COMPLETED`.
+    """
+
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+
+
+# All statuses in lifecycle order, as plain strings.  Derived from the
+# enum so a vocabulary change propagates.
+PLAN_STEP_STATUSES = tuple(s.value for s in PlanStepStatus)
 
 # Statuses the model may write via plan_update.  ``pending`` is the
 # initial state and not writable — the render trigger fires exactly on
 # these transitions (a step starting, or completion), so every accepted
-# mutation is displayable.  Derived by slicing so a vocabulary change
-# propagates; the slice assumes ``pending`` stays the first entry.
-PLAN_UPDATE_STATUSES = PLAN_STEP_STATUSES[1:]
+# mutation is displayable.  Derived by membership so a vocabulary change
+# propagates without positional assumptions.
+PLAN_UPDATE_STATUSES = tuple(
+    s.value for s in PlanStepStatus if s is not PlanStepStatus.PENDING
+)
+
+# Canonical plan_update usage instructions — the single source of truth
+# for the model's reporting protocol.  Embedded in the tool description,
+# which is what the model reads at call time; the PLAN_EXECUTING system
+# prompt and the execution user prompt point at the tool description
+# instead of repeating the protocol, so a vocabulary or protocol change
+# propagates from one place.  Status literals are interpolated from
+# PlanStepStatus so they stay in sync.  The final-step carve-out (call
+# alone, no text alongside) reconciles the per-step confirmation with
+# the renderer needing the closing snapshot before the summary.
+PLAN_UPDATE_USAGE = (
+    f"Call with status='{PlanStepStatus.IN_PROGRESS.value}' immediately "
+    f"before starting a step and status='{PlanStepStatus.COMPLETED.value}' "
+    "once it is done, briefly confirming what was done — except when "
+    "marking the final step completed: call plan_update alone in its own "
+    "response with no text alongside it, and give the closing summary "
+    "once its tool result returns. "
+    "Statuses: " + ", ".join(PLAN_UPDATE_STATUSES) + "."
+)
 
 
 @dataclass
@@ -49,13 +84,13 @@ class PlanState:
     """
 
     _active: bool = field(default=False, repr=False)
-    _statuses: OrderedDict[str, str] = field(
+    _statuses: OrderedDict[str, PlanStepStatus] = field(
         default_factory=OrderedDict, repr=False,
     )
     _descriptions: dict[str, str] = field(
         default_factory=dict, repr=False,
     )
-    _last_emitted: tuple[tuple[str, str], ...] | None = field(
+    _last_emitted: tuple[tuple[str, PlanStepStatus], ...] | None = field(
         default=None, repr=False,
     )
 
@@ -79,11 +114,14 @@ class PlanState:
         return (
             self._active
             and bool(self._statuses)
-            and all(s == "completed" for s in self._statuses.values())
+            and all(
+                s == PlanStepStatus.COMPLETED
+                for s in self._statuses.values()
+            )
         )
 
     @property
-    def steps(self) -> list[tuple[str, str, str]]:
+    def steps(self) -> list[tuple[str, str, PlanStepStatus]]:
         """Return current ``(id, description, status)`` triples in plan
         order — a pure read, unlike :meth:`take_update`.  Empty when no
         plan is active."""
@@ -114,7 +152,9 @@ class PlanState:
                 "tracking will collapse rows.",
                 len(set(ids)), len(ids),
             )
-        self._statuses = OrderedDict((s.id, "pending") for s in plan.steps)
+        self._statuses = OrderedDict(
+            (s.id, PlanStepStatus.PENDING) for s in plan.steps
+        )
         self._descriptions = {s.id: s.description for s in plan.steps}
         self._last_emitted = self._status_snapshot()
         self._active = True
@@ -134,19 +174,21 @@ class PlanState:
         """Update a step's status.
 
         Returns ``False`` when the step is unknown or no plan is active.
-        Status validity is not checked here — the ``plan_update`` tool
-        validates against ``PLAN_UPDATE_STATUSES`` before calling.
+        The status is normalized to a :class:`PlanStepStatus` member so
+        tracking stays consistently typed; the ``plan_update`` tool
+        validates against ``PLAN_UPDATE_STATUSES`` before calling, so an
+        unparseable value signals a caller bug (raises ``ValueError``).
         """
         if not self._active or step_id not in self._statuses:
             return False
-        self._statuses[step_id] = status
+        self._statuses[step_id] = PlanStepStatus(status)
         return True
 
     # ------------------------------------------------------------------
     # Update detection
     # ------------------------------------------------------------------
 
-    def take_update(self) -> list[tuple[str, str, str]] | None:
+    def take_update(self) -> list[tuple[str, str, PlanStepStatus]] | None:
         """Return the complete step list when there is something new to show.
 
         Renders only when a step transitioned to ``in_progress`` (a
@@ -160,7 +202,7 @@ class PlanState:
         """
         return self._take_update(flush=False)
 
-    def flush_update(self) -> list[tuple[str, str, str]] | None:
+    def flush_update(self) -> list[tuple[str, str, PlanStepStatus]] | None:
         """Return the complete step list when anything changed since the
         last emission.
 
@@ -172,7 +214,7 @@ class PlanState:
 
     def _take_update(
         self, *, flush: bool,
-    ) -> list[tuple[str, str, str]] | None:
+    ) -> list[tuple[str, str, PlanStepStatus]] | None:
         if not self._active or self._last_emitted is None:
             return None
         current = self._status_snapshot()
@@ -190,17 +232,17 @@ class PlanState:
             return True
         last = dict(self._last_emitted or {})
         return any(
-            status == "in_progress" and last.get(sid) != status
+            status == PlanStepStatus.IN_PROGRESS and last.get(sid) != status
             for sid, status in self._statuses.items()
         )
 
-    def _step_triples(self) -> list[tuple[str, str, str]]:
+    def _step_triples(self) -> list[tuple[str, str, PlanStepStatus]]:
         return [
             (sid, self._descriptions[sid], status)
             for sid, status in self._statuses.items()
         ]
 
-    def _status_snapshot(self) -> tuple[tuple[str, str], ...]:
+    def _status_snapshot(self) -> tuple[tuple[str, PlanStepStatus], ...]:
         return tuple(self._statuses.items())
 
 
@@ -216,9 +258,7 @@ class PlanUpdateTool(BaseTool):
     name = "plan_update"
     description = (
         "Update the status of a step in the approved execution plan. "
-        "Call with status='in_progress' immediately before starting a "
-        "step and status='completed' once it is done. "
-        "Statuses: " + ", ".join(PLAN_UPDATE_STATUSES) + "."
+        + PLAN_UPDATE_USAGE
     )
     parameters = {
         "type": "object",

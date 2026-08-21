@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from toddler.agent.planner import Plan
     from toddler.llm import TokenUsage
     from toddler.tools.base import ToolResult
+    from toddler.tools.plan import PlanStepStatus
 
 
 # ---------------------------------------------------------------------------
@@ -83,7 +84,7 @@ class PlanStepUpdate(AgentEvent):
     never hit a trigger).
     """
 
-    steps: list[tuple[str, str, str]]  # (id, description, status)
+    steps: list[tuple[str, str, PlanStepStatus]]  # (id, description, status)
 
 
 # ---------------------------------------------------------------------------

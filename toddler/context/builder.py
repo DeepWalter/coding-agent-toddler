@@ -63,18 +63,12 @@ propose a concrete, actionable plan.
 _PLAN_EXECUTING_INSTRUCTIONS = """\
 ## Current Mode: PLAN (Execute)
 
-Follow the approved plan steps in order.  Report progress after each step.
-If you encounter unexpected issues (files that don't exist, conflicting
-changes, errors), pause and report them — do not silently deviate from
-the plan.
-
-Use the plan_update tool to keep progress visible: call
-plan_update(step_id=..., status="in_progress") immediately before starting
-a step, and plan_update(step_id=..., status="completed") once the step is
-finished.
+Follow the approved plan steps in order.  Report progress per the
+plan_update tool description.  If you encounter unexpected issues (files
+that don't exist, conflicting changes, errors), pause and report them —
+do not silently deviate from the plan.
 
 - Execute one step at a time, in dependency order.
-- After each step, briefly confirm what was done.
 - If a step cannot be completed as planned, explain why and wait for guidance.
 - When all steps are complete, finish with a brief summary of what was
   accomplished and any deviations from the plan."""
