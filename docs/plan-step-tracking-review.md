@@ -116,6 +116,13 @@ so `plan_update(status="pending")` (a valid enum value) leaves the UI
 showing a stale ▶️ until the phase-end flush.
 
 - [toddler/tools/plan.py:162](toddler/tools/plan.py#L162)
+- **Fixed**: `pending` is no longer writable — `plan_update` accepts only
+  `in_progress`/`completed` (`PLAN_UPDATE_STATUSES`), the initial-state
+  `pending` being set by `PlanState.activate` alone.  The schema enum,
+  tool description, runtime validation, and render trigger now agree on
+  the same two writable statuses, so every accepted mutation is either
+  render-worthy or deliberately held back.  A regression test pins
+  `plan_update(status="pending")` → rejected with the state unchanged.
 
 ## Refactors
 

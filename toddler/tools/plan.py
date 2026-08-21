@@ -14,13 +14,25 @@ from toddler.tools.base import BaseTool, Permission, ToolResult
 if TYPE_CHECKING:
     from toddler.agent.planner import Plan
 
-__all__ = ["PLAN_STEP_STATUSES", "PlanState", "PlanUpdateTool"]
+__all__ = [
+    "PLAN_STEP_STATUSES", "PLAN_UPDATE_STATUSES",
+    "PlanState", "PlanUpdateTool",
+]
 
 logger = logging.getLogger(__name__)
 
 # Canonical plan step status values — the single source of truth for the
-# model's status vocabulary, the tool schema enum, and PlanState.
+# model's status vocabulary and PlanState.  Every step starts ``pending``
+# (set by PlanState.activate, never by the model) and moves toward
+# ``completed``.
 PLAN_STEP_STATUSES = ("pending", "in_progress", "completed")
+
+# Statuses the model may write via plan_update.  ``pending`` is the
+# initial state and not writable — the render trigger fires exactly on
+# these transitions (a step starting, or completion), so every accepted
+# mutation is displayable.  Derived by slicing so a vocabulary change
+# propagates; the slice assumes ``pending`` stays the first entry.
+PLAN_UPDATE_STATUSES = PLAN_STEP_STATUSES[1:]
 
 
 @dataclass
@@ -123,7 +135,7 @@ class PlanState:
 
         Returns ``False`` when the step is unknown or no plan is active.
         Status validity is not checked here — the ``plan_update`` tool
-        validates against ``PLAN_STEP_STATUSES`` before calling.
+        validates against ``PLAN_UPDATE_STATUSES`` before calling.
         """
         if not self._active or step_id not in self._statuses:
             return False
@@ -206,7 +218,7 @@ class PlanUpdateTool(BaseTool):
         "Update the status of a step in the approved execution plan. "
         "Call with status='in_progress' immediately before starting a "
         "step and status='completed' once it is done. "
-        "Statuses: " + ", ".join(PLAN_STEP_STATUSES) + "."
+        "Statuses: " + ", ".join(PLAN_UPDATE_STATUSES) + "."
     )
     parameters = {
         "type": "object",
@@ -217,7 +229,7 @@ class PlanUpdateTool(BaseTool):
             },
             "status": {
                 "type": "string",
-                "enum": list(PLAN_STEP_STATUSES),
+                "enum": list(PLAN_UPDATE_STATUSES),
                 "description": "New status for the step.",
             },
         },
@@ -242,7 +254,7 @@ class PlanUpdateTool(BaseTool):
                 output="",
                 error="No approved plan is active.",
             )
-        if status not in PLAN_STEP_STATUSES:
+        if status not in PLAN_UPDATE_STATUSES:
             return ToolResult(
                 tool_id="",
                 tool_name=self.name,
@@ -250,7 +262,7 @@ class PlanUpdateTool(BaseTool):
                 output="",
                 error=(
                     f"Invalid status: {status!r}. "
-                    f"Valid statuses: {', '.join(PLAN_STEP_STATUSES)}."
+                    f"Valid statuses: {', '.join(PLAN_UPDATE_STATUSES)}."
                 ),
             )
         if not self._plan_state.mark_step(step_id, status):

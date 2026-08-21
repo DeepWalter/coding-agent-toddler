@@ -531,6 +531,22 @@ class TestPlanUpdateTool:
         assert result.error is not None
         assert "bogus" in result.error
 
+    @pytest.mark.asyncio
+    async def test_pending_is_not_writable(self):
+        """pending is the initial state — the model may not write it back.
+
+        Accepting it would silently mutate a status the render trigger
+        never shows (only in_progress transitions or completion render),
+        leaving the panel stale until the phase-end flush.
+        """
+        plan = _plan()
+        tool, state = _plan_tool(plan)
+        result = await tool.execute(step_id="step-1", status="pending")
+        assert result.success is False
+        assert "pending" in (result.error or "")
+        assert "in_progress" in (result.error or "")
+        assert state.steps == [("step-1", "Do it", "pending")]
+
     def test_permission_is_read(self):
         tool, _ = _plan_tool()
         assert tool.permission is Permission.READ
@@ -538,7 +554,7 @@ class TestPlanUpdateTool:
     def test_schema_enum_lists_valid_statuses(self):
         tool, _ = _plan_tool()
         enum = tool.parameters["properties"]["status"]["enum"]
-        assert enum == ["pending", "in_progress", "completed"]
+        assert enum == ["in_progress", "completed"]
 
 
 class TestPlanState:
