@@ -200,8 +200,11 @@ class Plan:
             steps=steps,
             rationale=_single_line(data.get("rationale", "")),
             risks=[_single_line(r) for r in data.get("risks", [])],
+            # Default to 0 (matching the dataclass default) when the LLM
+            # omits the field — falling back to the step count would
+            # misreport an 8-step, 2-file refactor as 8 files touched.
             estimated_files_touched=data.get(
-                "estimated_files_touched", len(steps),
+                "estimated_files_touched", 0,
             ),
         )
 

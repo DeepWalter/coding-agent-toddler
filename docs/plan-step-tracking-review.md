@@ -54,8 +54,12 @@ Plans that omit the field display (and persist via `to_json`) a step count
 as the file-touch estimate — an 8-step, 2-file refactor shows "Estimated
 files touched: 8".
 
-- [toddler/agent/planner.py:195](toddler/agent/planner.py#L195)
+- [toddler/agent/planner.py:206-207](toddler/agent/planner.py#L206-L207)
 - Fix: default to 0, or omit the field from display when absent.
+- **Fixed**: `Plan.from_json` now defaults the field to `0` when the LLM
+  omits it — matching the dataclass default, so parse, display, and
+  `to_json` agree (an 8-step, 2-file refactor no longer reports "Estimated
+  files touched: 8").  A regression test pins the minimal-parse default.
 
 ### Plan-panel budget off-by-one
 

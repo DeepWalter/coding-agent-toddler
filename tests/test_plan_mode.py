@@ -280,6 +280,8 @@ class TestPlanSerialization:
         assert plan.steps[0].id == "step-1"  # canonicalized, not "s1"
         assert plan.rationale == ""
         assert plan.risks == []
+        # Omitted field must not default to the step count.
+        assert plan.estimated_files_touched == 0
 
     def test_plan_from_json_canonicalizes_step_ids(self):
         # LLM-proposed ids are ignored — ids are assigned from position,
