@@ -1009,11 +1009,18 @@ class StreamingRenderer(Renderer):
 
         # Plan next — rows only, no fixed header.  Prioritized over the
         # tools panel so step statuses stay visible on small terminals.
-        if self._plan_steps is not None and remaining >= _PANEL_CHROME_LINES:
+        # The guard demands room for at least one row past the chrome, and
+        # the chrome is charged only when a row is shown — a chrome-only
+        # allocation would eat the budget for a panel that renders nothing.
+        if (
+            self._plan_steps is not None
+            and remaining >= _PANEL_CHROME_LINES + 1
+        ):
             self._max_plan_visible = min(
                 len(self._plan_steps), remaining - _PANEL_CHROME_LINES,
             )
-            remaining -= _PANEL_CHROME_LINES + self._max_plan_visible
+            if self._max_plan_visible > 0:
+                remaining -= _PANEL_CHROME_LINES + self._max_plan_visible
         else:
             self._max_plan_visible = 0
 

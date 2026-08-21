@@ -6,7 +6,7 @@ import io
 
 from rich.console import Console
 
-from toddler.agent.events import PlanStepUpdate
+from toddler.agent.events import PlanStepUpdate, ToolCallStart
 from toddler.agent.planner import Plan, PlanStep
 from toddler.cli.renderer import NonStreamingRenderer, StreamingRenderer
 
@@ -120,3 +120,57 @@ class TestStreamingPlanStepUpdates:
         # Single-line contract: the height budget counts one line per row.
         assert row.no_wrap is True
         assert row.overflow == "ellipsis"
+
+
+class TestDynamicPanelHeightBudget:
+    """The panel budget is charged only by panels that actually render.
+
+    ``_compute_dynamic_panel_height()`` costs each panel its chrome plus
+    rows; a plan must fit at least one row past its chrome before the
+    charge applies, so a plan with no rows (or no room for one) never
+    drains the pool the tools panel draws from.
+    """
+
+    def _renderer(self, height: int) -> StreamingRenderer:
+        return StreamingRenderer(
+            console=Console(file=io.StringIO(), height=height)
+        )
+
+    def test_one_row_plan_fits_at_chrome_plus_one(self):
+        # height 14: budget 10, minus the 5-line output minimum leaves 5
+        # for extras — exactly the 4 chrome lines + 1 plan row.
+        renderer = self._renderer(height=14)
+        renderer.on_plan_step_update(
+            PlanStepUpdate(steps=[("step-1", "First thing", "pending")])
+        )
+        output_height = renderer._compute_dynamic_panel_height()
+        assert renderer._max_plan_visible == 1
+        # The plan panel (chrome + 1 row) is charged, leaving output at
+        # its 5-line minimum.
+        assert output_height == 5
+
+    def test_chrome_only_budget_never_charges_the_plan_panel(self):
+        # height 15: 6 rows for extras.  A plan with no rows must not
+        # charge its chrome — otherwise the 6 rows that would show the
+        # first tool are drained to 2 and the tools panel is dropped.
+        renderer = self._renderer(height=15)
+        renderer._plan_steps = []
+        renderer.on_tool_call_start(
+            ToolCallStart(tool_id="t1", tool_name="read", partial_input={})
+        )
+        output_height = renderer._compute_dynamic_panel_height()
+        assert renderer._max_plan_visible == 0
+        assert renderer._max_tools_visible == 1
+        assert output_height == 5
+
+    def test_plan_dropped_when_only_chrome_fits_leaves_budget_intact(self):
+        # height 13: 4 rows for extras.  A 1-step plan needs 5, so it is
+        # dropped — and because nothing is charged, the output panel
+        # keeps the whole budget instead of losing the plan's chrome.
+        renderer = self._renderer(height=13)
+        renderer.on_plan_step_update(
+            PlanStepUpdate(steps=[("step-1", "First thing", "pending")])
+        )
+        output_height = renderer._compute_dynamic_panel_height()
+        assert renderer._max_plan_visible == 0
+        assert output_height == 9

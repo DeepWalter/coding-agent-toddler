@@ -65,12 +65,23 @@ files touched: 8".
 
 The guard `remaining >= _PANEL_CHROME_LINES` accepts the branch when only
 the chrome fits: `_max_plan_visible` becomes 0 but the full chrome cost is
-still subtracted, so a 1-row plan panel that would fit is dropped and the
-tools/output panels are shorted (e.g. a 13-row terminal with a 1-step
-plan).
+still subtracted — the budget is charged for a panel that renders nothing.
+A plan with no rows (an empty but non-`None` step list) left `remaining`
+at `chrome + 1` drained to 1, dropping a tools panel that had exactly the
+rows it needed.  (The originally-cited 13-row / 1-step-plan example does
+not reproduce: a 1-step plan needs 5 rows and only 4 are left above the
+output minimum, so dropping it there is correct — the defect is the
+unearned chrome charge, not the drop.)
 
-- [toddler/cli/renderer.py:1002](toddler/cli/renderer.py#L1002)
+- [toddler/cli/renderer.py:1017](toddler/cli/renderer.py#L1017)
 - Fix: require `remaining >= _PANEL_CHROME_LINES + 1`, and only subtract the chrome when rows > 0.
+- **Fixed**: the guard now demands room for at least one row past the
+  chrome, and the chrome is charged only when rows are actually shown —
+  budget is consumed iff the panel renders.  Regression tests pin the
+  reachable edge (an empty step list no longer drains the tools pool:
+  `_max_tools_visible` stays 1 and output stays at its minimum), the
+  1-row plan fitting at `chrome + 1`, and the chrome-only budget leaving
+  the output panel intact.
 
 ### `reject_plan` contract change: silent no-op outside `PLAN_WAITING`
 
