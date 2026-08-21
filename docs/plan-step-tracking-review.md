@@ -190,6 +190,15 @@ each triggering an O(steps) snapshot build that always returns `None`
 
 - [toddler/session/coordinator.py:488](toddler/session/coordinator.py#L488)
 - Fix: poll only after `ToolCallEnd` (plus the existing pre-`AgentFinished` flush).
+- **Fixed**: the coordinator now asks the shared `PlanState` for updates
+  only after `ToolCallEnd` — statuses change only while a tool executes,
+  and the tool mutates the state before `ToolCallEnd` is emitted — plus
+  the pre-`AgentFinished` flush.  Text deltas and tool-call start/delta
+  events now cost one `isinstance` check instead of an O(steps) snapshot
+  build that always returned `None`; a long summary's hundreds of
+  `TextDelta`s no longer poll at all.  The render-trigger tests (step
+  start, completed+in_progress fold, closing snapshot, lone-completed
+  flush) still pin the same `PlanStepUpdate` counts and ordering.
 
 ### Render-trigger policy split across three layers
 

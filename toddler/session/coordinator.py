@@ -16,6 +16,7 @@ from toddler.agent.events import (
     AgentFinished,
     FatalAgentError,
     PlanStepUpdate,
+    ToolCallEnd,
 )
 from toddler.agent.loop import AgentLoop
 from toddler.agent.planner import Plan, Planner
@@ -95,7 +96,8 @@ class SessionCoordinator:
 
         # Shared plan step-status tracker — the plan_update tool mutates
         # it during PLAN_EXECUTING; the coordinator diffs it after each
-        # event to emit PlanStepUpdate.  Only armed while a plan runs.
+        # completed tool call to emit PlanStepUpdate.  Only armed while
+        # a plan runs.
         self._plan_state = PlanState()
 
         # Build tool system
@@ -499,11 +501,14 @@ class SessionCoordinator:
 
         Plan tracking is armed inside the guard so an early consumer exit
         can never leak a stale ``plan_update`` tool into the next turn.
-        After each agent event the shared :class:`PlanState` is asked
-        for updates — it returns the COMPLETE step list only when
-        something render-worthy changed (a step starting, or all steps
-        completed), holding back bare ``completed`` changes so the UI
-        never double-renders a completed + in_progress pair.
+        The shared :class:`PlanState` is asked for updates only after
+        :class:`ToolCallEnd` — statuses change only while a tool executes,
+        so polling earlier (text deltas, tool-call start/delta) would
+        only rebuild an O(steps) snapshot for nothing.  It returns the
+        COMPLETE step list only when something render-worthy changed (a
+        step starting, or all steps completed), holding back bare
+        ``completed`` changes so the UI never double-renders a
+        completed + in_progress pair.
 
         Held-back changes are flushed before :class:`AgentFinished` —
         streaming mode stops its Live display on that event, so any
@@ -518,9 +523,9 @@ class SessionCoordinator:
                     # Flush pending statuses BEFORE AgentFinished — the
                     # renderer stops on it, so a later update would
                     # never render in streaming mode.  take_update()
-                    # already ran after every event, so only held-back
-                    # changes (e.g. a lone completed) can remain here —
-                    # the unfiltered flush catches exactly those.  And
+                    # runs only after ToolCallEnd, so held-back changes
+                    # (e.g. a lone completed) can remain here — the
+                    # unfiltered flush catches exactly those.  And
                     # nothing further can change the statuses:
                     # AgentFinished is the phase's last event.
                     update = self._plan_state.flush_update()
@@ -530,6 +535,8 @@ class SessionCoordinator:
                     continue
 
                 yield event
+                if not isinstance(event, ToolCallEnd):
+                    continue
                 update = self._plan_state.take_update()
                 if update is not None:
                     yield PlanStepUpdate(steps=update)
