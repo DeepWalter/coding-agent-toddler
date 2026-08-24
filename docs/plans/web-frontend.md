@@ -247,7 +247,7 @@ first working release.
    - Verify: `ruff check .`; `.venv/bin/pytest tests/test_web_server.py`;
      `tod serve --no-open` + `curl localhost:8000/api/meta`
 
-2. **`feat(web): stream agent turns over websocket`**
+2. ✅ **`feat(web): stream agent turns over websocket`**
    - `toddler/web/events.py` (all serializers), `runners.py` (TurnRunner),
      `ws.py` (turn/cancel/approve_tool/deny_tool/approve_plan/reject_plan/
      set_mode/ping)
