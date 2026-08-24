@@ -9,7 +9,7 @@ The :class:`~toddler.agent.planner.Planner` owns the actual Plan/PlanStep
 data models and lifecycle — the state machine only tracks the current
 operational mode and validates transitions.
 
-State diagram (see ``docs/plan.md``):
+State diagram (see ``docs/plans/plan.md``):
 
 ```
     IDLE ──► classify ──► EXECUTING ──► FINISHED
