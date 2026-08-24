@@ -237,7 +237,7 @@ first working release.
 
 ## Implementation Steps
 
-1. **`build(web): scaffold fastapi server and tod serve`**
+1. ✅ **`build(web): scaffold fastapi server and tod serve`**
    - pyproject deps; `serve` subparser in toddler/utils/cli.py; branch in
      toddler/main.py
    - `toddler/web/{__init__,app,state,server}.py` (lifespan wiring, `/api/meta`,
