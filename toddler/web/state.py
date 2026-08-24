@@ -6,8 +6,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from toddler.config.settings import Settings
-from toddler.llm import OpenAICompatibleProvider
+from toddler.llm import BaseLLMProvider
 from toddler.session import SessionManager, SQLiteDatabase, StorageManager
+from toddler.web.runners import TurnRunner
 
 __all__ = ["WebAppState"]
 
@@ -25,7 +26,8 @@ class WebAppState:
     settings: Settings
     db: SQLiteDatabase
     storage_mgr: StorageManager
-    llm: OpenAICompatibleProvider
+    llm: BaseLLMProvider
     session_mgr: SessionManager
+    runner: TurnRunner
     repo_root: Path
     dev: bool

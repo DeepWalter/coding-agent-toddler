@@ -16,9 +16,11 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from toddler.config.settings import Settings
-from toddler.llm import OpenAICompatibleProvider
+from toddler.llm import BaseLLMProvider, OpenAICompatibleProvider
 from toddler.session import SessionManager, SQLiteDatabase, StorageManager
+from toddler.web.runners import TurnRunner
 from toddler.web.state import WebAppState
+from toddler.web.ws import router as ws_router
 
 __all__ = ["create_app"]
 
@@ -32,6 +34,7 @@ def create_app(
     *,
     repo_root: Path = _DEFAULT_REPO_ROOT,
     dev: bool = False,
+    llm: BaseLLMProvider | None = None,
 ) -> FastAPI:
     """Build the FastAPI app with lifespan wiring and the static mount.
 
@@ -45,6 +48,10 @@ def create_app(
         is expected to live.  Defaults to the current directory.
     dev:
         Enable dev-mode CORS for the Vite dev server at ``:5173``.
+    llm:
+        Optional provider override — tests inject a mock provider so
+        turn flows need no network.  Defaults to the real
+        :class:`OpenAICompatibleProvider` built from *settings*.
     """
     root = repo_root
 
@@ -55,15 +62,18 @@ def create_app(
         db = SQLiteDatabase(settings.session_dir / "sessions.db")
         db.open()
         storage_mgr = StorageManager(db)
-        llm = OpenAICompatibleProvider(settings)
-        session_mgr = SessionManager(settings, storage_mgr, llm, repo_root=root)
+        provider = llm or OpenAICompatibleProvider(settings)
+        session_mgr = SessionManager(
+            settings, storage_mgr, provider, repo_root=root,
+        )
         await session_mgr.resolve()
         app.state.web = WebAppState(
             settings=settings,
             db=db,
             storage_mgr=storage_mgr,
-            llm=llm,
+            llm=provider,
             session_mgr=session_mgr,
+            runner=TurnRunner(session_mgr),
             repo_root=root,
             dev=dev,
         )
@@ -91,6 +101,9 @@ def create_app(
             allow_methods=["*"],
             allow_headers=["*"],
         )
+
+    # Routers before the static mount so /ws is never shadowed.
+    app.include_router(ws_router)
 
     # Static mount LAST so /api (and later /ws) are never shadowed.  When
     # the frontend isn't built, / returns a JSON hint instead.
