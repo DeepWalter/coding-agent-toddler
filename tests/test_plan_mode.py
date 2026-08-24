@@ -4,6 +4,7 @@ serialization, tool gating, and session manager orchestration.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import uuid
 from collections.abc import AsyncIterator
@@ -1449,10 +1450,8 @@ class TestPlanner:
         # runs (the generator was paused at `yield PlanProposed`; after
         # reject_plan() sets the event, we need to resume past the
         # `await event.wait()` to reach the `ctx.append()` call).
-        try:
+        with contextlib.suppress(StopAsyncIteration):
             await gen.__anext__()
-        except StopAsyncIteration:
-            pass
 
         # Verify feedback was injected into context.
         feedback_msgs = [
@@ -1545,10 +1544,8 @@ class TestPlanner:
         assert planner.plan is None
 
         # Resume past the wait so the feedback injection runs.
-        try:
+        with contextlib.suppress(StopAsyncIteration):
             await gen.__anext__()
-        except StopAsyncIteration:
-            pass
 
         # Only the FIRST feedback reached the context.
         feedback_msgs = [

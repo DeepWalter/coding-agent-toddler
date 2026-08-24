@@ -13,7 +13,6 @@ import sqlite3
 import pytest
 
 from toddler.context.manager import ContextManager
-from toddler.context.window import ContextWindowManager
 from toddler.llm import ContentBlock, Message, TokenUsage
 from toddler.llm.base import BaseLLMProvider
 from toddler.session.models import Conversation
@@ -146,6 +145,7 @@ class TestConversationDatabaseRoundTrip:
     @pytest.fixture
     def session_id(self, db) -> str:
         import uuid
+
         from toddler.session.models import Session
 
         sid = str(uuid.uuid4())

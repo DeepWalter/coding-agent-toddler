@@ -6,15 +6,12 @@ delta estimation instead of estimating the full message list every time.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-
 import pytest
 
 from toddler.context.manager import ContextManager
 from toddler.context.window import ContextWindowManager
-from toddler.llm.base import BaseLLMProvider
 from toddler.llm import ContentBlock, LLMResponse, Message, TokenUsage
-
+from toddler.llm.base import BaseLLMProvider
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -12,7 +12,7 @@ import json
 import os
 import uuid
 from pathlib import Path
-from types import SimpleNamespace as _NS
+from types import SimpleNamespace
 
 __all__ = ["AsyncOpenAI"]
 
@@ -98,7 +98,7 @@ if _TEST == "cli":
         """
 
         def __init__(self, messages: list[dict]) -> None:
-            self._chunks: list[_NS] = []
+            self._chunks: list[SimpleNamespace] = []
             self._idx = 0
             self._messages = messages
 
@@ -219,7 +219,7 @@ if _TEST == "cli":
             *,
             prompt_tokens: int = 100,
             completion_tokens: int = 200,
-        ) -> list[_NS]:
+        ) -> list[SimpleNamespace]:
             """Convert *blocks* into a list of chunk ``SimpleNamespace``
             objects.
 
@@ -232,39 +232,39 @@ if _TEST == "cli":
             ``"finish"``    finish reason string (e.g. ``"stop"``)
             ==============  ================================================
             """
-            chunks: list[_NS] = []
+            chunks: list[SimpleNamespace] = []
             tool_id: str | None = None
             tool_idx = 0
 
             for kind, payload in blocks:
                 if kind == "text":
-                    delta = _NS(content=payload, tool_calls=None)
-                    choice = _NS(delta=delta, finish_reason=None)
-                    chunks.append(_NS(choices=[choice], usage=None))
+                    delta = SimpleNamespace(content=payload, tool_calls=None)
+                    choice = SimpleNamespace(delta=delta, finish_reason=None)
+                    chunks.append(SimpleNamespace(choices=[choice], usage=None))
 
                 elif kind == "tool_name":
                     tool_id = f"fake_{uuid.uuid4().hex[:12]}"
-                    func = _NS(name=payload, arguments=None)
-                    tc = _NS(index=tool_idx, id=tool_id, function=func)
-                    delta = _NS(content=None, tool_calls=[tc])
-                    choice = _NS(delta=delta, finish_reason=None)
-                    chunks.append(_NS(choices=[choice], usage=None))
+                    func = SimpleNamespace(name=payload, arguments=None)
+                    tc = SimpleNamespace(index=tool_idx, id=tool_id, function=func)
+                    delta = SimpleNamespace(content=None, tool_calls=[tc])
+                    choice = SimpleNamespace(delta=delta, finish_reason=None)
+                    chunks.append(SimpleNamespace(choices=[choice], usage=None))
 
                 elif kind == "tool_args":
-                    func = _NS(name=None, arguments=payload)
-                    tc = _NS(index=tool_idx, id=None, function=func)
-                    delta = _NS(content=None, tool_calls=[tc])
-                    choice = _NS(delta=delta, finish_reason=None)
-                    chunks.append(_NS(choices=[choice], usage=None))
+                    func = SimpleNamespace(name=None, arguments=payload)
+                    tc = SimpleNamespace(index=tool_idx, id=None, function=func)
+                    delta = SimpleNamespace(content=None, tool_calls=[tc])
+                    choice = SimpleNamespace(delta=delta, finish_reason=None)
+                    chunks.append(SimpleNamespace(choices=[choice], usage=None))
 
                 elif kind == "finish":
-                    usage = _NS(
+                    usage = SimpleNamespace(
                         prompt_tokens=prompt_tokens,
                         completion_tokens=completion_tokens,
                     )
-                    delta = _NS(content=None, tool_calls=None)
-                    choice = _NS(delta=delta, finish_reason=payload)
-                    chunks.append(_NS(choices=[choice], usage=usage))
+                    delta = SimpleNamespace(content=None, tool_calls=None)
+                    choice = SimpleNamespace(delta=delta, finish_reason=payload)
+                    chunks.append(SimpleNamespace(choices=[choice], usage=usage))
 
             return chunks
 
