@@ -9,7 +9,8 @@ Rich-based terminal UI, and prompt-toolkit for input.
 ```
 toddler/
   main.py             CLI entry point, arg parsing, component wiring
-  agent/              Agent loop, state machine, event handling, stop conditions
+  agent/              Agent loop, planner, state machine, event handling,
+                      stop conditions
   cli/                Terminal app, commands, display, input handler, renderer
   config/             Settings (env + CLI overrides), defaults
   context/            Context window, compaction, conversation context,
@@ -18,8 +19,9 @@ toddler/
                       token counting
   session/            SQLite-backed session persistence, database, models
   tools/              Tool registry, base protocol, executor, filesystem, git,
-                      search, shell subprocess
+                      plan, search, shell subprocess
   checkpoint/         Snapshot/checkpoint management
+  utils/              Shared CLI and logging helpers
 ```
 
 ## Development Environment
