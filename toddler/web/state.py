@@ -1,0 +1,31 @@
+"""WebAppState — shared state built once in the app lifespan."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+from toddler.config.settings import Settings
+from toddler.llm import OpenAICompatibleProvider
+from toddler.session import SessionManager, SQLiteDatabase, StorageManager
+
+__all__ = ["WebAppState"]
+
+
+@dataclass
+class WebAppState:
+    """Components shared by the web app's routers and runners.
+
+    Mirrors the CLI wiring in ``toddler/main.py`` — the server builds its
+    own DB / storage / LLM / session manager in the lifespan rather than
+    sharing the CLI's, so ``create_app`` is self-contained.  Stored on
+    ``app.state.web`` after lifespan startup.
+    """
+
+    settings: Settings
+    db: SQLiteDatabase
+    storage_mgr: StorageManager
+    llm: OpenAICompatibleProvider
+    session_mgr: SessionManager
+    repo_root: Path
+    dev: bool
