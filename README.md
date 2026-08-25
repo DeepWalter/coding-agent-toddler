@@ -28,6 +28,7 @@ tod "refactor auth.py"  # One-shot: run a single task
 tod --plan "add tests"  # One-shot in plan mode (research → propose → execute)
 tod --session <id>      # Resume a previous session
 tod --list-sessions     # List saved sessions
+tod serve               # Browser-based web UI (see Web UI below)
 ```
 
 ### CLI Options
@@ -44,6 +45,31 @@ tod --list-sessions     # List saved sessions
 | `--max-iterations <n>` | Cap agent loop iterations |
 | `--no-stream` | Disable streaming output |
 | `--verbose`, `-v` | Enable debug logging |
+
+### Web UI
+
+`tod serve` runs the browser frontend (FastAPI + Vue) against the same
+agent backend and SQLite session database as the CLI:
+
+```bash
+tod serve                    # serve at http://127.0.0.1:8000, open browser
+tod serve --port 9000        # custom port
+tod serve --no-open          # don't auto-open the browser
+```
+
+It accepts the shared LLM flags (`--model`, `--base-url`, `--api-key`,
+`--no-stream`, `--max-iterations`); `--dev` enables CORS for the Vite dev
+server.
+
+Development workflow:
+
+```bash
+cd website && npm run dev    # Vite :5173, proxies /api and /ws to :8000
+# keep `tod serve` running in another terminal while editing frontend code
+
+cd website && npm run build  # production bundle into website/dist
+tod serve                    # serves the built bundle directly
+```
 
 ## Architecture
 
@@ -79,9 +105,9 @@ toddler/
 
 ## Roadmap
 
-- [ ] **Web frontend** — browser-based GUI with a split-pane layout: file
+- [x] **Web frontend** — browser-based GUI with a split-pane layout: file
   viewer/editor on the left, agent console with scrollback on the right.
-  Will coexist with the CLI via a `tod serve` command and share the same
+  Coexists with the CLI via a `tod serve` command and shares the same
   agent backend and session database.
 
 ## Development

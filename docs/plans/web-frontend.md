@@ -322,7 +322,7 @@ first working release.
      → PlanCard; approve with auto → steps track in_progress/completed; MANUAL
      write pause → approve/deny prompt; session switch replays history
 
-7. **`docs(web): document web usage and dev workflow`**
+7. ✅ **`docs(web): document web usage and dev workflow`**
    - README roadmap tick + `tod serve` usage line; final `ruff check .` + full
      pytest pass
 
