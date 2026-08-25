@@ -20,6 +20,10 @@ dist/
 build/
 *.egg-info/
 
+# Web frontend
+node_modules/
+web/dist/
+
 # Data directory
 .toddler/
 

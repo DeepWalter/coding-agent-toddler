@@ -1,0 +1,458 @@
+/* tod console — dark, monospace, minimal. */
+
+:root {
+  --bg: #101318;
+  --bg-panel: #151a21;
+  --bg-raised: #1b222c;
+  --bg-hover: #212a36;
+  --border: #2a3340;
+  --text: #d7dde5;
+  --text-dim: #8b95a3;
+  --accent: #4c8dff;
+  --accent-dim: #2b5ba8;
+  --green: #3fb950;
+  --red: #f85149;
+  --red-dim: #5a2a28;
+  --yellow: #d29922;
+  --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.55 var(--mono);
+  -webkit-font-smoothing: antialiased;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* ------------------------------------------------------------------ */
+/* Top bar                                                             */
+/* ------------------------------------------------------------------ */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+  flex: none;
+}
+
+.topbar-title {
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.topbar-meta {
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--red);
+}
+
+.status-dot.on {
+  background: var(--green);
+  box-shadow: 0 0 6px var(--green);
+}
+
+/* ------------------------------------------------------------------ */
+/* Console                                                             */
+/* ------------------------------------------------------------------ */
+
+.console-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.console-pane {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  scrollbar-width: thin;
+}
+
+.console-empty {
+  color: var(--text-dim);
+  text-align: center;
+  margin-top: 12vh;
+}
+
+.message {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-width: 100%;
+}
+
+.message-role {
+  color: var(--text-dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.message.user .message-role {
+  color: var(--accent);
+}
+
+.message-content {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  border-left: 2px solid var(--border);
+  padding-left: 10px;
+}
+
+.message.user .message-content {
+  border-left-color: var(--accent-dim);
+}
+
+/* ------------------------------------------------------------------ */
+/* Tool cards                                                          */
+/* ------------------------------------------------------------------ */
+
+.tool-card {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-raised);
+  overflow: hidden;
+}
+
+.tool-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  background: none;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tool-card-header:hover {
+  background: var(--bg-hover);
+}
+
+.tool-card-name {
+  font-weight: 600;
+}
+
+.tool-card-state {
+  color: var(--text-dim);
+  font-size: 11px;
+  margin-left: auto;
+}
+
+.tool-card-chevron {
+  color: var(--text-dim);
+}
+
+.tool-card.error {
+  border-color: var(--red-dim);
+}
+
+.tool-card-body {
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tool-card-section-title {
+  color: var(--text-dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 2px;
+}
+
+.tool-card-pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  font: inherit;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.tool-card-pre.dim {
+  color: var(--text-dim);
+}
+
+.tool-card-pre.error-text {
+  color: var(--red);
+}
+
+/* Spinner */
+.spinner {
+  width: 11px;
+  height: 11px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex: none;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Plan block (read-only until PlanCard lands in step 6)               */
+/* ------------------------------------------------------------------ */
+
+.plan-block {
+  border: 1px solid var(--accent-dim);
+  border-radius: 6px;
+  background: var(--bg-raised);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.plan-block-title {
+  font-weight: 600;
+}
+
+.plan-block-summary {
+  color: var(--text-dim);
+}
+
+.plan-block-steps {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.step-status {
+  display: inline-block;
+  min-width: 74px;
+  margin-right: 6px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.step-status.status-in_progress {
+  color: var(--yellow);
+}
+
+.step-status.status-completed {
+  color: var(--green);
+}
+
+.step-status.status-failed {
+  color: var(--red);
+}
+
+.plan-block-note {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Stream lines (notices / errors)                                     */
+/* ------------------------------------------------------------------ */
+
+.stream-line {
+  padding: 2px 10px;
+  border-left: 2px solid var(--border);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.stream-line.notice {
+  color: var(--text-dim);
+  border-left-color: var(--border);
+}
+
+.stream-line.error {
+  color: var(--red);
+  border-left-color: var(--red);
+  background: var(--red-dim);
+  border-radius: 0 4px 4px 0;
+  padding: 4px 10px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Pause prompt                                                        */
+/* ------------------------------------------------------------------ */
+
+.pause-prompt {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--yellow);
+  background: var(--bg-raised);
+  color: var(--yellow);
+}
+
+.pause-prompt-icon {
+  flex: none;
+}
+
+.pause-prompt-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pause-prompt-hint {
+  color: var(--text-dim);
+}
+
+.pause-prompt-actions {
+  display: flex;
+  gap: 6px;
+  flex: none;
+}
+
+/* ------------------------------------------------------------------ */
+/* Input bar                                                           */
+/* ------------------------------------------------------------------ */
+
+.input-bar {
+  display: flex;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-panel);
+  flex: none;
+  align-items: stretch;
+}
+
+.input-bar-textarea {
+  flex: 1;
+  resize: none;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font: inherit;
+  outline: none;
+}
+
+.input-bar-textarea:focus {
+  border-color: var(--accent-dim);
+}
+
+.input-bar-textarea:disabled {
+  opacity: 0.55;
+}
+
+.btn {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-raised);
+  color: var(--text);
+  font: inherit;
+  padding: 8px 14px;
+  cursor: pointer;
+  flex: none;
+  align-self: center;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.btn.primary {
+  border-color: var(--accent-dim);
+  background: var(--accent-dim);
+  color: #fff;
+}
+
+.btn.primary:hover:not(:disabled) {
+  background: var(--accent);
+}
+
+.btn.danger {
+  border-color: var(--red-dim);
+  background: var(--red-dim);
+  color: #fff;
+}
+
+.btn.danger:hover:not(:disabled) {
+  background: var(--red);
+}
+
+/* ------------------------------------------------------------------ */
+/* Status bar                                                          */
+/* ------------------------------------------------------------------ */
+
+.status-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-panel);
+  color: var(--text-dim);
+  font-size: 11px;
+  flex: none;
+}
+
+.status-sep {
+  opacity: 0.6;
+}
+
+.status-dim {
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-busy {
+  margin-left: auto;
+  color: var(--yellow);
+}
