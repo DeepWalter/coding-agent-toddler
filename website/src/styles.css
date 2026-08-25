@@ -937,19 +937,9 @@ body {
   padding: 3px 10px;
 }
 
-.editor-textarea {
+.editor-cm {
   flex: 1;
   min-height: 0;
-  width: 100%;
-  resize: none;
-  background: var(--bg);
-  color: var(--text);
-  border: none;
-  outline: none;
-  padding: 10px 12px;
-  font: inherit;
-  line-height: 1.5;
-  tab-size: 2;
 }
 
 .editor-message {
