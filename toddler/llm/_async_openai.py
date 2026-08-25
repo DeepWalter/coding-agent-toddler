@@ -149,8 +149,13 @@ if _TEST == "cli":
 
         @staticmethod
         def _chunks_for_read():
-            """Emit a ``shell`` tool call to count ``*.py`` files."""
+            """Emit a text intro, then a ``shell`` tool call to count
+            ``*.py`` files."""
             blocks: list[tuple[str, str | None]] = [
+                (
+                    "text",
+                    "Let me count the Python files in this repo.\n\n",
+                ),
                 ("tool_name", "shell"),
                 (
                     "tool_args",
@@ -163,8 +168,8 @@ if _TEST == "cli":
 
         @staticmethod
         def _chunks_for_write():
-            """Emit a ``write_file`` tool call to copy this file to
-            ``~/.toddler/test_write.py``."""
+            """Emit a text intro, then a ``write_file`` tool call to copy
+            this file to ``~/.toddler/test_write.py``."""
             args = json.dumps(
                 {
                     "file_path": "~/.toddler/test_write.py",
@@ -173,6 +178,11 @@ if _TEST == "cli":
                 ensure_ascii=False,
             )
             blocks: list[tuple[str, str | None]] = [
+                (
+                    "text",
+                    "I'll copy this file to "
+                    "~/.toddler/test_write.py.\n\n",
+                ),
                 ("tool_name", "write_file"),
                 ("tool_args", args),
                 ("finish", "tool_calls"),
