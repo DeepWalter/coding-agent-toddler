@@ -45,7 +45,7 @@ def create_app(
         Resolved settings (the CLI applies the same ``Settings.from_cli``
         overlay before dispatching to ``tod serve``).
     repo_root:
-        Working directory the agent operates on — also where ``web/dist``
+        Working directory the agent operates on — also where ``website/dist``
         is expected to live.  Defaults to the current directory.
     dev:
         Enable dev-mode CORS for the Vite dev server at ``:5173``.
@@ -101,7 +101,7 @@ def create_app(
 
     # Static mount LAST so /api (and later /ws) are never shadowed.  When
     # the frontend isn't built, / returns a JSON hint instead.
-    dist = root / "web" / "dist"
+    dist = root / "website" / "dist"
     if (dist / "index.html").is_file():
         app.mount("/", StaticFiles(directory=dist, html=True), name="static")
     else:
@@ -109,7 +109,7 @@ def create_app(
         @app.get("/")
         async def dist_hint() -> JSONResponse:
             return JSONResponse(
-                {"error": "frontend not built — run `npm run build` in web/"}
+                {"error": "frontend not built — run `npm run build` in website/"}
             )
 
     return app

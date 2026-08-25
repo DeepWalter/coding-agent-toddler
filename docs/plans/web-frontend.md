@@ -11,7 +11,7 @@ agent console with scrollback on the right — coexisting with the CLI via a
 
 - **Backend**: FastAPI + uvicorn (new runtime deps)
 - **Frontend**: Vue 3 + Vite build (Composition API, `.vue` SFCs), living in
-  `web/` at repo root
+  `website/` at repo root
 - Python ≥3.11, ruff (line 100), pytest `asyncio_mode="auto"`
 
 ## Target Architecture
@@ -26,7 +26,7 @@ tod serve (main.py) ──→ toddler/web/
                            ├─ api.py        /api REST router (meta, sessions, messages, tree, file)
                            ├─ files.py      path-safe read/write + gitignore-aware tree walk
                            └─ server.py     run_server() — uvicorn bootstrap
-web/  (Vue 3 + Vite)
+website/  (Vue 3 + Vite)
   ├─ vite.config.ts    @vitejs/plugin-vue; proxy /api + /ws → http://localhost:8000
   └─ src/              App.vue, main.ts, types.ts, api.ts, composables/ (useWebSocket,
                        useConsole), components/ (ConsolePane, MessageBubble, ToolCard,
@@ -50,9 +50,9 @@ toddler/main.py), calls `await session_mgr.resolve()` (fresh session — CLI
 parity), then:
 
 - mounts `/api` router and `/ws` websocket router
-- serves `web/dist` via `StaticFiles(html=True)` as the **last** mount so it
-  never shadows `/api`/`/ws`; if `web/dist/index.html` is missing, `/` returns
-  a JSON hint ("frontend not built — run `npm run build` in web/")
+- serves `website/dist` via `StaticFiles(html=True)` as the **last** mount so
+  it never shadows `/api`/`/ws`; if `website/dist/index.html` is missing, `/`
+  returns a JSON hint ("frontend not built — run `npm run build` in website/")
 - adds CORS for `http://localhost:5173` when `dev=True` (belt-and-braces; the
   primary dev path is the Vite proxy)
 
@@ -83,8 +83,8 @@ if args.command == "serve":
 `setup_logging` still runs first, so server logs land in `~/.toddler/logs`.
 
 **pyproject.toml**: add `fastapi>=0.115`, `uvicorn>=0.30`; dev extra
-`httpx>=0.27` (TestClient). `web/` is not a Python package — no hatchling
-changes; `web/dist` won't ride along in an sdist (fine for a checkout-based
+`httpx>=0.27` (TestClient). `website/` is not a Python package — no hatchling
+changes; `website/dist` won't ride along in an sdist (fine for a checkout-based
 personal tool; `[tool.hatch.build.force-include]` only if a pip-installed
 distribution matters).
 
@@ -234,7 +234,7 @@ first working release.
   already in place; MVP runs one active session)
 - `tod serve --api-only` (no static mount)
 - Frontend tests with vitest once the console UI stabilizes
-- `[tool.hatch.build.force-include]` so `web/dist` ships in pip-installed
+- `[tool.hatch.build.force-include]` so `website/dist` ships in pip-installed
   distributions
 - Streaming-modes UX (risk 5 below: `TODDLER_STREAMING=false` only changes
   perceived latency, never the protocol — no client work required, noted here
@@ -274,7 +274,7 @@ first working release.
      then check the file on disk
 
 4. ✅ **`build(web): scaffold vue console frontend`**
-   - All of `web/`: package.json, tsconfig.json, vite.config.ts
+   - All of `website/`: package.json, tsconfig.json, vite.config.ts
      (`@vitejs/plugin-vue`), index.html, src/main.ts, src/App.vue (console-only),
      types.ts, api.ts, composables/useWebSocket.ts, composables/useConsole.ts,
      components/{ConsolePane,MessageBubble,ToolCard,PausePrompt,InputBar,
@@ -314,7 +314,7 @@ first working release.
   tooling, every feature manually verifiable in minutes; keep the state
   transition logic pure (plain functions over state) so a later vitest port is
   mechanical. Revisit after the UI stabilizes.
-- CI discipline unchanged: `ruff check .` + `.venv/bin/pytest` — `web/` is
+- CI discipline unchanged: `ruff check .` + `.venv/bin/pytest` — `website/` is
   invisible to both.
 
 ## Risks & Gotchas

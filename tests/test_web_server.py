@@ -57,7 +57,7 @@ class TestCreateApp:
         assert "npm run build" in resp.json()["error"]
 
     def test_dist_mount_serves_index_html(self, tmp_path):
-        dist = tmp_path / "web" / "dist"
+        dist = tmp_path / "website" / "dist"
         dist.mkdir(parents=True)
         (dist / "index.html").write_text("<html><body>hi</body></html>")
         settings = Settings(session_dir=tmp_path)

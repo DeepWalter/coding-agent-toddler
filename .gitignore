@@ -22,7 +22,8 @@ build/
 
 # Web frontend
 node_modules/
-web/dist/
+website/dist/
+website/.vite/
 
 # Data directory
 .toddler/
