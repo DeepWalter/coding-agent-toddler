@@ -96,6 +96,11 @@ def _hello_frame(state: WebAppState) -> dict:
         for msg in state.storage_mgr.get_messages(
             session.id, conversation_id=conv.id,
         ):
+            # The persisted system prompt is agent scaffolding, not
+            # transcript — replaying it would render it as an assistant
+            # bubble at the top of the console after a refresh.
+            if msg.role == "system":
+                continue
             messages.append({"role": msg.role, "content": msg.text})
     return {
         "type": "hello",

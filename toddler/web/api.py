@@ -137,7 +137,10 @@ async def get_messages(
                 "role": row.role,
                 "content": _content_text(row.content_json),
             }
+            # The persisted system prompt is agent scaffolding, not
+            # transcript — never replay it to the UI.
             for row in stored
+            if row.role != "system"
         ],
     }
 

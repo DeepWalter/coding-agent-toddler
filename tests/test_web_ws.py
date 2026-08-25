@@ -127,17 +127,18 @@ class TestTurnStream:
                         break
 
             # Reconnect — the transcript replays from SQLite.  The
-            # context injects a system prompt at turn start, and save()
-            # persists it too (CLI parity), so the replay is
-            # system + user + assistant.
+            # context injects a system prompt at turn start and save()
+            # persists it too (CLI parity), but it is scaffolding, not
+            # transcript — the replay skips it, so the console shows
+            # user + assistant only.
             with client.websocket_connect("/ws") as ws:
                 hello = ws.receive_json()
                 msgs = hello["messages"]
                 assert [m["role"] for m in msgs] == [
-                    "system", "user", "assistant",
+                    "user", "assistant",
                 ]
-                assert msgs[1] == {"role": "user", "content": "hi"}
-                assert msgs[2]["content"] == "Hello there."
+                assert msgs[0] == {"role": "user", "content": "hi"}
+                assert msgs[1]["content"] == "Hello there."
 
 
 # ============================================================================
