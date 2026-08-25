@@ -67,6 +67,59 @@ body {
   white-space: nowrap;
 }
 
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex: none;
+}
+
+.mode-toggle {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-raised);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+.mode-toggle.auto {
+  color: var(--green);
+  border-color: var(--green);
+}
+
+.mode-toggle:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.mode-toggle:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.session-select select {
+  background: var(--bg-raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 8px;
+  max-width: 220px;
+}
+
+.session-select select:disabled {
+  opacity: 0.5;
+}
+
+.btn.small {
+  padding: 3px 10px;
+  font-size: 11px;
+}
+
 .status-dot {
   width: 9px;
   height: 9px;
@@ -235,10 +288,10 @@ body {
 }
 
 /* ------------------------------------------------------------------ */
-/* Plan block (read-only until PlanCard lands in step 6)               */
+/* Plan card                                                           */
 /* ------------------------------------------------------------------ */
 
-.plan-block {
+.plan-card {
   border: 1px solid var(--accent-dim);
   border-radius: 6px;
   background: var(--bg-raised);
@@ -248,15 +301,15 @@ body {
   gap: 6px;
 }
 
-.plan-block-title {
+.plan-card-title {
   font-weight: 600;
 }
 
-.plan-block-summary {
+.plan-card-summary {
   color: var(--text-dim);
 }
 
-.plan-block-steps {
+.plan-card-steps {
   margin: 4px 0 0;
   padding-left: 18px;
   display: flex;
@@ -284,9 +337,48 @@ body {
   color: var(--red);
 }
 
-.plan-block-note {
+.plan-card-note {
   color: var(--text-dim);
   font-size: 11px;
+}
+
+.plan-card-section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.plan-card-section ul {
+  margin: 2px 0 0;
+  padding-left: 18px;
+}
+
+.plan-card-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.plan-card-feedback {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.plan-card-feedback textarea {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: inherit;
+  resize: vertical;
+  outline: none;
+}
+
+.plan-card-feedback textarea:focus {
+  border-color: var(--accent-dim);
 }
 
 /* ------------------------------------------------------------------ */

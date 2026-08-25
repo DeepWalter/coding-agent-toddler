@@ -404,6 +404,117 @@ class TestPlanFlow:
 
 
 # ============================================================================
+# Session management: new conversation + session switching
+# ============================================================================
+
+
+class TestSessionManagement:
+    def test_new_conversation_acks_and_broadcasts_empty_replay(self, tmp_path):
+        llm = make_mock_llm(text_response("Hello."))
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "turn", "input": "hi"})
+            _wait_for(ws, "agent_finished")
+
+            ws.send_json({"cmd": "new_conversation"})
+            ack = _wait_for(ws, "ack")
+            assert ack == {
+                "type": "ack",
+                "cmd": "new_conversation",
+                "accepted": True,
+            }
+            # Every tab gets a full hello replay of the new conversation.
+            replay = _wait_for(ws, "hello")
+            assert replay["conversation"]["sequence_num"] == 2
+            assert replay["messages"] == []
+
+    def test_switch_session_between_sessions_replays_history(self, tmp_path):
+        llm = make_mock_llm(
+            text_response("Hello from session one."),
+            text_response("Hello from session two."),
+        )
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            session_a = ws.receive_json()["session"]["id"]
+
+            # A second session exists in the DB (created via REST).
+            resp = client.post("/api/sessions", json={"title": "other"})
+            assert resp.status_code == 201
+            session_b = resp.json()["id"]
+
+            # A turn in session A.
+            ws.send_json({"cmd": "turn", "input": "hi"})
+            _wait_for(ws, "agent_finished")
+
+            # Switch to B — the replay is B's (empty) transcript.
+            ws.send_json({"cmd": "switch_session", "session_id": session_b})
+            ack = _wait_for(ws, "ack")
+            assert ack == {
+                "type": "ack",
+                "cmd": "switch_session",
+                "accepted": True,
+            }
+            replay = _wait_for(ws, "hello")
+            assert replay["session"]["id"] == session_b
+            assert replay["messages"] == []
+
+            # A turn in B, then switch back — A's history replays.
+            ws.send_json({"cmd": "turn", "input": "hi"})
+            _wait_for(ws, "agent_finished")
+            ws.send_json({"cmd": "switch_session", "session_id": session_a})
+            replay = _wait_for(ws, "hello")
+            assert replay["session"]["id"] == session_a
+            contents = [m["content"] for m in replay["messages"]]
+            assert "Hello from session one." in contents
+            assert "Hello from session two." not in contents
+
+    def test_switch_session_unknown_session(self, tmp_path):
+        llm = make_mock_llm()
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "switch_session", "session_id": "nope"})
+            error = ws.receive_json()
+            assert error["type"] == "error"
+            assert error["code"] == "not_found"
+            assert "nope" in error["message"]
+
+    def test_new_conversation_while_busy_rejected(self, tmp_path):
+        llm = make_mock_llm(pause_on_write(str(tmp_path / "out.txt")))
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "turn", "input": "write"})
+            _wait_for(ws, "agent_paused")
+
+            ws.send_json({"cmd": "new_conversation"})
+            error = ws.receive_json()
+            assert error == {
+                "type": "error",
+                "code": "busy",
+                "message": "A turn is already running.",
+            }
+            # Clean up so the runner isn't left paused.
+            ws.send_json({"cmd": "cancel"})
+            _wait_for(ws, "turn_cancelled")
+
+    def test_switch_session_while_busy_rejected(self, tmp_path):
+        llm = make_mock_llm(pause_on_write(str(tmp_path / "out.txt")))
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "turn", "input": "write"})
+            _wait_for(ws, "agent_paused")
+
+            ws.send_json({"cmd": "switch_session", "session_id": "whatever"})
+            error = ws.receive_json()
+            assert error["code"] == "busy"
+            ws.send_json({"cmd": "cancel"})
+            _wait_for(ws, "turn_cancelled")
+
+
+# ============================================================================
 # Simple commands
 # ============================================================================
 

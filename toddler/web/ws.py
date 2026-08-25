@@ -190,6 +190,44 @@ async def _cmd_ping(websocket: WebSocket, state: WebAppState, raw: dict) -> None
     await websocket.send_json({"type": "pong"})
 
 
+async def _cmd_new_conversation(
+    websocket: WebSocket, state: WebAppState, raw: dict,
+) -> None:
+    """Start a fresh conversation in the current session.
+
+    The manager archives the current conversation (or renames it in
+    place when empty) and activates a new one; a full ``hello`` replay
+    is broadcast so every tab resets to the empty transcript.
+    """
+    if state.runner.busy:
+        await _send_error(websocket, "busy", "A turn is already running.")
+        return
+    title = raw.get("title")
+    await state.session_mgr.new_conversation(
+        title=title if isinstance(title, str) and title.strip() else None,
+    )
+    await websocket.send_json(_ack_frame("new_conversation", True))
+    state.runner.broadcast(_hello_frame(state))
+
+
+async def _cmd_switch_session(
+    websocket: WebSocket, state: WebAppState, raw: dict,
+) -> None:
+    """Switch the active session; the new session's transcript replays
+    through the same ``hello`` frame every tab applies on connect."""
+    if state.runner.busy:
+        await _send_error(websocket, "busy", "A turn is already running.")
+        return
+    session_id = str(raw.get("session_id", ""))
+    try:
+        await state.session_mgr.switch_session(session_id)
+    except ValueError as exc:
+        await _send_error(websocket, "not_found", str(exc))
+        return
+    await websocket.send_json(_ack_frame("switch_session", True))
+    state.runner.broadcast(_hello_frame(state))
+
+
 _COMMANDS: dict[str, Callable] = {
     "turn": _cmd_turn,
     "cancel": _cmd_cancel,
@@ -198,6 +236,8 @@ _COMMANDS: dict[str, Callable] = {
     "approve_plan": _cmd_approve_plan,
     "reject_plan": _cmd_reject_plan,
     "set_mode": _cmd_set_mode,
+    "new_conversation": _cmd_new_conversation,
+    "switch_session": _cmd_switch_session,
     "ping": _cmd_ping,
 }
 

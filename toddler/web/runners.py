@@ -138,11 +138,14 @@ class TurnRunner:
     # Internal
     # ------------------------------------------------------------------
 
-    def _broadcast(self, frame: dict) -> None:
+    def broadcast(self, frame: dict) -> None:
         """Enqueue *frame* for every subscribed connection.
 
-        Queues are unbounded, so ``put_nowait`` cannot raise
-        ``QueueFull``; a slow consumer just builds a backlog.
+        Used both by the turn loop (event frames) and by the WS command
+        handlers for state broadcasts — e.g. the full ``hello`` replay
+        sent after a session switch so every tab re-syncs.  Queues are
+        unbounded, so ``put_nowait`` cannot raise ``QueueFull``; a slow
+        consumer just builds a backlog.
         """
         for queue in self._subscribers.values():
             queue.put_nowait(frame)
@@ -155,8 +158,8 @@ class TurnRunner:
         ``turn_cancelled`` then ``state {busy: false}``, matching the
         natural ``agent_finished`` → ``state`` order of a completed turn.
         """
-        self._broadcast({"type": "turn_started"})
-        self._broadcast({"type": "state", "busy": True})
+        self.broadcast({"type": "turn_started"})
+        self.broadcast({"type": "state", "busy": True})
 
         gen = self._session_mgr.process_turn(
             user_input, force_plan=force_plan,
@@ -171,21 +174,21 @@ class TurnRunner:
                     self._paused_snapshot = frame
                 elif isinstance(event, (AgentFinished, FatalAgentError)):
                     self._paused_snapshot = None
-                self._broadcast(frame)
+                self.broadcast(frame)
         except asyncio.CancelledError:
-            self._broadcast({"type": "turn_cancelled"})
+            self.broadcast({"type": "turn_cancelled"})
             raise
         except Exception as exc:
             # A bug must not silently kill the task: surface it to the
             # clients (and the server log) instead of letting the task
             # die unobserved.  The finally block still resets state.
             logger.exception("Turn failed with an unexpected exception.")
-            self._broadcast({"type": "fatal_error", "message": str(exc)})
+            self.broadcast({"type": "fatal_error", "message": str(exc)})
         finally:
             # Safe no-op on a generator already stopped by cancellation.
             with contextlib.suppress(BaseException):
                 await gen.aclose()
             self._gen = None
             self._paused_snapshot = None
-            self._broadcast({"type": "state", "busy": False})
+            self.broadcast({"type": "state", "busy": False})
             self._lock.release()

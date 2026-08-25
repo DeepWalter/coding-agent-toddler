@@ -2,9 +2,14 @@
 import { nextTick, ref, watch } from 'vue'
 import type { Block } from '../types'
 import MessageBubble from './MessageBubble.vue'
+import PlanCard from './PlanCard.vue'
 import ToolCard from './ToolCard.vue'
 
 const props = defineProps<{ blocks: Block[] }>()
+const emit = defineEmits<{
+  'approve-plan': [planId: string, mode: 'manual' | 'auto']
+  'reject-plan': [planId: string, feedback: string]
+}>()
 
 const scroller = ref<HTMLElement | null>(null)
 const atBottom = ref(true)
@@ -44,17 +49,12 @@ watch(() => props.blocks, async () => {
         :text="block.text"
       />
       <ToolCard v-else-if="block.kind === 'tool'" :block="block" />
-      <section v-else-if="block.kind === 'plan'" class="plan-block">
-        <div class="plan-block-title">Plan — {{ block.plan.title }}</div>
-        <div v-if="block.plan.summary" class="plan-block-summary">{{ block.plan.summary }}</div>
-        <ol class="plan-block-steps">
-          <li v-for="[id, description, status] in block.steps" :key="id">
-            <span class="step-status" :class="`status-${status}`">{{ status }}</span>
-            {{ description }}
-          </li>
-        </ol>
-        <div v-if="!block.steps.length" class="plan-block-note">steps tracked as the plan runs…</div>
-      </section>
+      <PlanCard
+        v-else-if="block.kind === 'plan'"
+        :block="block"
+        @approve="(planId, mode) => emit('approve-plan', planId, mode)"
+        @reject="(planId, feedback) => emit('reject-plan', planId, feedback)"
+      />
       <div v-else-if="block.kind === 'error'" class="stream-line error">
         ⛔ {{ block.message }}
       </div>

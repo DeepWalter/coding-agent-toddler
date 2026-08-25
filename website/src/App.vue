@@ -5,6 +5,7 @@ import FileEditor from './components/FileEditor.vue'
 import FileExplorer from './components/FileExplorer.vue'
 import InputBar from './components/InputBar.vue'
 import PausePrompt from './components/PausePrompt.vue'
+import SessionList from './components/SessionList.vue'
 import StatusBar from './components/StatusBar.vue'
 import { useConsole } from './composables/useConsole'
 import { useWebSocket } from './composables/useWebSocket'
@@ -12,8 +13,25 @@ import { useWebSocket } from './composables/useWebSocket'
 // Transport → state: every websocket frame goes through the console
 // reducer; the connection refs drive the status bar and input gating.
 const { connected, connecting, send, onFrame } = useWebSocket()
-const { state, applyFrame, sendTurn, cancelTurn, approveTool, denyTool } = useConsole(send)
+const {
+  state,
+  applyFrame,
+  sendTurn,
+  cancelTurn,
+  approveTool,
+  denyTool,
+  approvePlan,
+  rejectPlan,
+  setMode,
+  newConversation,
+  switchSession,
+} = useConsole(send)
 onFrame(applyFrame)
+
+function toggleMode() {
+  const mode = state.session?.permission_mode === 'auto' ? 'manual' : 'auto'
+  setMode(mode)
+}
 
 // Split pane: files on the left (explorer + editor stacked), console on
 // the right.  The divider drags the left pane between 20% and 80% of the
@@ -47,6 +65,32 @@ function onDividerUp(event: PointerEvent) {
       <span class="status-dot" :class="connected ? 'on' : 'off'" />
       <span class="topbar-title">tod</span>
       <span v-if="state.session" class="topbar-meta">{{ state.session.cwd }}</span>
+      <div class="topbar-actions">
+        <button
+          type="button"
+          class="mode-toggle"
+          :class="state.session?.permission_mode ?? 'manual'"
+          :disabled="!connected"
+          :title="`permission mode — click to switch to ${state.session?.permission_mode === 'auto' ? 'manual' : 'auto'}`"
+          @click="toggleMode"
+        >
+          {{ state.session?.permission_mode ?? 'manual' }}
+        </button>
+        <SessionList
+          :current="state.session"
+          :connected="connected"
+          @select="switchSession"
+        />
+        <button
+          type="button"
+          class="btn small"
+          :disabled="!connected || state.busy"
+          title="Start a new conversation (archives the current one)"
+          @click="newConversation"
+        >
+          ＋ New
+        </button>
+      </div>
     </header>
 
     <div ref="splitEl" class="split">
@@ -68,7 +112,11 @@ function onDividerUp(event: PointerEvent) {
 
       <section class="pane pane-right">
         <div class="console-wrap">
-          <ConsolePane :blocks="state.blocks" />
+          <ConsolePane
+            :blocks="state.blocks"
+            @approve-plan="approvePlan"
+            @reject-plan="rejectPlan"
+          />
           <PausePrompt
             v-if="state.paused"
             :paused="state.paused"

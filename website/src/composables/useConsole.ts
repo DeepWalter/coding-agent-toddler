@@ -19,7 +19,10 @@ import type {
  * everything (reconnect = replay from storage).
  */
 
-export type ConsoleAction = Frame | { type: 'local_user'; text: string }
+export type ConsoleAction =
+  | Frame
+  | { type: 'local_user'; text: string }
+  | { type: 'local_mode'; mode: 'manual' | 'auto' }
 
 export function initialState(): ConsoleState {
   return {
@@ -231,9 +234,6 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
         s.paused = null
       }
       break
-    case 'conversation_switched':
-      s.conversation = action.conversation
-      break
     case 'error':
       push(s, {
         kind: 'error',
@@ -245,6 +245,18 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
     case 'local_user':
       push(s, { kind: 'user', text: action.text })
       break
+    case 'local_mode': {
+      // Optimistic mode flip — the server only acks set_mode, it doesn't
+      // echo state back.  Keep a PLAN label (set server-side during plan
+      // turns) until the next hello corrects it.
+      if (s.session) {
+        s.session.permission_mode = action.mode
+        if (s.session.mode_label !== 'PLAN') {
+          s.session.mode_label = action.mode.toUpperCase()
+        }
+      }
+      break
+    }
   }
 }
 
@@ -280,5 +292,41 @@ export function useConsole(send: (cmd: Command) => void) {
     if (toolId) send({ cmd: 'deny_tool', tool_id: toolId })
   }
 
-  return { state, applyFrame, sendTurn, cancelTurn, approveTool, denyTool }
+  function approvePlan(planId: string, mode: 'manual' | 'auto') {
+    send({ cmd: 'approve_plan', plan_id: planId, mode })
+  }
+
+  function rejectPlan(planId: string, feedback: string) {
+    send({ cmd: 'reject_plan', plan_id: planId, feedback })
+  }
+
+  function setMode(mode: 'manual' | 'auto') {
+    // Optimistic — the server acks without echoing the new mode back.
+    applyFrame({ type: 'local_mode', mode })
+    send({ cmd: 'set_mode', mode })
+  }
+
+  function newConversation() {
+    send({ cmd: 'new_conversation' })
+  }
+
+  function switchSession(sessionId: string) {
+    if (!state.session || sessionId !== state.session.id) {
+      send({ cmd: 'switch_session', session_id: sessionId })
+    }
+  }
+
+  return {
+    state,
+    applyFrame,
+    sendTurn,
+    cancelTurn,
+    approveTool,
+    denyTool,
+    approvePlan,
+    rejectPlan,
+    setMode,
+    newConversation,
+    switchSession,
+  }
 }

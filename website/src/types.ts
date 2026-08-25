@@ -114,7 +114,6 @@ export type Frame =
   | { type: 'fatal_error'; message: string }
   | { type: 'ack'; cmd: string; accepted: boolean }
   | { type: 'turn_cancelled' }
-  | { type: 'conversation_switched'; conversation: ConversationInfo }
   | { type: 'pong' }
   | { type: 'error'; code: string; message: string }
 
@@ -130,6 +129,8 @@ export type Command =
   | { cmd: 'approve_plan'; plan_id: string; mode: 'manual' | 'auto' }
   | { cmd: 'reject_plan'; plan_id: string; feedback?: string }
   | { cmd: 'set_mode'; mode: 'manual' | 'auto' }
+  | { cmd: 'new_conversation'; title?: string }
+  | { cmd: 'switch_session'; session_id: string }
   | { cmd: 'ping' }
 
 // ---------------------------------------------------------------------------

@@ -126,6 +126,14 @@ Note: streaming mode emits `tool_call_start` **twice per call** — once
 live from the stream handler and again from the execution phase, same
 `tool_id` — followed by a single `tool_call_end`.  Clients must upsert
 cards keyed by `tool_id`, not append.
+
+`new_conversation` and `switch_session` ack directly, then **broadcast a
+full `hello` frame** (session + conversation + transcript replay) so
+every tab re-syncs — the same frame connections get on connect, and the
+client applies it with the same "replace everything" reducer path.  An
+earlier `conversation_switched {conversation}` frame was dropped from
+the protocol: it carried no session info and no replay, so it couldn't
+fulfill "session switch replays history" on its own.
 plan_proposed      {plan: {id, title, summary, steps, rationale, risks, estimated_files_touched}}
 plan_step_update   {steps: [[id, description, status], ...]}   # complete snapshot — replace, don't diff
 agent_paused       {prompt, choices}
@@ -134,7 +142,6 @@ recoverable_error  {message}
 fatal_error        {message}
 ack                {cmd, accepted}
 turn_cancelled
-conversation_switched  {conversation: {id, sequence_num}}
 pong
 error              {code, message}
 ```
@@ -290,7 +297,7 @@ first working release.
    - Verify: browse repo, open toddler/main.py, edit + Cmd+S persists (check on
      disk); run a turn that writes a file → explorer refresh → open it
 
-6. **`feat(web): render plans, prompts, and session management`**
+6. ✅ **`feat(web): render plans, prompts, and session management`**
    - `components/{PlanCard,SessionList}.vue`; useConsole gains plan state;
      mode toggle (`set_mode`), new-conversation, session switcher; ws.py gains
      `new_conversation`/`switch_session` handlers
