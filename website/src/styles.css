@@ -456,3 +456,241 @@ body {
   margin-left: auto;
   color: var(--yellow);
 }
+
+/* ------------------------------------------------------------------ */
+/* Split layout                                                        */
+/* ------------------------------------------------------------------ */
+
+.split {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.pane {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.pane-left {
+  flex: none;
+}
+
+.pane-right {
+  flex: 1;
+}
+
+.divider {
+  flex: none;
+  width: 5px;
+  cursor: col-resize;
+  background: var(--border);
+  touch-action: none;
+  user-select: none;
+}
+
+.divider:hover,
+.divider.dragging {
+  background: var(--accent-dim);
+}
+
+/* ------------------------------------------------------------------ */
+/* File explorer                                                       */
+/* ------------------------------------------------------------------ */
+
+.explorer {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  max-height: 45%;
+  min-height: 110px;
+  border-bottom: 1px solid var(--border);
+}
+
+.explorer-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+  flex: none;
+}
+
+.explorer-title {
+  font-weight: 600;
+}
+
+.explorer-root {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.explorer-refresh {
+  flex: none;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font: inherit;
+  line-height: 1;
+  padding: 3px 7px;
+  cursor: pointer;
+}
+
+.explorer-refresh:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.explorer-refresh:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.explorer-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 0;
+  scrollbar-width: thin;
+}
+
+.explorer-empty {
+  color: var(--text-dim);
+  padding: 10px;
+}
+
+.explorer-empty.error {
+  color: var(--red);
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  padding: 3px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tree-row:hover {
+  background: var(--bg-hover);
+}
+
+.tree-row.selected {
+  background: var(--accent-dim);
+}
+
+.tree-chevron {
+  flex: none;
+  width: 10px;
+  color: var(--text-dim);
+}
+
+.tree-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tree-dir {
+  font-weight: 600;
+}
+
+.tree-file {
+  color: var(--text-dim);
+}
+
+/* ------------------------------------------------------------------ */
+/* File editor                                                         */
+/* ------------------------------------------------------------------ */
+
+.editor {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+  flex: none;
+}
+
+.editor-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-dirty {
+  flex: none;
+  color: var(--yellow);
+}
+
+.editor-status {
+  flex: none;
+  max-width: 45%;
+  color: var(--text-dim);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-status.status-error {
+  color: var(--red);
+}
+
+.editor-save {
+  padding: 3px 10px;
+}
+
+.editor-textarea {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  resize: none;
+  background: var(--bg);
+  color: var(--text);
+  border: none;
+  outline: none;
+  padding: 10px 12px;
+  font: inherit;
+  line-height: 1.5;
+  tab-size: 2;
+}
+
+.editor-message {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  padding: 12px;
+  text-align: center;
+}
+
+.editor-message.error {
+  color: var(--red);
+}

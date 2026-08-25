@@ -1,4 +1,4 @@
-import type { ReplayMessage, SessionSummary } from './types'
+import type { ReplayMessage, SessionSummary, TreeEntry } from './types'
 
 /**
  * Thin client for the /api REST endpoints.  Paths are relative so the
@@ -47,10 +47,10 @@ export const api = {
     return request(`/api/sessions/${sessionId}/messages${q}`) as Promise<{ messages: ReplayMessage[] }>
   },
 
-  tree(depth = 4): Promise<{ root: string; entries: { path: string; type: string }[] }> {
+  tree(depth = 10): Promise<{ root: string; entries: TreeEntry[] }> {
     return request(`/api/tree?depth=${depth}`) as Promise<{
       root: string
-      entries: { path: string; type: string }[]
+      entries: TreeEntry[]
     }>
   },
 

@@ -181,3 +181,17 @@ export interface SessionSummary {
   updated_at: string
   message_count: number
 }
+
+/** One flat row of `/api/tree` (relative POSIX path). */
+export interface TreeEntry {
+  path: string
+  type: 'dir' | 'file'
+}
+
+/** Nested tree node built from TreeEntry[] (children only for dirs). */
+export interface TreeNode {
+  name: string
+  path: string
+  type: 'dir' | 'file'
+  children: TreeNode[] | null
+}
