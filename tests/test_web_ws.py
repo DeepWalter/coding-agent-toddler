@@ -21,6 +21,7 @@ from tests.mocks import (
     tool_use_response,
 )
 from toddler.agent.planner import Plan, PlanStep
+from toddler.cli.commands import CommandResult
 from toddler.config.settings import Settings
 from toddler.web.app import create_app
 
@@ -634,6 +635,38 @@ class TestSessionManagement:
             ws.send_json({"cmd": "cancel"})
             _wait_for(ws, "turn_cancelled")
 
+    def test_new_conversation_holds_lock_against_starting_turn(self, tmp_path):
+        """TOCTOU regression: new_conversation's busy check and the
+        mutation are atomic — a turn arriving mid-mutation (another tab)
+        is rejected, never started behind a hello replay wipe."""
+        llm = make_mock_llm(text_response("Hello."))
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "turn", "input": "hi"})
+            _wait_for(ws, "agent_finished")
+
+            state = client.app.state.web
+            probe: dict = {}
+            original_new_conversation = state.session_mgr.new_conversation
+
+            async def new_conversation_with_sneak_attempt(title=None):
+                probe["lock_held"] = state.runner.busy
+                probe["sneak_accepted"] = await state.runner.start("sneak")
+                return await original_new_conversation(title=title)
+
+            state.session_mgr.new_conversation = new_conversation_with_sneak_attempt
+            ws.send_json({"cmd": "new_conversation"})
+            ack = _wait_for(ws, "ack")
+            assert ack["accepted"] is True
+            replay = _wait_for(ws, "hello")
+            assert replay["conversation"]["sequence_num"] == 2
+
+            assert probe["lock_held"] is True
+            assert probe["sneak_accepted"] is False
+            assert llm.call_count == 1  # only the real "hi" turn
+            assert state.runner.busy is False
+
 
 # ============================================================================
 # Slash commands (dispatch locally, never to the LLM)
@@ -834,6 +867,43 @@ class TestSlashCommands:
             assert "Unknown command: /moded" in notice["message"]
             ws.send_json({"cmd": "cancel"})
             _wait_for(ws, "turn_cancelled")
+
+    def test_mutation_holds_lock_against_starting_turn(self, tmp_path):
+        """TOCTOU regression: the busy check and the mutation are atomic.
+
+        A turn arriving while /clear is mid-dispatch (another tab) used
+        to slip in between the ``busy`` check and the mutation — the
+        sneaked turn started, and the hello replay then wiped its
+        transcript mid-run.  The mutation must hold the busy lock, so
+        the sneaked start is rejected and the LLM is never hit twice.
+        """
+        llm = make_mock_llm(text_response("Hello."))
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "turn", "input": "hi"})
+            _wait_for(ws, "agent_finished")
+
+            state = client.app.state.web
+            probe: dict = {}
+            original_dispatch = state.cmd_dispatcher.dispatch
+
+            async def dispatch_with_sneak_attempt(text: str) -> CommandResult:
+                # The mutation is under way — the lock is already held,
+                # so the simulated second tab's turn must be rejected.
+                probe["lock_held"] = state.runner.busy
+                probe["sneak_accepted"] = await state.runner.start("sneak")
+                return await original_dispatch(text)
+
+            state.cmd_dispatcher.dispatch = dispatch_with_sneak_attempt
+            ws.send_json({"cmd": "turn", "input": "/clear"})
+            replay = _wait_for(ws, "hello")
+            assert replay["conversation"]["sequence_num"] == 2
+
+            assert probe["lock_held"] is True
+            assert probe["sneak_accepted"] is False
+            assert llm.call_count == 1  # only the real "hi" turn
+            assert state.runner.busy is False
 
 
 # ============================================================================

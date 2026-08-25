@@ -151,6 +151,30 @@ class TurnRunner:
         self._task.cancel()
         return True
 
+    @contextlib.asynccontextmanager
+    async def mutation_guard(self) -> AsyncIterator[bool]:
+        """Serialize session mutations against running turns.
+
+        Yields ``True`` when the caller holds the busy lock (no turn is
+        running — safe to mutate session / conversation state), ``False``
+        when a turn is running (the caller must reject the mutation).
+
+        The WS handlers use this instead of a bare ``busy`` check: the
+        check and the acquire are atomic (same reasoning as :meth:`start`),
+        and the lock stays held until the context exits — so a turn
+        starting on another tab cannot slip in between the check and the
+        mutation.  That closes the check-then-mutate TOCTOU window that
+        could wipe a live turn's transcript mid-run.
+        """
+        if self._lock.locked():
+            yield False
+            return
+        await self._lock.acquire()
+        try:
+            yield True
+        finally:
+            self._lock.release()
+
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------

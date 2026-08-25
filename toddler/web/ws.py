@@ -212,11 +212,22 @@ async def _dispatch_slash_command(
         ))
         return
 
-    if kind is not None and state.runner.busy:
-        await _send_error(websocket, "busy", "A turn is already running.")
-        return
-
-    result = await state.cmd_dispatcher.dispatch(text)
+    if kind is None:
+        # Informational — answered directly, never busy-gated.
+        result = await state.cmd_dispatcher.dispatch(text)
+    else:
+        # Mutating commands: the busy check and the mutation run under
+        # the runner's busy lock, so a turn starting on another tab
+        # cannot slip in between them (the check-then-mutate TOCTOU
+        # window).  The state broadcast happens after the lock is
+        # released, so ``hello`` reports the true busy state.
+        async with state.runner.mutation_guard() as acquired:
+            if not acquired:
+                await _send_error(
+                    websocket, "busy", "A turn is already running.",
+                )
+                return
+            result = await state.cmd_dispatcher.dispatch(text)
 
     if result.changed:
         if kind == "conversation":
@@ -325,15 +336,21 @@ async def _cmd_new_conversation(
     The manager archives the current conversation (or renames it in
     place when empty) and activates a new one; a full ``hello`` replay
     is broadcast so every tab resets to the empty transcript.
+
+    The busy check and the mutation run under the runner's busy lock —
+    a turn arriving from another tab cannot slip in between them (the
+    check-then-mutate TOCTOU window), and the replay is broadcast after
+    the lock is released so ``hello`` reports the true busy state.
     """
-    if state.runner.busy:
-        await _send_error(websocket, "busy", "A turn is already running.")
-        return
-    title = raw.get("title")
-    await state.session_mgr.new_conversation(
-        title=title if isinstance(title, str) and title.strip() else None,
-    )
-    await websocket.send_json(_ack_frame("new_conversation", True))
+    async with state.runner.mutation_guard() as acquired:
+        if not acquired:
+            await _send_error(websocket, "busy", "A turn is already running.")
+            return
+        title = raw.get("title")
+        await state.session_mgr.new_conversation(
+            title=title if isinstance(title, str) and title.strip() else None,
+        )
+        await websocket.send_json(_ack_frame("new_conversation", True))
     state.runner.broadcast(_hello_frame(state))
 
 
@@ -341,17 +358,24 @@ async def _cmd_switch_session(
     websocket: WebSocket, state: WebAppState, raw: dict,
 ) -> None:
     """Switch the active session; the new session's transcript replays
-    through the same ``hello`` frame every tab applies on connect."""
-    if state.runner.busy:
-        await _send_error(websocket, "busy", "A turn is already running.")
-        return
-    session_id = str(raw.get("session_id", ""))
-    try:
-        await state.session_mgr.switch_session(session_id)
-    except ValueError as exc:
-        await _send_error(websocket, "not_found", str(exc))
-        return
-    await websocket.send_json(_ack_frame("switch_session", True))
+    through the same ``hello`` frame every tab applies on connect.
+
+    The busy check and the mutation run under the runner's busy lock —
+    a turn arriving from another tab cannot slip in between them (the
+    check-then-mutate TOCTOU window), and the replay is broadcast after
+    the lock is released so ``hello`` reports the true busy state.
+    """
+    async with state.runner.mutation_guard() as acquired:
+        if not acquired:
+            await _send_error(websocket, "busy", "A turn is already running.")
+            return
+        session_id = str(raw.get("session_id", ""))
+        try:
+            await state.session_mgr.switch_session(session_id)
+        except ValueError as exc:
+            await _send_error(websocket, "not_found", str(exc))
+            return
+        await websocket.send_json(_ack_frame("switch_session", True))
     state.runner.broadcast(_hello_frame(state))
 
 
