@@ -268,7 +268,7 @@ first working release.
      `curl -X PUT localhost:8000/api/file?path=hello.txt -d '{"content":"hi"}'`
      then check the file on disk
 
-4. **`build(web): scaffold vue console frontend`**
+4. ✅ **`build(web): scaffold vue console frontend`**
    - All of `web/`: package.json, tsconfig.json, vite.config.ts
      (`@vitejs/plugin-vue`), index.html, src/main.ts, src/App.vue (console-only),
      types.ts, api.ts, composables/useWebSocket.ts, composables/useConsole.ts,
