@@ -235,7 +235,8 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
       push(s, { kind: 'notice', message: action.message })
       break
     case 'notice':
-      // Slash-command output (/help, /mode, …) broadcast by the server.
+      // Slash-command output (/help, /mode, …) broadcast by the server —
+      // markdown by contract (see CommandResult).
       push(s, { kind: 'notice', message: action.message })
       break
     case 'session_info':

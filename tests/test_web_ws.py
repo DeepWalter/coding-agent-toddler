@@ -744,7 +744,7 @@ class TestSlashCommands:
             assert frame["type"] == "session_info"
             assert frame["session"]["permission_mode"] == "auto"
             notice = _wait_for(ws, "notice")
-            assert "Gating: AUTO" in notice["message"]
+            assert "**Gating:** AUTO" in notice["message"]
             assert client.app.state.web.session_mgr.permission_mode.value == "auto"
 
     def test_mode_does_not_clear_previous_notices(self, tmp_path):

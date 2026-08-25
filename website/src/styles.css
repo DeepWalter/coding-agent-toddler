@@ -194,64 +194,64 @@ body {
 /* Message markdown                                                    */
 /* ------------------------------------------------------------------ */
 
-.message-content.markdown {
+:is(.message-content, .stream-line).markdown {
   white-space: normal;
 }
 
-.message-content.markdown p {
+:is(.message-content, .stream-line).markdown p {
   margin: 4px 0;
 }
 
-.message-content.markdown > :first-child {
+:is(.message-content, .stream-line).markdown > :first-child {
   margin-top: 0;
 }
 
-.message-content.markdown > :last-child {
+:is(.message-content, .stream-line).markdown > :last-child {
   margin-bottom: 0;
 }
 
-.message-content.markdown h1,
-.message-content.markdown h2,
-.message-content.markdown h3,
-.message-content.markdown h4,
-.message-content.markdown h5,
-.message-content.markdown h6 {
+:is(.message-content, .stream-line).markdown h1,
+:is(.message-content, .stream-line).markdown h2,
+:is(.message-content, .stream-line).markdown h3,
+:is(.message-content, .stream-line).markdown h4,
+:is(.message-content, .stream-line).markdown h5,
+:is(.message-content, .stream-line).markdown h6 {
   margin: 10px 0 4px;
   font-weight: 600;
 }
 
-.message-content.markdown h1 {
+:is(.message-content, .stream-line).markdown h1 {
   font-size: 15px;
 }
 
-.message-content.markdown h2 {
+:is(.message-content, .stream-line).markdown h2 {
   font-size: 14px;
 }
 
-.message-content.markdown h3,
-.message-content.markdown h4,
-.message-content.markdown h5,
-.message-content.markdown h6 {
+:is(.message-content, .stream-line).markdown h3,
+:is(.message-content, .stream-line).markdown h4,
+:is(.message-content, .stream-line).markdown h5,
+:is(.message-content, .stream-line).markdown h6 {
   font-size: 13px;
 }
 
-.message-content.markdown a {
+:is(.message-content, .stream-line).markdown a {
   color: var(--accent);
   text-decoration: none;
 }
 
-.message-content.markdown a:hover {
+:is(.message-content, .stream-line).markdown a:hover {
   text-decoration: underline;
 }
 
-.message-content.markdown code {
+:is(.message-content, .stream-line).markdown code {
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 1px 4px;
 }
 
-.message-content.markdown pre {
+:is(.message-content, .stream-line).markdown pre {
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -262,90 +262,90 @@ body {
   overflow-wrap: normal;
 }
 
-.message-content.markdown pre code {
+:is(.message-content, .stream-line).markdown pre code {
   background: none;
   border: none;
   padding: 0;
   color: var(--text);
 }
 
-.message-content.markdown ul,
-.message-content.markdown ol {
+:is(.message-content, .stream-line).markdown ul,
+:is(.message-content, .stream-line).markdown ol {
   margin: 4px 0;
   padding-left: 20px;
 }
 
-.message-content.markdown li {
+:is(.message-content, .stream-line).markdown li {
   margin: 2px 0;
 }
 
-.message-content.markdown blockquote {
+:is(.message-content, .stream-line).markdown blockquote {
   margin: 6px 0;
   padding: 2px 10px;
   border-left: 2px solid var(--accent-dim);
   color: var(--text-dim);
 }
 
-.message-content.markdown hr {
+:is(.message-content, .stream-line).markdown hr {
   border: none;
   border-top: 1px solid var(--border);
   margin: 8px 0;
 }
 
-.message-content.markdown table {
+:is(.message-content, .stream-line).markdown table {
   border-collapse: collapse;
   margin: 6px 0;
 }
 
-.message-content.markdown th,
-.message-content.markdown td {
+:is(.message-content, .stream-line).markdown th,
+:is(.message-content, .stream-line).markdown td {
   border: 1px solid var(--border);
   padding: 3px 8px;
 }
 
-.message-content.markdown th {
+:is(.message-content, .stream-line).markdown th {
   background: var(--bg-raised);
 }
 
 /* highlight.js token colors mapped to the app palette */
-.message-content.markdown .hljs-keyword,
-.message-content.markdown .hljs-title,
-.message-content.markdown .hljs-title.function_,
-.message-content.markdown .hljs-section,
-.message-content.markdown .hljs-name,
-.message-content.markdown .hljs-attr {
+:is(.message-content, .stream-line).markdown .hljs-keyword,
+:is(.message-content, .stream-line).markdown .hljs-title,
+:is(.message-content, .stream-line).markdown .hljs-title.function_,
+:is(.message-content, .stream-line).markdown .hljs-section,
+:is(.message-content, .stream-line).markdown .hljs-name,
+:is(.message-content, .stream-line).markdown .hljs-attr {
   color: var(--accent);
 }
 
-.message-content.markdown .hljs-string,
-.message-content.markdown .hljs-regexp,
-.message-content.markdown .hljs-addition,
-.message-content.markdown .hljs-type {
+:is(.message-content, .stream-line).markdown .hljs-string,
+:is(.message-content, .stream-line).markdown .hljs-regexp,
+:is(.message-content, .stream-line).markdown .hljs-addition,
+:is(.message-content, .stream-line).markdown .hljs-type {
   color: var(--green);
 }
 
-.message-content.markdown .hljs-number,
-.message-content.markdown .hljs-literal,
-.message-content.markdown .hljs-symbol,
-.message-content.markdown .hljs-bullet,
-.message-content.markdown .hljs-built_in,
-.message-content.markdown .hljs-variable,
-.message-content.markdown .hljs-template-variable {
+:is(.message-content, .stream-line).markdown .hljs-number,
+:is(.message-content, .stream-line).markdown .hljs-literal,
+:is(.message-content, .stream-line).markdown .hljs-symbol,
+:is(.message-content, .stream-line).markdown .hljs-bullet,
+:is(.message-content, .stream-line).markdown .hljs-built_in,
+:is(.message-content, .stream-line).markdown .hljs-variable,
+:is(.message-content, .stream-line).markdown .hljs-template-variable {
   color: var(--yellow);
 }
 
-.message-content.markdown .hljs-comment,
-.message-content.markdown .hljs-quote,
-.message-content.markdown .hljs-meta {
+:is(.message-content, .stream-line).markdown .hljs-comment,
+:is(.message-content, .stream-line).markdown .hljs-quote,
+:is(.message-content, .stream-line).markdown .hljs-meta {
   color: var(--text-dim);
   font-style: italic;
 }
 
-.message-content.markdown .hljs-deletion {
+:is(.message-content, .stream-line).markdown .hljs-deletion {
   color: var(--red);
 }
 
-.message-content.markdown .hljs-params {
+:is(.message-content, .stream-line).markdown .hljs-params {
   color: var(--text);
 }
 
@@ -554,6 +554,12 @@ body {
 .stream-line.notice {
   color: var(--text-dim);
   border-left-color: var(--border);
+}
+
+/* Markdown-rendered notices (/help, …): the renderer emits its own
+   breaks, so pre-wrap would double every newline. */
+.stream-line.markdown {
+  white-space: normal;
 }
 
 .stream-line.error {

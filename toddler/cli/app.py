@@ -23,10 +23,7 @@ from toddler.agent.events import (
     ToolCallEnd,
     ToolCallStart,
 )
-from toddler.cli.commands import (
-    HELP_TEXT,
-    SlashCommandDispatcher,
-)
+from toddler.cli.commands import SlashCommandDispatcher
 from toddler.cli.input_handler import InputHandler
 from toddler.cli.renderer import create_renderer
 from toddler.config.settings import Settings
@@ -337,14 +334,8 @@ class CLIApp:
                 )
             return True
 
-        # --- Display-only sentinels (commands that need CLI rendering) ---
-        if result.message == "__HELP__":
-            self._renderer.print()
-            self._renderer.markdown(HELP_TEXT)
-            return True
-
-        # --- Display message if not already rendered ---
-        if result.message and not result.rendered:
-            self._renderer.info(result.message)
+        # --- Display message (command messages are markdown) ---
+        if result.message:
+            self._renderer.markdown(result.message)
 
         return result.continue_repl

@@ -19,7 +19,6 @@ from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, WebSocket
 
-from toddler.cli.commands import HELP_TEXT
 from toddler.tools.base import PermissionMode
 from toddler.web.events import serialize_transcript
 
@@ -44,6 +43,11 @@ def _ack_frame(cmd: str, accepted: bool) -> dict:
 
 
 def _notice_frame(message: str) -> dict:
+    """Build a notice frame.
+
+    Command messages are markdown by contract (see ``CommandResult``), so
+    every notice renders through the frontend's markdown renderer.
+    """
     return {"type": "notice", "message": message}
 
 
@@ -238,9 +242,7 @@ async def _dispatch_slash_command(
         elif kind == "session":
             state.runner.broadcast(_session_info_frame(state))
     if result.message:
-        state.runner.broadcast(_notice_frame(
-            HELP_TEXT if result.message == "__HELP__" else result.message,
-        ))
+        state.runner.broadcast(_notice_frame(result.message))
 
 
 async def _cmd_cancel(websocket: WebSocket, state: WebAppState, raw: dict) -> None:

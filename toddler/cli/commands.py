@@ -53,10 +53,8 @@ class CommandResult:
     continue_repl:
         ``True`` to keep the REPL running, ``False`` to exit.
     message:
-        Optional status / error message for the user.
-    rendered:
-        ``True`` when the command handler has already rendered its output
-        (so the caller should not add extra formatting).
+        Optional status / error message for the user.  Always markdown —
+        the CLI and web UI render it with their markdown renderers.
     pager_path:
         When set, the caller opens this file path in a pager.
     changed:
@@ -68,9 +66,13 @@ class CommandResult:
 
     continue_repl: bool = True
     message: str = ""
-    rendered: bool = False
     pager_path: str = ""
     changed: bool = False
+
+
+def _md_cell(value: str) -> str:
+    """Escape a markdown table cell — a bare ``|`` would split the column."""
+    return value.replace("|", "\\|").replace("\n", " ")
 
 
 # ============================================================================
@@ -127,8 +129,8 @@ class SlashCommandDispatcher:
         Returns
         -------
         CommandResult
-            Describes whether to continue the REPL, any message to display,
-            and whether the handler already rendered output.
+            Describes whether to continue the REPL and any message to
+            display (rendered as markdown by the caller).
         """
         parts = text.strip().split(maxsplit=1)
         cmd = parts[0].lower()
@@ -187,8 +189,7 @@ class SlashCommandDispatcher:
         """``/help`` — show available commands."""
         return CommandResult(
             continue_repl=True,
-            message="__HELP__",
-            rendered=True,
+            message=HELP_TEXT,
         )
 
     async def _cmd_view(self, args: str) -> CommandResult:
@@ -316,7 +317,7 @@ class SlashCommandDispatcher:
         else:
             detail = "WRITE and dangerous shell commands require confirmation"
 
-        return f"Mode: {workflow}  •  Gating: {gating} — {detail}"
+        return f"**Mode:** {workflow}  •  **Gating:** {gating} — {detail}"
 
     async def _cmd_rollback(self, args: str) -> CommandResult:
         """``/rollback <checkpoint_id>`` — rollback to a checkpoint."""
@@ -407,16 +408,14 @@ class SlashCommandDispatcher:
             )
 
         lines: list[str] = [
-            f"{'#':>4}  {'Created':<20}  {'Tool':<20}  {'Description'}",
-            f"{'─'*4}  {'─'*20}  {'─'*20}  {'─'*40}",
+            "| # | Created | Tool | Description |",
+            "|---:|---------------------|------|-------------|",
         ]
         for ck in checkpoints:
             ts = ck.created_at.strftime("%Y-%m-%d %H:%M")
-            tool = (ck.tool_name or "")[:19]
-            desc = (ck.description or "")[:40]
-            lines.append(
-                f"{ck.sequence_num:>4}  {ts:<20}  {tool:<20}  {desc}"  # noqa: E501
-            )
+            tool = _md_cell(ck.tool_name or "—")
+            desc = _md_cell((ck.description or "—")[:80])
+            lines.append(f"| {ck.sequence_num} | {ts} | {tool} | {desc} |")
 
         lines.append("")
         lines.append("Use /rollback #N to restore a checkpoint.")
@@ -475,17 +474,18 @@ class SlashCommandDispatcher:
         )
 
         lines: list[str] = [
-            f"{'':>1} {'#':>4}  {'Title':<36}  {'Msgs':>5}  {'Age':<10}",
-            f"{'─'*1} {'─'*4}  {'─'*36}  {'─'*5}  {'─'*10}",
+            "| | # | Title | Msgs | Age |",
+            "|:---:|---:|------|-----:|----|",
         ]
         for c in convs:
             marker = "*" if c.id == active_id else " "
-            title = (c.display_title or "—")[:35]
+            title = _md_cell(c.display_title or "—")
             lines.append(
-                f"{marker:<1} {c.sequence_num:>4}  {title:<36}  {c.message_count:>5}  {c.age:<10}"  # noqa: E501
+                f"| {marker} | {c.sequence_num} | {title} | "
+                f"{c.message_count} | {c.age} |"
             )
-        lines.append(f"{'─'*1} {'─'*4}  {'─'*36}  {'─'*5}  {'─'*10}")
-        lines.append("* = active conversation")
+        lines.append("")
+        lines.append("`*` = active conversation")
 
         return CommandResult(
             continue_repl=True,
@@ -525,14 +525,17 @@ class SlashCommandDispatcher:
                 message="No active session (persistence disabled).",
             )
 
+        created = s.created_at.strftime("%Y-%m-%d %H:%M UTC")
         lines = [
-            f"  {'ID':<16}  {s.id}",
-            f"  {'Title':<16}  {s.title or '—'}",
-            f"  {'Mode':<16}  {s.mode}",
-            f"  {'Messages':<16}  {s.message_count}",
-            f"  {'Input tokens':<16}  {s.total_input_tokens}",
-            f"  {'Output tokens':<16}  {s.total_output_tokens}",
-            f"  {'Created':<16}  {s.created_at.strftime('%Y-%m-%d %H:%M UTC')}",  # noqa: E501
+            "| Field | Value |",
+            "|-------|-------|",
+            f"| ID | {_md_cell(s.id)} |",
+            f"| Title | {_md_cell(s.title or '—')} |",
+            f"| Mode | {_md_cell(s.mode)} |",
+            f"| Messages | {s.message_count} |",
+            f"| Input tokens | {s.total_input_tokens} |",
+            f"| Output tokens | {s.total_output_tokens} |",
+            f"| Created | {_md_cell(created)} |",
         ]
         return CommandResult(
             continue_repl=True,
@@ -562,15 +565,13 @@ class SlashCommandDispatcher:
             )
 
         lines: list[str] = [
-            f"{'ID':<34}  {'Title':<40}  {'Msgs':>5}  {'Age':<10}",
-            f"{'─'*34}  {'─'*40}  {'─'*5}  {'─'*10}",
+            "| ID | Title | Msgs | Age |",
+            "|----|-------|-----:|----|",
         ]
         for s in sessions:
             sid = s.id[:32]
-            title = (s.display_title or "—")[:39]
-            lines.append(
-                f"{sid:<34}  {title:<40}  {s.message_count:>5}  {s.age:<10}"
-            )
+            title = _md_cell(s.display_title or "—")
+            lines.append(f"| {sid} | {title} | {s.message_count} | {s.age} |")
 
         return CommandResult(
             continue_repl=True,

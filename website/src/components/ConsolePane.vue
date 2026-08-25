@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
 import type { Block } from '../types'
+import { renderMarkdown } from '../markdown'
 import MessageBubble from './MessageBubble.vue'
 import PlanCard from './PlanCard.vue'
 import ToolCard from './ToolCard.vue'
@@ -60,7 +61,13 @@ watch(() => props.blocks, async () => {
       <div v-else-if="block.kind === 'error'" class="stream-line error">
         ⛔ {{ block.message }}
       </div>
-      <div v-else class="stream-line notice">{{ block.message }}</div>
+      <!-- Notices are slash-command output — markdown by contract
+           (the server sends it straight through). -->
+      <div
+        v-else
+        class="stream-line notice markdown"
+        v-html="renderMarkdown(block.message)"
+      ></div>
     </template>
     <div v-if="!blocks.length" class="console-empty">
       No messages yet — describe a task below.
