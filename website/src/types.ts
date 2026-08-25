@@ -37,6 +37,14 @@ export interface PausedFrame {
   choices: string[] | null
 }
 
+/** A plan awaiting (or already running under) approval, as replayed by
+ * hello.plan — the server snapshots plan_proposed + the latest
+ * plan_step_update so a reconnecting tab re-renders its PlanCard. */
+export interface PlanSnapshot {
+  plan: Plan
+  steps: PlanStepRow[]
+}
+
 // ---------------------------------------------------------------------------
 // Event payloads
 // ---------------------------------------------------------------------------
@@ -87,6 +95,7 @@ export type Frame =
       conversation: ConversationInfo
       busy: boolean
       paused: PausedFrame | null
+      plan: PlanSnapshot | null
       messages: ReplayMessage[]
     }
   | { type: 'turn_started' }

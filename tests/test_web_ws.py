@@ -18,6 +18,7 @@ from tests.mocks import (
     pause_on_write,
     plan_proposal_response,
     text_response,
+    tool_use_response,
 )
 from toddler.agent.planner import Plan, PlanStep
 from toddler.config.settings import Settings
@@ -401,6 +402,126 @@ class TestPlanFlow:
             error = ws.receive_json()
             assert error["type"] == "error"
             assert error["code"] == "invalid_mode"
+
+
+# ============================================================================
+# Plan reconnect: a pending plan survives in hello
+# ============================================================================
+
+
+class TestPlanReconnect:
+    def test_second_tab_sees_pending_plan(self, tmp_path):
+        llm = make_mock_llm(
+            text_response("Exploring..."),
+            plan_proposal_response(_plan()),
+        )
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as watcher:
+            watcher.receive_json()  # hello
+            watcher.send_json({
+                "cmd": "turn",
+                "input": "refactor thing",
+                "force_plan": True,
+            })
+            _wait_for(watcher, "plan_proposed")
+
+            # A second tab connects while the plan waits for approval:
+            # hello carries the proposal so the PlanCard isn't lost.
+            with client.websocket_connect("/ws") as tab2:
+                hello2 = tab2.receive_json()
+                assert hello2["busy"] is True
+                assert hello2["paused"] is None
+                assert hello2["plan"]["plan"]["id"] == "plan-1"
+                assert hello2["plan"]["steps"] == []
+
+                tab2.send_json({
+                    "cmd": "approve_plan",
+                    "plan_id": "plan-1",
+                    "mode": "manual",
+                })
+                ack = _wait_for(tab2, "ack")
+                assert ack == {
+                    "type": "ack",
+                    "cmd": "approve_plan",
+                    "accepted": True,
+                }
+
+            # The original tab still sees the turn complete.
+            finished = _wait_for(watcher, "agent_finished")
+            assert finished["reason"] == "LLM finished its turn."
+
+    def test_second_tab_joins_mid_execution_with_step_statuses(self, tmp_path):
+        llm = make_mock_llm(
+            text_response("Exploring..."),
+            plan_proposal_response(_plan()),
+            # Step statuses move only via the plan_update tool — call it
+            # to stream a plan_step_update during execution.
+            tool_use_response(
+                "plan_update",
+                {"step_id": "step-1", "status": "in_progress"},
+                tool_id="call_update",
+            ),
+            pause_on_write(str(tmp_path / "out.txt")),
+        )
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as watcher:
+            watcher.receive_json()  # hello
+            watcher.send_json({
+                "cmd": "turn",
+                "input": "refactor thing",
+                "force_plan": True,
+            })
+            _wait_for(watcher, "plan_proposed")
+            watcher.send_json({
+                "cmd": "approve_plan",
+                "plan_id": "plan-1",
+                "mode": "manual",
+            })
+            # Execution: plan_update (READ — no pause under MANUAL) flips
+            # step-1 to in_progress and streams the status update; the
+            # write step then parks the turn on approval.
+            _wait_for(watcher, "plan_step_update")
+            _wait_for(watcher, "agent_paused")
+
+            with client.websocket_connect("/ws") as tab2:
+                hello2 = tab2.receive_json()
+                assert hello2["busy"] is True
+                assert hello2["plan"]["plan"]["id"] == "plan-1"
+                assert any(
+                    status != "pending"
+                    for _, _, status in hello2["plan"]["steps"]
+                )
+                # The card is decided (steps running) — and the paused
+                # write tool is still answerable from the new tab.
+                assert hello2["paused"]["type"] == "agent_paused"
+
+                tab2.send_json({
+                    "cmd": "approve_tool", "tool_id": "call_write",
+                })
+                _wait_for(tab2, "ack")
+
+            _wait_for(watcher, "agent_finished")
+
+    def test_plan_wait_auto_cancels_when_last_watcher_leaves(self, tmp_path):
+        llm = make_mock_llm(
+            text_response("Exploring..."),
+            plan_proposal_response(_plan()),
+        )
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client:
+            with client.websocket_connect("/ws") as ws:
+                ws.receive_json()  # hello
+                ws.send_json({
+                    "cmd": "turn",
+                    "input": "refactor thing",
+                    "force_plan": True,
+                })
+                _wait_for(ws, "plan_proposed")
+                # Exit the context without answering — the stranded plan
+                # approval must not hang forever.
+            state = client.app.state.web
+            _wait_until(lambda: not state.runner.busy)
+            assert state.runner.plan_snapshot is None
 
 
 # ============================================================================

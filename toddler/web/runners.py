@@ -9,10 +9,12 @@ Events are serialized once and broadcast into per-connection
 ``asyncio.Queue``s (multi-tab watching works for free); each connection
 drains its own queue in a separate task.
 
-The runner also snapshots ``AgentPaused`` payloads so reconnecting clients
-can resume a pending approval (delivered in ``hello``), and auto-cancels a
-paused turn when the last watcher leaves — a pending approval nobody can
-answer would hang forever.
+The runner also snapshots ``AgentPaused`` payloads (a pending tool
+approval) and ``PlanProposed`` (a plan awaiting approval, plus the latest
+step statuses as they stream) so reconnecting clients can resume either
+state — both are delivered in ``hello``.  When the last watcher leaves
+with a decision still pending, the turn is auto-cancelled: nobody can
+answer it, so it would hang forever.
 """
 
 from __future__ import annotations
@@ -27,6 +29,8 @@ from toddler.agent.events import (
     AgentFinished,
     AgentPaused,
     FatalAgentError,
+    PlanProposed,
+    PlanStepUpdate,
 )
 from toddler.session import SessionManager
 from toddler.web.events import serialize_event
@@ -62,6 +66,12 @@ class TurnRunner:
         # reconnecting clients in hello; cleared when the turn ends.
         self._paused_snapshot: dict | None = None
 
+        # Snapshot of the pending PlanProposed frame ({"plan": ..., "steps":
+        # latest plan_step_update rows, [] before execution starts}) — a
+        # reconnecting or new tab re-renders its PlanCard from this instead
+        # of losing the card mid-approval.  Cleared when the turn ends.
+        self._plan_snapshot: dict | None = None
+
     # ------------------------------------------------------------------
     # State
     # ------------------------------------------------------------------
@@ -75,6 +85,11 @@ class TurnRunner:
     def paused_snapshot(self) -> dict | None:
         """The pending ``agent_paused`` frame, or *None* when not paused."""
         return self._paused_snapshot
+
+    @property
+    def plan_snapshot(self) -> dict | None:
+        """The pending ``plan_proposed`` snapshot, or *None*."""
+        return self._plan_snapshot
 
     # ------------------------------------------------------------------
     # Subscriptions
@@ -90,13 +105,15 @@ class TurnRunner:
     def unsubscribe(self, queue_id: int) -> None:
         """Drop a connection's queue.
 
-        Stranded-approval guard: when the last watcher leaves while the
-        agent is paused, auto-cancel the turn — a pending approval nobody
-        can answer would hang forever.
+        Stranded-approval guard: when the last watcher leaves while a
+        decision is pending (tool approval or plan approval), auto-cancel
+        the turn — nobody can answer, so it would hang forever.
         """
         self._subscribers.pop(queue_id, None)
-        if self._paused_snapshot is not None and not self._subscribers:
-            logger.info("Last watcher left a paused turn — cancelling.")
+        if not self._subscribers and (
+            self._paused_snapshot is not None or self._plan_snapshot is not None
+        ):
+            logger.info("Last watcher left a pending turn — cancelling.")
             self.cancel()
 
     # ------------------------------------------------------------------
@@ -172,8 +189,16 @@ class TurnRunner:
                     continue
                 if isinstance(event, AgentPaused):
                     self._paused_snapshot = frame
+                elif isinstance(event, PlanProposed):
+                    # Snapshot for reconnecters: the plan plus empty step
+                    # statuses; plan_step_update merges in as they stream.
+                    self._plan_snapshot = {"plan": frame["plan"], "steps": []}
+                elif isinstance(event, PlanStepUpdate):
+                    if self._plan_snapshot is not None:
+                        self._plan_snapshot["steps"] = frame["steps"]
                 elif isinstance(event, (AgentFinished, FatalAgentError)):
                     self._paused_snapshot = None
+                    self._plan_snapshot = None
                 self.broadcast(frame)
         except asyncio.CancelledError:
             self.broadcast({"type": "turn_cancelled"})
@@ -190,5 +215,6 @@ class TurnRunner:
                 await gen.aclose()
             self._gen = None
             self._paused_snapshot = None
+            self._plan_snapshot = None
             self.broadcast({"type": "state", "busy": False})
             self._lock.release()

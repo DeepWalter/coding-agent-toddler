@@ -114,7 +114,7 @@ running agent, hence busy rejection.
 ```
 hello              {session: {id, title, mode_label, permission_mode, context_usage_pct, model, cwd},
                      conversation: {id, sequence_num, title},
-                     busy, paused, messages: [replay from storage_mgr.get_messages()]}
+                     busy, paused, plan, messages: [replay from storage_mgr.get_messages()]}
 turn_started
 state              {busy: true|false}
 text_delta         {text}
@@ -136,6 +136,17 @@ the protocol: it carried no session info and no replay, so it couldn't
 fulfill "session switch replays history" on its own.
 plan_proposed      {plan: {id, title, summary, steps, rationale, risks, estimated_files_touched}}
 plan_step_update   {steps: [[id, description, status], ...]}   # complete snapshot — replace, don't diff
+
+``hello.plan`` replays a pending proposal as ``{plan, steps}`` (the
+``plan_proposed`` payload plus the latest ``plan_step_update`` rows,
+``[]`` before execution starts) — the runner snapshots ``PlanProposed``
+exactly like ``AgentPaused``, so a reconnecting or new tab re-renders
+its PlanCard instead of losing it mid-approval.  The snapshot is
+cleared when the turn ends; it dies with the server process, so a
+server restart still loses the plan (and the turn) — the stranded-approval
+guard treats a plan wait like a tool pause, so a single tab dropping out
+mid-approval auto-cancels the turn rather than hanging it.
+
 agent_paused       {prompt, choices}
 agent_finished     {reason, usage: {input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens}}
 recoverable_error  {message}
@@ -161,6 +172,9 @@ fields explicitly (Plan has no `to_dict`); same for `ToolResult` and
   (multi-tab watching works for free)
 - `AgentPaused` payload is snapshotted (`_paused_snapshot`), cleared on
   `AgentFinished`/`FatalAgentError`; reconnecters get it in `hello`
+- `PlanProposed` is snapshotted the same way (`_plan_snapshot`), with
+  `plan_step_update` rows merged in as they stream; `hello.plan` carries
+  it so a reconnecting tab keeps its PlanCard
 - `cancel()` → `task.cancel()`; the runner broadcasts `turn_cancelled`, closes
   the generator (`await gen.aclose()` — safe no-op on a stopped generator),
   clears the snapshot, broadcasts `state {busy: false}`
@@ -190,8 +204,9 @@ line-numbered output, which the editor must not parse. Path safety:
 `GitignoreMatcher` (toddler/context/workspace.py:86) + an `IGNORED_TOP` set
 (`.git`, `node_modules`, `.venv`, `dist`, `__pycache__`, ...).
 
-No plan/checkpoint REST endpoints in MVP — plans stream over WS and live only
-in the live turn.
+No plan/checkpoint REST endpoints in MVP — plans stream over WS and the
+runner snapshots a pending proposal into `hello` (see protocol above), so
+plans survive a client reconnect but not a server restart.
 
 ## Frontend (Vue 3 + Vite)
 
@@ -201,7 +216,9 @@ in the live turn.
   `useWebSocket` composable (auto-reconnect with backoff 1s→10s). No Pinia
   (tree too shallow), no Monaco (textarea editor for MVP).
 - On `hello`: replace console state with transcript replay, resume `busy`/`paused`
-  (reconnect mid-approval shows the pending prompt again).
+  (reconnect mid-approval shows the pending prompt again) and re-render a pending
+  PlanCard from `hello.plan` — a card whose steps already show progress is treated
+  as decided (no re-offered approve/deny buttons).
 - Console rendering: `text_delta` appends to the tail assistant block;
   `tool_call_start/end` render collapsible cards (spinner while open, red on
   error); `plan_step_update` replaces step chips; `agent_paused` → approve/deny

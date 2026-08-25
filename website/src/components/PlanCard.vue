@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import type { Block } from '../types'
 
 const props = defineProps<{ block: Extract<Block, { kind: 'plan' }> }>()
@@ -14,6 +14,15 @@ const emit = defineEmits<{
 const chosen = ref<'manual' | 'auto' | 'reject' | null>(null)
 const showFeedback = ref(false)
 const feedback = ref('')
+
+// A card rebuilt from a hello snapshot can arrive with steps already
+// running (the plan was approved from another tab) — then the decision
+// is made and the action buttons must not re-offer approval.
+const resolved = computed(
+  () =>
+    chosen.value !== null
+    || props.block.steps.some(([, , status]) => status !== 'pending'),
+)
 
 function choose(mode: 'manual' | 'auto') {
   if (chosen.value) return
@@ -57,7 +66,7 @@ function submitReject() {
       ~{{ block.plan.estimated_files_touched }} file(s) touched
     </div>
 
-    <div v-if="!chosen" class="plan-card-actions">
+    <div v-if="!resolved" class="plan-card-actions">
       <button type="button" class="btn primary" @click="choose('manual')">Approve</button>
       <button type="button" class="btn" @click="choose('auto')">Approve + auto</button>
       <button type="button" class="btn danger" @click="showFeedback = true">Deny</button>

@@ -131,6 +131,13 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
         if (msg.role === 'user') push(s, { kind: 'user', text: msg.content })
         else push(s, { kind: 'assistant', text: msg.content, closed: true })
       }
+      // A plan proposed mid-turn is snapshotted server-side (proposal +
+      // latest step statuses); re-render the card so a reconnecting or
+      // new tab can still see and approve it.  Same busy gate as paused
+      // — the snapshot can outlive the turn by a race.
+      if (action.busy && action.plan) {
+        push(s, { kind: 'plan', plan: action.plan.plan, steps: action.plan.steps })
+      }
       break
     }
     case 'turn_started':

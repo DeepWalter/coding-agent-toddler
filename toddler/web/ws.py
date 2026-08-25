@@ -43,7 +43,8 @@ def _ack_frame(cmd: str, accepted: bool) -> dict:
 
 def _hello_frame(state: WebAppState) -> dict:
     """Build the ``hello`` frame: session info, transcript replay, and
-    the live busy/paused state so reconnecting tabs resume mid-approval."""
+    the live busy/paused/plan state so reconnecting tabs resume
+    mid-approval."""
     mgr = state.session_mgr
     session = mgr.session
     conv = mgr.conversation
@@ -72,6 +73,10 @@ def _hello_frame(state: WebAppState) -> dict:
         "busy": state.runner.busy,
         # The full agent_paused frame — the frontend re-applies it.
         "paused": state.runner.paused_snapshot,
+        # The pending plan proposal (plan + latest step statuses) — the
+        # frontend re-renders its PlanCard from this instead of losing
+        # the card on reconnect.
+        "plan": state.runner.plan_snapshot,
         "messages": messages,
     }
 
