@@ -140,10 +140,11 @@ if _TEST == "cli":
 
         @staticmethod
         def _chunks_for_text():
-            """Stream the content of *this* file."""
-            blocks: list[tuple[str, str | None]] = []
+            """Stream the content of *this* file as a fenced python block."""
+            blocks: list[tuple[str, str | None]] = [("text", "```python\n")]
             for line in _THIS_CONTENT.splitlines(keepends=True):
                 blocks.append(("text", line))
+            blocks.append(("text", "```\n"))
             blocks.append(("finish", "stop"))
             return _DummyStream._materialize(blocks)
 
