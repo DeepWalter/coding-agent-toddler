@@ -284,7 +284,7 @@ first working release.
      tool card; Cancel mid-turn; kill server → disconnected status → restart →
      auto-reconnect + replay
 
-5. **`feat(web): add split-pane file explorer and editor`**
+5. ✅ **`feat(web): add split-pane file explorer and editor`**
    - `components/{FileExplorer,FileEditor}.vue`; App.vue split layout + drag
      divider (pointer-event handler, clamp 20–80%)
    - Verify: browse repo, open toddler/main.py, edit + Cmd+S persists (check on
