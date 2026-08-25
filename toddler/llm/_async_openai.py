@@ -140,8 +140,21 @@ if _TEST == "cli":
 
         @staticmethod
         def _chunks_for_text():
-            """Stream the content of *this* file as a fenced python block."""
-            blocks: list[tuple[str, str | None]] = [("text", "```python\n")]
+            """Stream a link to *this* file, then its content as a fenced
+            python block."""
+            try:
+                rel = _THIS_FILE.relative_to(Path.cwd())
+            except ValueError:
+                # File outside cwd — link to its absolute path instead.
+                rel = _THIS_FILE
+            link = rel.as_posix()
+            blocks: list[tuple[str, str | None]] = [
+                (
+                    "text",
+                    f"Here is the content of [{link}]({link}):\n\n",
+                ),
+                ("text", "```python\n"),
+            ]
             for line in _THIS_CONTENT.splitlines(keepends=True):
                 blocks.append(("text", line))
             blocks.append(("text", "```\n"))
