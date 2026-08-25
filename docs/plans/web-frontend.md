@@ -259,7 +259,7 @@ first working release.
      paused tool, cancel → `turn_cancelled`, plan approve/reject acks)
    - Verify: pytest above; manual `tod serve` + websocat/scratch page
 
-3. **`feat(web): add rest endpoints for files and sessions`**
+3. ✅ **`feat(web): add rest endpoints for files and sessions`**
    - `toddler/web/files.py` (resolve_relative, build_file_tree, read/write),
      `api.py` (meta/sessions/messages/tree/file)
    - `tests/test_web_api.py` — sessions list/create, messages replay after a
