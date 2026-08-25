@@ -86,71 +86,83 @@ def serialize_token_usage(usage: TokenUsage | None) -> dict | None:
     }
 
 
-def serialize_event(event: AgentEvent) -> dict | None:
+def serialize_event(event: AgentEvent) -> dict | None:  # noqa: C901
     """Serialize one :class:`AgentEvent` to its protocol frame.
 
     Returns ``None`` for event classes this server doesn't know about
     (forward compatibility) so the runner can skip them instead of
     dropping the whole turn.
     """
-    if isinstance(event, TextDelta):
-        return {"type": "text_delta", "text": event.text}
+    match event:
+        case TextDelta(text=text):
+            return {"type": "text_delta", "text": text}
 
-    if isinstance(event, ToolCallStart):
-        return {
-            "type": "tool_call_start",
-            "tool_id": event.tool_id,
-            "tool_name": event.tool_name,
-            "partial_input": event.partial_input,
-        }
+        case ToolCallStart(
+            tool_id=tool_id,
+            tool_name=tool_name,
+            partial_input=partial_input,
+        ):
+            return {
+                "type": "tool_call_start",
+                "tool_id": tool_id,
+                "tool_name": tool_name,
+                "partial_input": partial_input,
+            }
 
-    if isinstance(event, ToolCallDelta):
-        return {
-            "type": "tool_call_delta",
-            "tool_id": event.tool_id,
-            "input_delta": event.input_delta,
-        }
+        case ToolCallDelta(tool_id=tool_id, input_delta=input_delta):
+            return {
+                "type": "tool_call_delta",
+                "tool_id": tool_id,
+                "input_delta": input_delta,
+            }
 
-    if isinstance(event, ToolCallEnd):
-        return {
-            "type": "tool_call_end",
-            "tool_id": event.tool_id,
-            "tool_name": event.tool_name,
-            "input": event.input,
-            "result": serialize_tool_result(event.result),
-        }
+        case ToolCallEnd(
+            tool_id=tool_id,
+            tool_name=tool_name,
+            input=input,
+            result=result,
+        ):
+            return {
+                "type": "tool_call_end",
+                "tool_id": tool_id,
+                "tool_name": tool_name,
+                "input": input,
+                "result": serialize_tool_result(result),
+            }
 
-    if isinstance(event, PlanProposed):
-        return {"type": "plan_proposed", "plan": serialize_plan(event.plan)}
+        case PlanProposed(plan=plan):
+            return {"type": "plan_proposed", "plan": serialize_plan(plan)}
 
-    if isinstance(event, PlanStepUpdate):
-        # Complete snapshot — the frontend replaces, not diffs.
-        return {
-            "type": "plan_step_update",
-            "steps": [
-                [step_id, description, status.value]
-                for step_id, description, status in event.steps
-            ],
-        }
+        case PlanStepUpdate(steps=steps):
+            # Complete snapshot — the frontend replaces, not diffs.
+            return {
+                "type": "plan_step_update",
+                "steps": [
+                    [step_id, description, status.value]
+                    for step_id, description, status in steps
+                ],
+            }
 
-    if isinstance(event, AgentPaused):
-        return {
-            "type": "agent_paused",
-            "prompt": event.prompt,
-            "choices": event.choices,
-        }
+        case AgentPaused(prompt=prompt, choices=choices):
+            return {
+                "type": "agent_paused",
+                "prompt": prompt,
+                "choices": choices,
+            }
 
-    if isinstance(event, AgentFinished):
-        return {
-            "type": "agent_finished",
-            "reason": event.reason,
-            "usage": serialize_token_usage(event.usage),
-        }
+        case AgentFinished(reason=reason, usage=usage):
+            return {
+                "type": "agent_finished",
+                "reason": reason,
+                "usage": serialize_token_usage(usage),
+            }
 
-    if isinstance(event, RecoverableAgentError):
-        return {"type": "recoverable_error", "message": event.message}
+        case RecoverableAgentError(message=message):
+            return {"type": "recoverable_error", "message": message}
 
-    if isinstance(event, FatalAgentError):
-        return {"type": "fatal_error", "message": event.message}
+        case FatalAgentError(message=message):
+            return {"type": "fatal_error", "message": message}
 
-    return None
+        # Any other AgentEvent subclass (forward compatibility).
+        case AgentEvent():
+            return None
