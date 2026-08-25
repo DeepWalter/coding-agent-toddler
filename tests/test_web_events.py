@@ -17,6 +17,7 @@ from toddler.agent.events import (
 )
 from toddler.agent.planner import Plan, PlanStep
 from toddler.llm import TokenUsage
+from toddler.llm.messages import ContentBlock, Message
 from toddler.tools.base import ToolResult
 from toddler.tools.plan import PlanStepStatus
 from toddler.web.events import (
@@ -24,6 +25,7 @@ from toddler.web.events import (
     serialize_plan,
     serialize_token_usage,
     serialize_tool_result,
+    serialize_transcript,
 )
 
 
@@ -188,6 +190,107 @@ class TestSerializeEvent:
             pass
 
         assert serialize_event(UnknownEvent()) is None
+
+
+class TestSerializeTranscript:
+    """Stored-message flattening for hello / REST replay."""
+
+    @staticmethod
+    def _tool_pair(
+        tool_id: str,
+        name: str = "read_file",
+        tool_input: dict | None = None,
+        result: str | None = "content",
+        is_error: bool = False,
+    ) -> list[Message]:
+        """The stored shape of a tool call: an assistant tool_use message
+        followed by a tool message with its result."""
+        return [
+            Message.assistant([
+                ContentBlock.tool_use_block(
+                    tool_id, name, tool_input or {"path": "a.py"},
+                ),
+            ]),
+            Message.tool([
+                ContentBlock.tool_result_block(
+                    tool_id, result or "", is_error=is_error,
+                ),
+            ]),
+        ]
+
+    def test_system_message_skipped(self):
+        messages = [
+            Message.system("You are helpful."),
+            Message.user("hi"),
+            Message.assistant([ContentBlock.text_block("hello")]),
+        ]
+        assert serialize_transcript(messages) == [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "hello"},
+        ]
+
+    def test_tool_call_paired_into_single_entry(self):
+        messages = [
+            Message.user("read it"),
+            *self._tool_pair("t1"),
+            Message.assistant([ContentBlock.text_block("done")]),
+        ]
+        assert serialize_transcript(messages) == [
+            {"role": "user", "content": "read it"},
+            {
+                "role": "tool",
+                "tool_id": "t1",
+                "tool_name": "read_file",
+                "input": {"path": "a.py"},
+                "result": {
+                    "success": True,
+                    "output": "content",
+                    "error": None,
+                    "checkpoint_id": None,
+                    "metadata": None,
+                },
+            },
+            {"role": "assistant", "content": "done"},
+        ]
+
+    def test_failed_tool_result_maps_error(self):
+        messages = self._tool_pair(
+            "t1", name="write_file",
+            tool_input={"path": "b.py"}, result="denied", is_error=True,
+        )
+        entry = serialize_transcript(messages)[0]
+        assert entry["result"] == {
+            "success": False,
+            "output": None,
+            "error": "denied",
+            "checkpoint_id": None,
+            "metadata": None,
+        }
+
+    def test_use_without_result_replays_as_cancelled(self):
+        # A turn cancelled mid-execution persists the use but no result.
+        messages = [Message.assistant([
+            ContentBlock.tool_use_block("t1", "write_file", {}),
+        ])]
+        entry = serialize_transcript(messages)[0]
+        assert entry["tool_id"] == "t1"
+        assert entry["result"] is None
+
+    def test_tool_message_not_emitted_on_its_own(self):
+        # The tool role carries only results; they attach to the use site.
+        messages = [Message.tool([
+            ContentBlock.tool_result_block("t1", "content"),
+        ])]
+        assert serialize_transcript(messages) == []
+
+    def test_assistant_text_and_use_keep_live_order(self):
+        messages = [Message.assistant([
+            ContentBlock.text_block("checking…"),
+            ContentBlock.tool_use_block("t1", "read_file", {"path": "a.py"}),
+        ])]
+        assert [e["role"] for e in serialize_transcript(messages)] == [
+            "assistant", "tool",
+        ]
 
 
 class TestSerializePayloads:

@@ -127,6 +127,19 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
         : null
       s.blocks = []
       for (const msg of action.messages) {
+        if (msg.role === 'tool') {
+          // Replayed tool call — same shape as tool_call_end, closed so
+          // the card renders its result state instead of "running".
+          push(s, {
+            kind: 'tool',
+            tool_id: msg.tool_id ?? '',
+            tool_name: msg.tool_name ?? '',
+            input: msg.input ?? {},
+            result: msg.result ?? null,
+            open: false,
+          })
+          continue
+        }
         if (!msg.content) continue
         if (msg.role === 'user') push(s, { kind: 'user', text: msg.content })
         else push(s, { kind: 'assistant', text: msg.content, closed: true })

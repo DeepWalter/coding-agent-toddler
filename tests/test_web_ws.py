@@ -140,6 +140,42 @@ class TestTurnStream:
                 assert msgs[0] == {"role": "user", "content": "hi"}
                 assert msgs[1]["content"] == "Hello there."
 
+    def test_hello_replays_tool_card_after_turn(self, tmp_path):
+        out = tmp_path / "out.txt"
+        llm = make_mock_llm(
+            pause_on_write(str(out)),
+            text_response("Done."),
+        )
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client:
+            with client.websocket_connect("/ws") as ws:
+                ws.receive_json()  # hello
+                ws.send_json({"cmd": "turn", "input": "write it"})
+                _wait_for(ws, "agent_paused")
+                ws.send_json({
+                    "cmd": "approve_tool", "tool_id": "call_write",
+                })
+                _wait_for(ws, "tool_call_end")
+                _wait_for(ws, "agent_finished")
+
+            # Reconnect — the foldable tool card replays from storage as
+            # a closed block shaped like tool_call_end.
+            with client.websocket_connect("/ws") as ws:
+                hello = ws.receive_json()
+                msgs = hello["messages"]
+                assert [m["role"] for m in msgs] == [
+                    "user", "tool", "assistant",
+                ]
+                tool = msgs[1]
+                assert tool["tool_id"] == "call_write"
+                assert tool["tool_name"] == "write_file"
+                assert tool["input"] == {
+                    "file_path": str(out), "content": "hello",
+                }
+                assert tool["result"]["success"] is True
+                assert tool["result"]["output"] is not None
+                assert tool["result"]["error"] is None
+
 
 # ============================================================================
 # Busy rejection

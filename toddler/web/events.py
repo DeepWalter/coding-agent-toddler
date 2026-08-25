@@ -27,6 +27,7 @@ from toddler.agent.events import (
 )
 from toddler.agent.planner import Plan
 from toddler.llm import TokenUsage
+from toddler.llm.messages import Message
 from toddler.tools.base import ToolResult
 
 __all__ = [
@@ -34,6 +35,7 @@ __all__ = [
     "serialize_plan",
     "serialize_token_usage",
     "serialize_tool_result",
+    "serialize_transcript",
 ]
 
 
@@ -69,6 +71,64 @@ def serialize_tool_result(result: ToolResult | None) -> dict | None:
         "checkpoint_id": result.checkpoint_id,
         "metadata": result.metadata,
     }
+
+
+def _tool_results(messages: list[Message]) -> dict[str, dict]:
+    """Map ``tool_id`` → serialized result from stored ``tool_result``
+    blocks."""
+    results: dict[str, dict] = {}
+    for msg in messages:
+        if msg.role != "tool":
+            continue
+        for block in msg.content:
+            if block.type != "tool_result" or not block.tool_id:
+                continue
+            is_error = block.is_error or False
+            results[block.tool_id] = {
+                "success": not is_error,
+                "output": None if is_error else block.tool_result_content,
+                "error": block.tool_result_content if is_error else None,
+                "checkpoint_id": None,
+                "metadata": None,
+            }
+    return results
+
+
+def serialize_transcript(messages: list[Message]) -> list[dict]:
+    """Flatten stored messages into transcript replay entries.
+
+    Called for ``hello`` (WS reconnect) and ``/api/sessions/.../messages``.
+    The persisted system prompt is agent scaffolding, not transcript —
+    skipped.  Tool calls pair each stored ``tool_use`` block with its
+    ``tool_result`` (matched by ``tool_id``) into a single entry shaped
+    like the ``tool_call_end`` frame, so a refresh renders the same
+    foldable cards the live stream did.  A use whose result was never
+    persisted (cancelled mid-execution) replays with ``result: null`` —
+    the frontend renders that as cancelled.
+    """
+    results = _tool_results(messages)
+    entries: list[dict] = []
+    for msg in messages:
+        if msg.role in ("system", "tool"):
+            continue
+        if msg.role == "user":
+            if msg.text:
+                entries.append({"role": "user", "content": msg.text})
+            continue
+        # assistant — text first, then its tool uses, matching the live
+        # ``text_delta`` → ``tool_call_start`` order.
+        if msg.text:
+            entries.append({"role": "assistant", "content": msg.text})
+        for block in msg.content:
+            if block.type == "tool_use" and block.tool_id:
+                entries.append({
+                    "role": "tool",
+                    "tool_id": block.tool_id,
+                    "tool_name": block.tool_name or "",
+                    "input": block.tool_input or {},
+                    "result": results.get(block.tool_id),
+                })
+    return entries
 
 
 def serialize_token_usage(usage: TokenUsage | None) -> dict | None:

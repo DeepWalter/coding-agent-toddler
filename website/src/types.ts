@@ -28,6 +28,15 @@ export interface ConversationInfo {
 export interface ReplayMessage {
   role: string
   content: string
+  /**
+   * Tool-call replay — present when role === 'tool'.  Mirrors the
+   * tool_call_end payload so the reducer builds the same ToolCard block;
+   * result is null for a use that never executed (cancelled turn).
+   */
+  tool_id?: string
+  tool_name?: string
+  input?: Record<string, unknown>
+  result?: ToolResult | null
 }
 
 /** The agent_paused frame as replayed by hello.paused. */

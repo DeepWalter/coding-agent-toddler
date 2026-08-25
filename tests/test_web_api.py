@@ -104,11 +104,10 @@ class TestMessages:
             messages = resp.json()["messages"]
             # The persisted system prompt is scaffolding, not transcript —
             # it is filtered out of the replay.
-            assert [(m["sequence_num"], m["role"]) for m in messages] == [
-                (2, "user"), (3, "assistant"),
+            assert [(m["role"], m["content"]) for m in messages] == [
+                ("user", "hi"),
+                ("assistant", "Hello there."),
             ]
-            assert messages[0]["content"] == "hi"
-            assert messages[1]["content"] == "Hello there."
 
     def test_messages_unknown_session_returns_404(self, tmp_path):
         app = _app(tmp_path)

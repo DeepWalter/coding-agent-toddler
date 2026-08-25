@@ -21,6 +21,7 @@ from fastapi import APIRouter, WebSocket
 
 from toddler.cli.commands import HELP_TEXT
 from toddler.tools.base import PermissionMode
+from toddler.web.events import serialize_transcript
 
 if TYPE_CHECKING:
     from toddler.web.state import WebAppState
@@ -93,15 +94,11 @@ def _hello_frame(state: WebAppState) -> dict:
     conv = mgr.conversation
     messages: list[dict] = []
     if session is not None and conv is not None:
-        for msg in state.storage_mgr.get_messages(
-            session.id, conversation_id=conv.id,
-        ):
-            # The persisted system prompt is agent scaffolding, not
-            # transcript — replaying it would render it as an assistant
-            # bubble at the top of the console after a refresh.
-            if msg.role == "system":
-                continue
-            messages.append({"role": msg.role, "content": msg.text})
+        messages = serialize_transcript(
+            state.storage_mgr.get_messages(
+                session.id, conversation_id=conv.id,
+            ),
+        )
     return {
         "type": "hello",
         "session": _session_payload(state),

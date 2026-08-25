@@ -8,7 +8,6 @@ never reach outside it.
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -17,6 +16,7 @@ from pydantic import BaseModel, ValidationError
 
 from toddler.session.models import Session, SessionSummary
 from toddler.web import files
+from toddler.web.events import serialize_transcript
 from toddler.web.files import FileApiError
 from toddler.web.state import WebAppState
 
@@ -44,27 +44,6 @@ def _summary_payload(session: Session | SessionSummary) -> dict[str, Any]:
         "updated_at": session.updated_at.isoformat(),
         "message_count": session.message_count,
     }
-
-
-def _content_text(content_json: str) -> str:
-    """Plain text of a stored message (same shape as ``Message.text``).
-
-    The content JSON format is owned by ``toddler/session/storage.py``
-    (``_serialize_content``) — only ``type == "text"`` blocks carry text.
-    """
-    try:
-        blocks = json.loads(content_json)
-    except ValueError:
-        return ""
-    if not isinstance(blocks, list):
-        return ""
-    return "".join(
-        block.get("text", "")
-        for block in blocks
-        if isinstance(block, dict)
-        and block.get("type") == "text"
-        and block.get("text")
-    )
 
 
 class SessionCreate(BaseModel):
@@ -129,19 +108,12 @@ async def get_messages(
         return JSONResponse(
             {"error": f"session not found: {sid}"}, status_code=404,
         )
-    stored = state.db.get_messages(sid, conversation_id=conversation_id)
     return {
-        "messages": [
-            {
-                "sequence_num": row.sequence_num,
-                "role": row.role,
-                "content": _content_text(row.content_json),
-            }
-            # The persisted system prompt is agent scaffolding, not
-            # transcript — never replay it to the UI.
-            for row in stored
-            if row.role != "system"
-        ],
+        "messages": serialize_transcript(
+            state.storage_mgr.get_messages(
+                sid, conversation_id=conversation_id,
+            ),
+        ),
     }
 
 
