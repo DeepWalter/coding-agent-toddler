@@ -21,13 +21,26 @@ const md = new MarkdownIt({
   },
 })
 
-// Open external links in a new tab. URL schemes were already validated during
-// parse (markdown-it rejects javascript:/vbscript:/file:/data:).
+// Repo-relative links (no scheme, not protocol- or root-relative, not a
+// fragment) point at files in the workspace — the message pane intercepts
+// their clicks and opens them in the editor.  Everything else is external:
+// open in a new tab.  URL schemes were already validated during parse
+// (markdown-it rejects javascript:/vbscript:/file:/data:).
 const linkOpen = md.renderer.rules.link_open ?? ((tokens, idx, options, _env, self) =>
   self.renderToken(tokens, idx, options))
 md.renderer.rules.link_open = (tokens, idx, options, env, self) => {
-  tokens[idx].attrSet('target', '_blank')
-  tokens[idx].attrSet('rel', 'noopener noreferrer')
+  const href = String(tokens[idx].attrGet('href') ?? '')
+  const internal =
+    !/^[a-z][a-z0-9+.-]*:/i.test(href) &&
+    !href.startsWith('//') &&
+    !href.startsWith('/') &&
+    !href.startsWith('#')
+  if (internal) {
+    tokens[idx].attrSet('data-file', href)
+  } else {
+    tokens[idx].attrSet('target', '_blank')
+    tokens[idx].attrSet('rel', 'noopener noreferrer')
+  }
   return linkOpen(tokens, idx, options, env, self)
 }
 

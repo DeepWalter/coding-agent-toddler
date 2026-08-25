@@ -9,6 +9,7 @@ const props = defineProps<{ blocks: Block[] }>()
 const emit = defineEmits<{
   'approve-plan': [planId: string, mode: 'manual' | 'auto']
   'reject-plan': [planId: string, feedback: string]
+  'open-file': [path: string]
 }>()
 
 const scroller = ref<HTMLElement | null>(null)
@@ -47,6 +48,7 @@ watch(() => props.blocks, async () => {
         v-else-if="block.kind === 'assistant'"
         :role="'assistant'"
         :text="block.text"
+        @open-file="(path) => emit('open-file', path)"
       />
       <ToolCard v-else-if="block.kind === 'tool'" :block="block" />
       <PlanCard

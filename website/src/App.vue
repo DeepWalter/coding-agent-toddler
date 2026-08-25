@@ -116,6 +116,7 @@ function onDividerUp(event: PointerEvent) {
             :blocks="state.blocks"
             @approve-plan="approvePlan"
             @reject-plan="rejectPlan"
+            @open-file="openPath = $event"
           />
           <PausePrompt
             v-if="state.paused"
