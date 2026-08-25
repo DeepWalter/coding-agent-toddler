@@ -37,7 +37,6 @@ function onClick(event: MouseEvent) {
     <div
       v-if="role === 'assistant'"
       class="message-content markdown"
-      :class="{ streaming: text && !text.endsWith('\n') }"
       v-html="rendered"
       @click="onClick"
     ></div>

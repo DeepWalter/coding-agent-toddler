@@ -198,26 +198,6 @@ body {
   white-space: normal;
 }
 
-/* Blinking cursor while a message is still streaming in. Without it, a
-   mid-stream message (e.g. a half-finished code fence) can look complete. */
-.message-content.streaming::after {
-  content: '▍';
-  color: var(--accent);
-  animation: streaming-blink 1s steps(2, start) infinite;
-}
-
-@keyframes streaming-blink {
-  to {
-    visibility: hidden;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .message-content.streaming::after {
-    animation: none;
-  }
-}
-
 .message-content.markdown p {
   margin: 4px 0;
 }
