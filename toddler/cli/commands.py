@@ -59,12 +59,18 @@ class CommandResult:
         (so the caller should not add extra formatting).
     pager_path:
         When set, the caller opens this file path in a pager.
+    changed:
+        ``True`` when the command mutated session / conversation state.
+        The web UI uses this to decide whether to broadcast a state-sync
+        frame — a failed command (e.g. a bad id) changes nothing and must
+        not reset other tabs' consoles.
     """
 
     continue_repl: bool = True
     message: str = ""
     rendered: bool = False
     pager_path: str = ""
+    changed: bool = False
 
 
 # ============================================================================
@@ -170,6 +176,7 @@ class SlashCommandDispatcher:
         await self._session_mgr.new_conversation(title)
         return CommandResult(
             continue_repl=True,
+            changed=True,
             message=(
                 "Started new conversation. "
                 "Your previous conversation was archived."
@@ -228,6 +235,7 @@ class SlashCommandDispatcher:
         self._session_mgr.set_permission_mode(PermissionMode.MANUAL)
         return CommandResult(
             continue_repl=True,
+            changed=True,
             message=self._format_mode_status(),
         )
 
@@ -252,6 +260,7 @@ class SlashCommandDispatcher:
             self._session_mgr.set_permission_mode(PermissionMode.MANUAL)
             return CommandResult(
                 continue_repl=True,
+                changed=True,
                 message=self._format_mode_status(),
             )
 
@@ -260,6 +269,7 @@ class SlashCommandDispatcher:
             self._clear_plan_pending()
             return CommandResult(
                 continue_repl=True,
+                changed=True,
                 message=self._format_mode_status(),
             )
 
@@ -268,6 +278,7 @@ class SlashCommandDispatcher:
             self._clear_plan_pending()
             return CommandResult(
                 continue_repl=True,
+                changed=True,
                 message=self._format_mode_status(),
             )
 
@@ -354,6 +365,7 @@ class SlashCommandDispatcher:
             )
             return CommandResult(
                 continue_repl=True,
+                changed=True,
                 message=f"✅ Rolled back to checkpoint {ck_label}.\n{files}{warnings}",  # noqa: E501
             )
         return CommandResult(
@@ -431,6 +443,7 @@ class SlashCommandDispatcher:
             await self._session_mgr.resume_conversation(conv_id)
             return CommandResult(
                 continue_repl=True,
+                changed=True,
                 message="Resumed conversation.",
             )
         except ValueError as exc:
@@ -576,6 +589,7 @@ class SlashCommandDispatcher:
             s = self._session_mgr.session
             return CommandResult(
                 continue_repl=True,
+                changed=True,
                 message=(
                     f"Switched to session {s.id[:12]}... "
                     f"({s.message_count} messages)"

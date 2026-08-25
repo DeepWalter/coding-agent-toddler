@@ -4,11 +4,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from toddler.config.settings import Settings
 from toddler.llm import BaseLLMProvider
 from toddler.session import SessionManager, SQLiteDatabase, StorageManager
 from toddler.web.runners import TurnRunner
+
+if TYPE_CHECKING:
+    from toddler.cli.commands import SlashCommandDispatcher
 
 __all__ = ["WebAppState"]
 
@@ -28,6 +32,7 @@ class WebAppState:
     storage_mgr: StorageManager
     llm: BaseLLMProvider
     session_mgr: SessionManager
+    cmd_dispatcher: SlashCommandDispatcher
     runner: TurnRunner
     repo_root: Path
     dev: bool

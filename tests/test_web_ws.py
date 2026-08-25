@@ -636,6 +636,207 @@ class TestSessionManagement:
 
 
 # ============================================================================
+# Slash commands (dispatch locally, never to the LLM)
+# ============================================================================
+
+
+class TestSlashCommands:
+    def test_help_broadcasts_help_text(self, tmp_path):
+        llm = make_mock_llm()
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "turn", "input": "/help"})
+            notice = _wait_for(ws, "notice")
+            assert "Slash Commands" in notice["message"]
+            assert "/mode" in notice["message"]
+            assert llm.call_count == 0
+
+    def test_mode_shows_status_notice(self, tmp_path):
+        llm = make_mock_llm()
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "turn", "input": "/mode"})
+            notice = _wait_for(ws, "notice")
+            assert "Mode:" in notice["message"]
+            assert llm.call_count == 0
+
+    def test_mode_auto_broadcasts_session_info_and_notice(self, tmp_path):
+        llm = make_mock_llm()
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "turn", "input": "/mode auto"})
+            # A session_info frame (header update), not a full hello
+            # replay — the console scroll-back must survive.
+            frame = ws.receive_json()
+            assert frame["type"] == "session_info"
+            assert frame["session"]["permission_mode"] == "auto"
+            notice = _wait_for(ws, "notice")
+            assert "Gating: AUTO" in notice["message"]
+            assert client.app.state.web.session_mgr.permission_mode.value == "auto"
+
+    def test_mode_does_not_clear_previous_notices(self, tmp_path):
+        """Regression: /help then /mode must not wipe the console.
+
+        The mutating broadcast used to be a full hello replay, which
+        resets all blocks — the /help output vanished with no
+        scroll-back.  Bare /mode changes nothing, so the notice is the
+        only frame: no hello, no session_info.
+        """
+        llm = make_mock_llm()
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "turn", "input": "/help"})
+            _wait_for(ws, "notice")
+
+            ws.send_json({"cmd": "turn", "input": "/mode"})
+            frame = ws.receive_json()
+            assert frame["type"] == "notice"  # straight to the notice
+            assert "Mode:" in frame["message"]
+            assert llm.call_count == 0
+
+    def test_clear_archives_and_broadcasts_hello(self, tmp_path):
+        llm = make_mock_llm(text_response("Hello."))
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "turn", "input": "hi"})
+            _wait_for(ws, "agent_finished")
+
+            ws.send_json({"cmd": "turn", "input": "/clear"})
+            replay = _wait_for(ws, "hello")
+            assert replay["conversation"]["sequence_num"] == 2
+            assert replay["messages"] == []
+            notice = _wait_for(ws, "notice")
+            assert "Started new conversation" in notice["message"]
+            assert llm.call_count == 1  # only the real turn hit the LLM
+
+    def test_quit_and_view_unavailable(self, tmp_path):
+        llm = make_mock_llm()
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "turn", "input": "/quit"})
+            notice = _wait_for(ws, "notice")
+            assert "not available in the web UI" in notice["message"]
+
+            ws.send_json({"cmd": "turn", "input": "/view 1"})
+            notice = _wait_for(ws, "notice")
+            assert "not available in the web UI" in notice["message"]
+
+            # The connection is still alive after both.
+            ws.send_json({"cmd": "ping"})
+            assert ws.receive_json() == {"type": "pong"}
+            assert llm.call_count == 0
+
+    def test_unknown_slash_command_notice(self, tmp_path):
+        llm = make_mock_llm()
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "turn", "input": "/nope"})
+            notice = _wait_for(ws, "notice")
+            assert "Unknown command: /nope" in notice["message"]
+            assert llm.call_count == 0
+
+    def test_mutating_slash_while_busy_rejected(self, tmp_path):
+        llm = make_mock_llm(pause_on_write(str(tmp_path / "out.txt")))
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "turn", "input": "write"})
+            _wait_for(ws, "agent_paused")
+
+            ws.send_json({"cmd": "turn", "input": "/clear"})
+            error = ws.receive_json()
+            assert error == {
+                "type": "error",
+                "code": "busy",
+                "message": "A turn is already running.",
+            }
+            ws.send_json({"cmd": "cancel"})
+            _wait_for(ws, "turn_cancelled")
+
+    def test_help_allowed_while_busy(self, tmp_path):
+        llm = make_mock_llm(pause_on_write(str(tmp_path / "out.txt")))
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "turn", "input": "write"})
+            _wait_for(ws, "agent_paused")
+
+            ws.send_json({"cmd": "turn", "input": "/help"})
+            notice = _wait_for(ws, "notice")
+            assert "Slash Commands" in notice["message"]
+            ws.send_json({"cmd": "cancel"})
+            _wait_for(ws, "turn_cancelled")
+
+    def test_failed_resume_does_not_replay_hello(self, tmp_path):
+        """Regression: a failed /resume (bad id) changes nothing — no
+        hello replay, so the console scroll-back (/help output) survives,
+        and the current conversation stays active.
+
+        The replay decision used to be made on the command string, so a
+        failed resume broadcast a full hello that reset all blocks.
+        """
+        llm = make_mock_llm(text_response("Hello."))
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "turn", "input": "hi"})
+            _wait_for(ws, "agent_finished")
+
+            ws.send_json({"cmd": "turn", "input": "/help"})
+            _wait_for(ws, "notice")
+
+            conv_id = client.app.state.web.session_mgr.conversation.id
+            ws.send_json({"cmd": "turn", "input": "/resume no-such-id"})
+            frame = ws.receive_json()
+            assert frame["type"] == "notice"  # no hello replay first
+            assert "not found" in frame["message"]
+
+            # The failed resume is a no-op: same conversation, still active.
+            mgr = client.app.state.web.session_mgr
+            assert mgr.conversation.id == conv_id
+            assert mgr.conversation.status == "active"
+            assert llm.call_count == 1
+
+    def test_unknown_prefix_is_not_a_mode_change(self, tmp_path):
+        """Regression: /moded (a prefix of /mode) is an unknown command,
+        not a mutation — it must not broadcast session_info or wipe the
+        console.
+        """
+        llm = make_mock_llm()
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "turn", "input": "/moded"})
+            frame = ws.receive_json()
+            assert frame["type"] == "notice"  # straight to the notice
+            assert "Unknown command: /moded" in frame["message"]
+            assert llm.call_count == 0
+
+    def test_unknown_prefix_not_busy_gated(self, tmp_path):
+        """Regression: the busy gate matches exact commands — /moded while
+        a turn runs is an informational notice, not a busy rejection."""
+        llm = make_mock_llm(pause_on_write(str(tmp_path / "out.txt")))
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "turn", "input": "write"})
+            _wait_for(ws, "agent_paused")
+
+            ws.send_json({"cmd": "turn", "input": "/moded"})
+            notice = _wait_for(ws, "notice")
+            assert "Unknown command: /moded" in notice["message"]
+            ws.send_json({"cmd": "cancel"})
+            _wait_for(ws, "turn_cancelled")
+
+
+# ============================================================================
 # Simple commands
 # ============================================================================
 

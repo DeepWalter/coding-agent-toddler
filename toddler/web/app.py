@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from toddler.cli.commands import SlashCommandDispatcher
 from toddler.config.settings import Settings
 from toddler.llm import BaseLLMProvider, OpenAICompatibleProvider
 from toddler.session import SessionManager, SQLiteDatabase, StorageManager
@@ -74,6 +75,9 @@ def create_app(
             storage_mgr=storage_mgr,
             llm=provider,
             session_mgr=session_mgr,
+            # Slash commands entered in the web input bar dispatch
+            # through the same dispatcher the CLI REPL uses.
+            cmd_dispatcher=SlashCommandDispatcher(session_mgr=session_mgr),
             runner=TurnRunner(session_mgr),
             repo_root=root,
             dev=dev,

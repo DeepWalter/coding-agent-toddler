@@ -597,26 +597,35 @@ class SessionManager:
             return
 
         # Archive the current conversation so only one is active at a time.
-        if self._conv is not None:
+        prev_conv = self._conv
+        if prev_conv is not None:
             self._storage_mgr.archive_conversation(
-                self._conv.id,
+                prev_conv.id,
             )
 
-        # Resolve by sequence number (#N) or UUID.
-        if conversation_id.isdigit():
-            conv = self._storage_mgr.get_conversation_by_sequence(
-                self._session.id, int(conversation_id),
-            )
-            if conv is None:
-                raise ValueError(
-                    f"Conversation #{conversation_id} not found."
+        try:
+            # Resolve by sequence number (#N) or UUID.
+            if conversation_id.isdigit():
+                conv = self._storage_mgr.get_conversation_by_sequence(
+                    self._session.id, int(conversation_id),
                 )
-        else:
-            conv = self._storage_mgr.get_conversation(conversation_id)
-            if conv is None:
-                raise ValueError(
-                    f"Conversation '{conversation_id[:16]}...' not found."
-                )
+                if conv is None:
+                    raise ValueError(
+                        f"Conversation #{conversation_id} not found."
+                    )
+            else:
+                conv = self._storage_mgr.get_conversation(conversation_id)
+                if conv is None:
+                    raise ValueError(
+                        f"Conversation '{conversation_id[:16]}...' not found."
+                    )
+        except ValueError:
+            # A bad id must be a no-op — undo the archiving so the
+            # current conversation stays active and visible.
+            if prev_conv is not None:
+                prev_conv.status = "active"
+                self._storage_mgr.update_conversation(prev_conv)
+            raise
 
         # Reactivate the resumed conversation.
         conv.status = "active"

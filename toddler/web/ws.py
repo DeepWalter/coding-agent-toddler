@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, WebSocket
 
+from toddler.cli.commands import HELP_TEXT
 from toddler.tools.base import PermissionMode
 
 if TYPE_CHECKING:
@@ -41,6 +42,48 @@ def _ack_frame(cmd: str, accepted: bool) -> dict:
     return {"type": "ack", "cmd": cmd, "accepted": accepted}
 
 
+def _notice_frame(message: str) -> dict:
+    return {"type": "notice", "message": message}
+
+
+def _session_payload(state: WebAppState) -> dict:
+    mgr = state.session_mgr
+    session = mgr.session
+    return {
+        "id": session.id if session else None,
+        "title": session.title if session else None,
+        "mode_label": mgr.mode_label,
+        "permission_mode": mgr.permission_mode.value,
+        "context_usage_pct": mgr.context_usage_pct,
+        "model": state.llm.model,
+        "cwd": str(state.repo_root),
+    }
+
+
+def _conversation_payload(state: WebAppState) -> dict:
+    mgr = state.session_mgr
+    conv = mgr.conversation
+    return {
+        "id": conv.id if conv else None,
+        "sequence_num": conv.sequence_num if conv else None,
+        "title": conv.title if conv else None,
+    }
+
+
+def _session_info_frame(state: WebAppState) -> dict:
+    """Session/conversation metadata update without a transcript replay.
+
+    Broadcast after slash commands that mutate session state but keep
+    the transcript (``/mode``, ``/plan``) — the frontend updates its
+    header labels and the console scroll-back survives.
+    """
+    return {
+        "type": "session_info",
+        "session": _session_payload(state),
+        "conversation": _conversation_payload(state),
+    }
+
+
 def _hello_frame(state: WebAppState) -> dict:
     """Build the ``hello`` frame: session info, transcript replay, and
     the live busy/paused/plan state so reconnecting tabs resume
@@ -56,20 +99,8 @@ def _hello_frame(state: WebAppState) -> dict:
             messages.append({"role": msg.role, "content": msg.text})
     return {
         "type": "hello",
-        "session": {
-            "id": session.id if session else None,
-            "title": session.title if session else None,
-            "mode_label": mgr.mode_label,
-            "permission_mode": mgr.permission_mode.value,
-            "context_usage_pct": mgr.context_usage_pct,
-            "model": state.llm.model,
-            "cwd": str(state.repo_root),
-        },
-        "conversation": {
-            "id": conv.id if conv else None,
-            "sequence_num": conv.sequence_num if conv else None,
-            "title": conv.title if conv else None,
-        },
+        "session": _session_payload(state),
+        "conversation": _conversation_payload(state),
         "busy": state.runner.busy,
         # The full agent_paused frame — the frontend re-applies it.
         "paused": state.runner.paused_snapshot,
@@ -97,6 +128,11 @@ async def _cmd_turn(websocket: WebSocket, state: WebAppState, raw: dict) -> None
             websocket, "invalid_input", "`input` is required.",
         )
         return
+    stripped = user_input.strip()
+    if stripped.startswith("/"):
+        # Slash command (e.g. /help) — dispatch locally, never to the LLM.
+        await _dispatch_slash_command(websocket, state, stripped)
+        return
     if state.runner.busy:
         await _send_error(websocket, "busy", "A turn is already running.")
         return
@@ -106,6 +142,92 @@ async def _cmd_turn(websocket: WebSocket, state: WebAppState, raw: dict) -> None
     if not accepted:
         # Lost a race with another connection's start().
         await _send_error(websocket, "busy", "A turn is already running.")
+
+
+# Slash commands that change which transcript is displayed — new
+# conversation, resume, session switch, rollback.  They are rejected
+# while a turn runs (same gate as new_conversation / switch_session)
+# and broadcast a fresh hello afterwards so every tab re-renders the
+# (new) transcript.  The console wipe is intended here — the messages
+# in storage genuinely changed.
+_CONVERSATION_CHANGING_SLASH = {"/clear", "/resume", "/rollback", "/session"}
+
+# Slash commands that mutate session metadata but keep the transcript —
+# workflow / gating changes.  Also busy-gated, but they broadcast a
+# lightweight session_info frame (header labels only) instead of a
+# hello replay so the console scroll-back survives.
+_SESSION_MUTATING_SLASH = {"/mode", "/plan"}
+
+# Slash commands that make no sense in the browser — they would quit the
+# server or open a pager.  Answered with a notice instead.
+_UNAVAILABLE_SLASH = {"/quit", "/exit", "/q", "/view"}
+
+
+def _slash_kind(cmd: str, sub: str) -> str | None:
+    """Classify a slash command line: ``"conversation"`` (transcript
+    swap), ``"session"`` (metadata mutation), ``"unavailable"`` (quit /
+    view), or *None* for informational commands.
+
+    The command token is matched exactly — an unknown command such as
+    ``/moded`` or ``/clearly`` is *not* a mutation, so it is never
+    busy-rejected and never replays the console.  ``/session`` only
+    mutates for the ``switch`` subcommand; ``/mode`` mutates for any
+    argument (the CLI validates the subcommand itself).
+    """
+    if cmd in _UNAVAILABLE_SLASH:
+        return "unavailable"
+    if cmd in _SESSION_MUTATING_SLASH:
+        return "session"
+    if cmd == "/session":
+        return "conversation" if sub.startswith("switch") else None
+    if cmd in _CONVERSATION_CHANGING_SLASH:
+        return "conversation"
+    return None
+
+
+async def _dispatch_slash_command(
+    websocket: WebSocket, state: WebAppState, text: str,
+) -> None:
+    """Handle a slash command entered in the web input bar.
+
+    Mirrors the CLI's ``/`` dispatch (``toddler/cli/app.py``) but renders
+    the :class:`CommandResult` as broadcast frames instead of terminal
+    output.  Informational commands (``/help``, ``/conversations``,
+    ``/checkpoints``, ``/session info|list``, …) are answered with a
+    notice and never touch the console.  Mutating commands are
+    busy-gated; when dispatch reports a change (``CommandResult.changed``
+    — a failed ``/resume`` or unknown id changes nothing), those that
+    swapped the transcript replay ``hello`` so every tab re-renders,
+    while mode/gating changes broadcast ``session_info`` so the
+    scroll-back survives.  The result notice follows either way.
+    """
+    parts = text.strip().lower().split(maxsplit=1)
+    cmd = parts[0]
+    sub = parts[1] if len(parts) > 1 else ""
+    kind = _slash_kind(cmd, sub)
+
+    if kind == "unavailable":
+        state.runner.broadcast(_notice_frame(
+            f"`{cmd}` is not available in the web UI.",
+        ))
+        return
+
+    if kind is not None and state.runner.busy:
+        await _send_error(websocket, "busy", "A turn is already running.")
+        return
+
+    result = await state.cmd_dispatcher.dispatch(text)
+
+    if result.changed:
+        if kind == "conversation":
+            # The transcript changed — full replay so every tab re-renders.
+            state.runner.broadcast(_hello_frame(state))
+        elif kind == "session":
+            state.runner.broadcast(_session_info_frame(state))
+    if result.message:
+        state.runner.broadcast(_notice_frame(
+            HELP_TEXT if result.message == "__HELP__" else result.message,
+        ))
 
 
 async def _cmd_cancel(websocket: WebSocket, state: WebAppState, raw: dict) -> None:

@@ -221,6 +221,17 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
     case 'recoverable_error':
       push(s, { kind: 'notice', message: action.message })
       break
+    case 'notice':
+      // Slash-command output (/help, /mode, …) broadcast by the server.
+      push(s, { kind: 'notice', message: action.message })
+      break
+    case 'session_info':
+      // Slash commands that mutate session metadata (/mode, /plan)
+      // broadcast this instead of hello: update the header labels but
+      // keep the console scroll-back (hello would reset all blocks).
+      s.session = action.session
+      s.conversation = action.conversation
+      break
     case 'fatal_error':
       closeAssistant(s)
       closeOpenTools(s)

@@ -61,6 +61,10 @@ It accepts the shared LLM flags (`--model`, `--base-url`, `--api-key`,
 `--no-stream`, `--max-iterations`); `--dev` enables CORS for the Vite dev
 server.
 
+Slash commands work in the input bar too (`/help`, `/mode`, `/clear`,
+`/session`, …) — they dispatch server-side and never reach the LLM.
+`/quit` and `/view` are not available in the browser.
+
 Development workflow:
 
 ```bash

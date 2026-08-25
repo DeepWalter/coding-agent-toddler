@@ -120,6 +120,8 @@ export type Frame =
   | { type: 'agent_paused'; prompt: string; choices: string[] | null }
   | { type: 'agent_finished'; reason: string; usage: TokenUsage | null }
   | { type: 'recoverable_error'; message: string }
+  | { type: 'notice'; message: string }
+  | { type: 'session_info'; session: SessionInfo; conversation: ConversationInfo }
   | { type: 'fatal_error'; message: string }
   | { type: 'ack'; cmd: string; accepted: boolean }
   | { type: 'turn_cancelled' }
