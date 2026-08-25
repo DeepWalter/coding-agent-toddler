@@ -83,6 +83,16 @@ function closeAssistant(s: ConsoleState): void {
   }
 }
 
+function closeOpenTools(s: ConsoleState): void {
+  // A turn ending mid-call (cancel, fatal error, or the loop stopping
+  // after a tool request without an end frame) never emits a
+  // tool_call_end — close any open cards so they stop spinning
+  // "waiting for result…" and render as cancelled instead.
+  for (const b of s.blocks) {
+    if (b.kind === 'tool' && b.open) b.open = false
+  }
+}
+
 function fmtK(n: number): string {
   return n >= 1000
     ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k`
@@ -135,16 +145,27 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
       }
       break
     }
-    case 'tool_call_start':
-      push(s, {
-        kind: 'tool',
-        tool_id: action.tool_id,
-        tool_name: action.tool_name,
-        input: action.partial_input ?? {},
-        result: null,
-        open: true,
-      })
+    case 'tool_call_start': {
+      // Streaming mode emits two starts per call — the live stream
+      // handler yields one as chunks arrive, the execution phase yields
+      // another before running the tool, with the same tool_id.  Upsert
+      // by tool_id so one call renders one card; the second start's
+      // full parameters merge over the stream's partial input.
+      const existing = findTool(s, action.tool_id, { open: true })
+      if (existing) {
+        if (action.partial_input) Object.assign(existing.input, action.partial_input)
+      } else {
+        push(s, {
+          kind: 'tool',
+          tool_id: action.tool_id,
+          tool_name: action.tool_name,
+          input: action.partial_input ?? {},
+          result: null,
+          open: true,
+        })
+      }
       break
+    }
     case 'tool_call_delta': {
       // Fragments merge best-effort; tool_call_end replaces with the
       // authoritative input.
@@ -180,6 +201,7 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
       break
     case 'agent_finished':
       closeAssistant(s)
+      closeOpenTools(s)
       s.paused = null
       push(s, {
         kind: 'notice',
@@ -191,11 +213,13 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
       break
     case 'fatal_error':
       closeAssistant(s)
+      closeOpenTools(s)
       s.paused = null
       push(s, { kind: 'error', message: action.message })
       break
     case 'turn_cancelled':
       closeAssistant(s)
+      closeOpenTools(s)
       s.paused = null
       push(s, { kind: 'notice', message: '— turn cancelled' })
       break
