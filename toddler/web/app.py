@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from toddler.config.settings import Settings
 from toddler.llm import BaseLLMProvider, OpenAICompatibleProvider
 from toddler.session import SessionManager, SQLiteDatabase, StorageManager
+from toddler.web.api import router as api_router
 from toddler.web.runners import TurnRunner
 from toddler.web.state import WebAppState
 from toddler.web.ws import router as ws_router
@@ -86,14 +87,6 @@ def create_app(
 
     app = FastAPI(title="Toddler", lifespan=lifespan)
 
-    @app.get("/api/meta")
-    async def meta() -> dict:
-        return {
-            "repo_root": str(root),
-            "model": settings.model,
-            "dev": dev,
-        }
-
     if dev:
         app.add_middleware(
             CORSMiddleware,
@@ -102,7 +95,8 @@ def create_app(
             allow_headers=["*"],
         )
 
-    # Routers before the static mount so /ws is never shadowed.
+    # Routers before the static mount so /api and /ws are never shadowed.
+    app.include_router(api_router)
     app.include_router(ws_router)
 
     # Static mount LAST so /api (and later /ws) are never shadowed.  When
