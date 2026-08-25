@@ -121,6 +121,11 @@ text_delta         {text}
 tool_call_start    {tool_id, tool_name, partial_input}
 tool_call_delta    {tool_id, input_delta}
 tool_call_end      {tool_id, tool_name, input, result: {success, output, error, checkpoint_id, metadata}}
+
+Note: streaming mode emits `tool_call_start` **twice per call** — once
+live from the stream handler and again from the execution phase, same
+`tool_id` — followed by a single `tool_call_end`.  Clients must upsert
+cards keyed by `tool_id`, not append.
 plan_proposed      {plan: {id, title, summary, steps, rationale, risks, estimated_files_touched}}
 plan_step_update   {steps: [[id, description, status], ...]}   # complete snapshot — replace, don't diff
 agent_paused       {prompt, choices}
