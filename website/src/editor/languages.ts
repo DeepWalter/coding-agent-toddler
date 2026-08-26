@@ -15,6 +15,7 @@ import { dockerFile } from '@codemirror/legacy-modes/mode/dockerfile'
 import { diff } from '@codemirror/legacy-modes/mode/diff'
 import { clojure } from '@codemirror/legacy-modes/mode/clojure'
 import { ruby } from '@codemirror/legacy-modes/mode/ruby'
+import { basename } from '../utils'
 
 /**
  * File path → CodeMirror language.  Grammars come from
@@ -66,6 +67,7 @@ const byExt: Record<string, Language> = {
   sh: L.shell, bash: L.shell, zsh: L.shell,
   css: L.css, scss: L.scss, less: L.less,
   html: L.html, htm: L.html,
+  vue: L.html, // no vue grammar — template highlights, script/style stay plain
   xml: L.xml, svg: L.xml,
   go: L.go,
   rs: L.rust,
@@ -90,7 +92,7 @@ const byName: Record<string, Language> = {
 /** Language for a file path, or null for plain text (no highlighting). */
 export function languageForPath(path: string | null): Language | null {
   if (!path) return null
-  const base = path.split('/').pop() ?? ''
+  const base = basename(path)
   const byFilename = byName[base.toLowerCase()]
   if (byFilename) return byFilename
   const dot = base.lastIndexOf('.')

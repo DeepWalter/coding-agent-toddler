@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import ConsolePane from './components/ConsolePane.vue'
 import FileEditor from './components/FileEditor.vue'
 import FileExplorer from './components/FileExplorer.vue'
@@ -38,9 +38,28 @@ function toggleMode() {
 // every pane keeps MIN_PANE% — the console takes whatever's left.
 // Pointer capture keeps the drag going outside the divider.
 const MIN_PANE = 12
-const openPath = ref<string | null>(null)
 const splitEl = ref<HTMLElement | null>(null)
 const drag = ref<'explorer' | 'editor' | null>(null)
+
+// localStorage is unreliable (private mode, quota) and stores untrusted
+// strings — every read and write is guarded, bad values fall back.
+function readStored<T>(key: string, parse: (raw: string) => T | null, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key)
+    if (!raw) return fallback
+    return parse(raw) ?? fallback
+  } catch {
+    return fallback
+  }
+}
+
+function writeStored(key: string, value: unknown) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value))
+  } catch {
+    // storage unavailable (private mode, quota) — the value just won't persist
+  }
+}
 
 // The split widths persist in localStorage, written on drag end (not every
 // pointermove) and restored on load.  Invalid or unparseable values fall
@@ -49,37 +68,110 @@ const drag = ref<'explorer' | 'editor' | null>(null)
 const SPLIT_STORAGE_KEY = 'tod.split'
 const DEFAULT_SPLIT = { explorer: 14, editor: 44 }
 
-function loadSplit(): { explorer: number; editor: number } {
-  try {
-    const raw = localStorage.getItem(SPLIT_STORAGE_KEY)
-    if (!raw) return { ...DEFAULT_SPLIT }
-    const parsed = JSON.parse(raw)
-    if (typeof parsed?.explorer !== 'number' || typeof parsed?.editor !== 'number') {
-      return { ...DEFAULT_SPLIT }
-    }
+const split = readStored(
+  SPLIT_STORAGE_KEY,
+  (raw) => {
+    const parsed = JSON.parse(raw) as { explorer?: unknown; editor?: unknown }
+    if (typeof parsed?.explorer !== 'number' || typeof parsed?.editor !== 'number') return null
     return {
       explorer: Math.min(100 - parsed.editor - MIN_PANE, Math.max(MIN_PANE, parsed.explorer)),
       editor: Math.min(100 - parsed.explorer - MIN_PANE, Math.max(MIN_PANE, parsed.editor)),
     }
-  } catch {
-    return { ...DEFAULT_SPLIT }
-  }
-}
+  },
+  { ...DEFAULT_SPLIT },
+)
 
 function saveSplit() {
-  try {
-    localStorage.setItem(
-      SPLIT_STORAGE_KEY,
-      JSON.stringify({ explorer: explorerPct.value, editor: editorPct.value }),
-    )
-  } catch {
-    // storage unavailable (private mode, quota) — the split just won't persist
-  }
+  writeStored(SPLIT_STORAGE_KEY, { explorer: explorerPct.value, editor: editorPct.value })
 }
 
-const split = loadSplit()
 const explorerPct = ref(split.explorer)
 const editorPct = ref(split.editor)
+
+// Open-file tabs for the editor pane.  The path list + active tab persist
+// in localStorage (content never persists — files refetch on reload, and a
+// deleted file shows the tab's error state).  Persisted paths are trusted,
+// not re-validated against /api/tree — that listing is depth-limited and
+// would wrongly drop valid paths.  Tabs are scoped to the session's repo:
+// the stored `root` (cwd) must match, or the paths resolve against the
+// wrong tree (see the cwd watcher below).
+const TABS_STORAGE_KEY = 'tod.tabs'
+const MAX_OPEN_TABS = 50
+
+interface PersistedTabs {
+  open: string[]
+  active: string | null
+  root: string | null // cwd the tabs were opened against
+}
+
+const restoredTabs = readStored<PersistedTabs>(
+  TABS_STORAGE_KEY,
+  (raw) => {
+    const parsed = JSON.parse(raw) as { open?: unknown; active?: unknown; root?: unknown }
+    if (!Array.isArray(parsed.open)) return null
+    const open: string[] = []
+    for (const item of parsed.open) {
+      if (typeof item === 'string' && item.length > 0 && !open.includes(item)) {
+        open.push(item)
+        if (open.length >= MAX_OPEN_TABS) break
+      }
+    }
+    const active =
+      typeof parsed.active === 'string' && open.includes(parsed.active)
+        ? parsed.active
+        : (open[0] ?? null)
+    return { open, active, root: typeof parsed.root === 'string' ? parsed.root : null }
+  },
+  { open: [], active: null, root: null },
+)
+
+const openFiles = ref<string[]>(restoredTabs.open)
+const activePath = ref<string | null>(restoredTabs.active)
+
+// Tabs belong to a repo.  If the session's cwd differs from the root the
+// tabs were restored for (server restarted elsewhere, session switched),
+// drop them — stale buffers for the wrong tree must never be edited back.
+watch(
+  () => state.session?.cwd,
+  (cwd) => {
+    if (!cwd || restoredTabs.root === cwd) return
+    openFiles.value = []
+    activePath.value = null
+    persistTabs()
+  },
+  { immediate: true },
+)
+
+function persistTabs() {
+  writeStored(TABS_STORAGE_KEY, {
+    open: openFiles.value,
+    active: activePath.value,
+    root: state.session?.cwd ?? null,
+  })
+}
+
+/** Open a file in the editor: focus the existing tab, or add a new one. */
+function openFile(path: string) {
+  if (openFiles.value.includes(path)) {
+    activePath.value = path // already open → focus the existing tab
+  } else if (openFiles.value.length < MAX_OPEN_TABS) {
+    openFiles.value.push(path)
+    activePath.value = path
+  }
+  // At the tab cap the file simply doesn't open (existing tabs keep working).
+  persistTabs()
+}
+
+function closeFile(path: string) {
+  const idx = openFiles.value.indexOf(path)
+  if (idx === -1) return
+  openFiles.value.splice(idx, 1)
+  if (activePath.value === path) {
+    // Prefer the tab to the right (same index after splice), fall back left.
+    activePath.value = openFiles.value[idx] ?? openFiles.value[idx - 1] ?? null
+  }
+  persistTabs()
+}
 
 function onDividerDown(kind: 'explorer' | 'editor', event: PointerEvent) {
   drag.value = kind
@@ -147,7 +239,8 @@ function onDividerUp(event: PointerEvent) {
       <aside class="pane pane-explorer" :style="{ width: explorerPct + '%' }">
         <FileExplorer
           :root="state.session?.cwd ?? null"
-          @open-file="openPath = $event"
+          :active-path="activePath"
+          @open-file="openFile"
         />
       </aside>
 
@@ -160,7 +253,12 @@ function onDividerUp(event: PointerEvent) {
       />
 
       <section class="pane pane-editor" :style="{ width: editorPct + '%' }">
-        <FileEditor :path="openPath" />
+        <FileEditor
+          :files="openFiles"
+          :active="activePath"
+          @activate-file="openFile"
+          @close-file="closeFile"
+        />
       </section>
 
       <div
@@ -177,7 +275,7 @@ function onDividerUp(event: PointerEvent) {
             :blocks="state.blocks"
             @approve-plan="approvePlan"
             @reject-plan="rejectPlan"
-            @open-file="openPath = $event"
+            @open-file="openFile"
           />
           <PausePrompt
             v-if="state.paused"

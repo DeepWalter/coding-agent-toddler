@@ -10,12 +10,11 @@ import type { TreeEntry, TreeNode } from '../types'
  * refresh button so files the agent writes show up.
  */
 
-const props = defineProps<{ root: string | null }>()
+const props = defineProps<{ root: string | null; activePath?: string | null }>()
 const emit = defineEmits<{ 'open-file': [path: string] }>()
 
 const tree = ref<TreeNode[]>([])
 const expanded = ref<Record<string, boolean>>({})
-const selected = ref<string | null>(null)
 const loading = ref(false)
 const error = ref<string | null>(null)
 
@@ -102,7 +101,6 @@ function onRowClick(node: TreeNode) {
   if (node.type === 'dir') {
     expanded.value = { ...expanded.value, [node.path]: !expanded.value[node.path] }
   } else {
-    selected.value = node.path
     emit('open-file', node.path)
   }
 }
@@ -129,12 +127,14 @@ function onRowClick(node: TreeNode) {
         <div class="explorer-empty error">{{ error }}</div>
       </template>
       <template v-else-if="visible.length">
+        <!-- The editor's active tab drives the highlight — files opened
+             from console links are highlighted too, not just rows. -->
         <button
           v-for="{ node, depth } in visible"
           :key="node.path"
           type="button"
           class="tree-row"
-          :class="{ selected: node.path === selected }"
+          :class="{ selected: node.path === props.activePath }"
           :style="{ paddingLeft: `${10 + depth * 14}px` }"
           @click="onRowClick(node)"
         >
