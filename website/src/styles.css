@@ -918,10 +918,6 @@ body {
   color: var(--red);
 }
 
-.editor-save {
-  padding: 3px 10px;
-}
-
 .editor-tabs {
   display: flex;
   flex: none;

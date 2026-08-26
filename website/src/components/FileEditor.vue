@@ -15,8 +15,8 @@ import { basename } from '../utils'
  * live in App.vue; this component owns per-tab CodeMirror state.  A single
  * EditorView serves all tabs — switching tabs swaps its state via
  * `view.setState`, which carries each tab's doc, undo history, and cursor.
- * Files load via `GET /api/file`, save with Ctrl/Cmd+S (or the Save button)
- * via `PUT /api/file` — the same path-safe endpoint the agent's WriteFile
+ * Files load via `GET /api/file`, save with Ctrl/Cmd+S via `PUT /api/file` —
+ * the same path-safe endpoint the agent's WriteFile
  * tool backs onto.  Syntax highlighting comes from the highlight.js
  * legacy grammars (`editor/languages.ts`).  A tab refetches from disk on
  * activation (unless it has unsaved edits), so the agent's writes show up.
@@ -432,14 +432,6 @@ watch(() => props.active, (path) => {
       <span class="editor-status" :class="{ 'status-error': !!(activeTab?.loadError || activeTab?.saveError) }">
         {{ statusText }}
       </span>
-      <button
-        type="button"
-        class="btn editor-save"
-        :disabled="!activeTab || !isDirty(activeTab) || activeTab.loading || activeTab.saving"
-        @click="save"
-      >
-        Save
-      </button>
     </div>
 
     <!-- Host stays mounted so the single view never dies; messages paint
