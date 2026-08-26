@@ -345,6 +345,15 @@ function removeTab(path: string) {
   delete tabs.value[path]
 }
 
+// Refresh/close guard: reloading silently discards unsaved edits (tabs
+// persist, content refetches from disk), so ask first when any tab is
+// dirty — same spirit as requestClose's confirm.  The dialog text is the
+// browser's; preventDefault alone triggers it (returnValue is deprecated).
+function onBeforeUnload(event: BeforeUnloadEvent) {
+  if (!Object.values(tabs.value).some((t) => t.dirty)) return
+  event.preventDefault()
+}
+
 onMounted(() => {
   if (!editorHost.value) return
   view = new EditorView({ parent: editorHost.value })
@@ -352,6 +361,7 @@ onMounted(() => {
   // restore must not fight a user who starts scrolling mid-restore.
   view.dom.addEventListener('wheel', () => { lastUserScroll = performance.now() }, { passive: true })
   view.dom.addEventListener('touchstart', () => { lastUserScroll = performance.now() }, { passive: true })
+  window.addEventListener('beforeunload', onBeforeUnload)
   // The initial activation (restored from localStorage) needs no watcher
   // fire — the immediate watcher would run before the view exists.
   if (props.active) switchToTab(props.active)
@@ -359,6 +369,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  window.removeEventListener('beforeunload', onBeforeUnload)
   view?.destroy()
   view = null
   for (const tab of Object.values(tabs.value)) {
