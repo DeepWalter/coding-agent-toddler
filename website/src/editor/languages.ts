@@ -15,14 +15,21 @@ import { dockerFile } from '@codemirror/legacy-modes/mode/dockerfile'
 import { diff } from '@codemirror/legacy-modes/mode/diff'
 import { clojure } from '@codemirror/legacy-modes/mode/clojure'
 import { ruby } from '@codemirror/legacy-modes/mode/ruby'
+import { lua } from '@codemirror/legacy-modes/mode/lua'
+import { perl } from '@codemirror/legacy-modes/mode/perl'
+import { r } from '@codemirror/legacy-modes/mode/r'
+import { swift } from '@codemirror/legacy-modes/mode/swift'
+import { vb } from '@codemirror/legacy-modes/mode/vb'
+import { vbScript } from '@codemirror/legacy-modes/mode/vbscript'
+import { wast } from '@codemirror/legacy-modes/mode/wast'
 import { basename } from '../utils'
 
 /**
- * File path → CodeMirror language.  Grammars come from
- * `@codemirror/legacy-modes`, the same highlight.js family the console
- * already uses via `markdown.ts`, so both panes agree on what a token
- * means.  Extensions with no legacy-mode grammar (markdown, makefile)
- * return null → plain text, no highlighting.
+ * File path or code-fence name → CodeMirror language.  Grammars come from
+ * `@codemirror/legacy-modes` and are shared by the editor pane and the
+ * console's markdown highlighter (`markdown.ts`), so both panes agree on
+ * what a token means.  Extensions with no legacy-mode grammar (markdown,
+ * makefile) return null → plain text, no highlighting.
  */
 
 const L = {
@@ -52,6 +59,13 @@ const L = {
   diff: StreamLanguage.define(diff),
   clojure: StreamLanguage.define(clojure),
   ruby: StreamLanguage.define(ruby),
+  lua: StreamLanguage.define(lua),
+  perl: StreamLanguage.define(perl),
+  r: StreamLanguage.define(r),
+  swift: StreamLanguage.define(swift),
+  vb: StreamLanguage.define(vb),
+  vbscript: StreamLanguage.define(vbScript),
+  wast: StreamLanguage.define(wast),
 }
 
 // Case-insensitive extension → language.  JSX/TSX reuse the plain
@@ -82,12 +96,40 @@ const byExt: Record<string, Language> = {
   diff: L.diff, patch: L.diff,
   clj: L.clojure, cljs: L.clojure,
   rb: L.ruby,
+  lua: L.lua, pl: L.perl, r: L.r, swift: L.swift,
+  vb: L.vb, vbs: L.vbscript,
+  wast: L.wast, // WebAssembly text format (.wasm files are binary — no highlight)
 }
 
 // Filename-based lookup for files without an extension.
 const byName: Record<string, Language> = {
   dockerfile: L.dockerfile,
 }
+
+// Code-fence names → language (console markdown).  Every byExt extension
+// also works as a fence name; this adds the aliases highlight.js used to
+// accept that aren't file extensions (python, node, golang, …), plus the
+// fence-only grammars that have no natural extension.  hljs also accepted
+// php/graphql/makefile/markdown/objective-c — those have no legacy-mode
+// grammar, so such fences fall back to plain text.
+const fenceAliases: Record<string, Language> = {
+  python: L.python, python3: L.python, 'python-repl': L.python,
+  javascript: L.javascript, node: L.javascript,
+  typescript: L.typescript,
+  bash: L.shell, zsh: L.shell, shell: L.shell,
+  golang: L.go,
+  rust: L.rust,
+  csharp: L.csharp, 'c#': L.csharp,
+  kotlin: L.kotlin,
+  'c++': L.cpp,
+  docker: L.dockerfile, dockerfile: L.dockerfile,
+  properties: L.properties,
+  ruby: L.ruby, clojure: L.clojure,
+  // hljs's "wasm" is the WebAssembly text format
+  wasm: L.wast,
+  vbnet: L.vb, vbscript: L.vbscript,
+}
+const byFence: Record<string, Language> = { ...byExt, ...fenceAliases }
 
 /** Language for a file path, or null for plain text (no highlighting). */
 export function languageForPath(path: string | null): Language | null {
@@ -98,4 +140,11 @@ export function languageForPath(path: string | null): Language | null {
   const dot = base.lastIndexOf('.')
   if (dot <= 0) return null
   return byExt[base.slice(dot + 1).toLowerCase()] ?? null
+}
+
+/** Language for a code-fence name (console markdown), or null for plain text. */
+export function languageForName(name: string | null): Language | null {
+  if (!name) return null
+  // No trim: markdown-it passes the first whitespace-separated word already.
+  return byFence[name.toLowerCase()] ?? null
 }

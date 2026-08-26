@@ -17,7 +17,7 @@ import { basename } from '../utils'
  * `view.setState`, which carries each tab's doc, undo history, and cursor.
  * Files load via `GET /api/file`, save with Ctrl/Cmd+S via `PUT /api/file` —
  * the same path-safe endpoint the agent's WriteFile
- * tool backs onto.  Syntax highlighting comes from the highlight.js
+ * tool backs onto.  Syntax highlighting comes from the CodeMirror
  * legacy grammars (`editor/languages.ts`).  A tab refetches from disk on
  * activation (unless it has unsaved edits), so the agent's writes show up.
  */

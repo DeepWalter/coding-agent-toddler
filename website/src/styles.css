@@ -1,19 +1,60 @@
-/* tod console — dark, monospace, minimal. */
+/* tod console — monospace, minimal.  Solarized palette: dark by default,
+   light via <html data-theme="light">.  Both sets keep the same variable
+   names, so every component and the CodeMirror theme follow the switch. */
 
 :root {
-  --bg: #101318;
-  --bg-panel: #151a21;
-  --bg-raised: #1b222c;
-  --bg-hover: #212a36;
-  --border: #2a3340;
-  --text: #d7dde5;
-  --text-dim: #8b95a3;
-  --accent: #4c8dff;
-  --accent-dim: #2b5ba8;
-  --green: #3fb950;
-  --red: #f85149;
-  --red-dim: #5a2a28;
-  --yellow: #d29922;
+  /* solarized dark (base03 bg, base02 panels, base0 text) */
+  --bg: #002b36;
+  --bg-panel: #073642;
+  /* raised surfaces = panels today; kept distinct so a palette retune can
+     separate them */
+  --bg-raised: var(--bg-panel);
+  --bg-hover: #0b3b47;
+  --border: #17505d;
+  --text: #839496;
+  --text-dim: #586e75;
+  --accent: #268bd2;
+  --accent-dim: #1e6fa5;
+  /* text on solid accent fills (primary/danger buttons, selected row) */
+  --on-accent: #fff;
+  /* strings: saturated green — solarized's own #859900 is olive and sits
+     at the same luminance as body text, so code read flat; this one pops
+     on #002b36 while staying hue-distant from the golden numbers below */
+  --green: #7eb33a;
+  --violet: #6c71c4;
+  --red: #dc322f;
+  --red-dim: #7a2d2a;
+  /* danger-button fill — red-dim doubles as a banner tint, which the light
+     theme retunes to pale pink, so the button needs its own value */
+  --btn-danger: #7a2d2a;
+  /* yellow lifted above the equal-luminance green so numbers/builtins
+     read apart from strings on the dark background */
+  --yellow: #c9a227;
+  --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+:root[data-theme='light'] {
+  /* solarized light (base3 bg, base2 panels, base00 text) */
+  --bg: #fdf6e3;
+  --bg-panel: #eee8d5;
+  --bg-raised: var(--bg-panel);
+  --bg-hover: #e3ddc8;
+  --border: #d1cbb3;
+  --text: #657b83;
+  --text-dim: #93a1a1;
+  --accent: #268bd2;
+  --accent-dim: #1e6fa5;
+  --on-accent: #fff;
+  /* strings/types deepened for ≥4.5:1 on this background (solarized's own
+     sit ~3:1), with string green shifted toward true green to sit apart
+     from the ochre numbers */
+  --green: #41730f;
+  --violet: #5e63b3;
+  --red: #dc322f;
+  --red-dim: #e3b3ad;
+  /* white on this ≈6.4:1 (hover --red ≈5.9:1) */
+  --btn-danger: #a53a33;
+  --yellow: #8a6b00;
   --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
 }
 
@@ -98,6 +139,29 @@ body {
 .mode-toggle:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-raised);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.theme-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.theme-toggle svg {
+  display: block;
 }
 
 .session-select select {
@@ -307,47 +371,8 @@ body {
   background: var(--bg-raised);
 }
 
-/* highlight.js token colors mapped to the app palette */
-:is(.message-content, .stream-line).markdown .hljs-keyword,
-:is(.message-content, .stream-line).markdown .hljs-title,
-:is(.message-content, .stream-line).markdown .hljs-title.function_,
-:is(.message-content, .stream-line).markdown .hljs-section,
-:is(.message-content, .stream-line).markdown .hljs-name,
-:is(.message-content, .stream-line).markdown .hljs-attr {
-  color: var(--accent);
-}
-
-:is(.message-content, .stream-line).markdown .hljs-string,
-:is(.message-content, .stream-line).markdown .hljs-regexp,
-:is(.message-content, .stream-line).markdown .hljs-addition,
-:is(.message-content, .stream-line).markdown .hljs-type {
-  color: var(--green);
-}
-
-:is(.message-content, .stream-line).markdown .hljs-number,
-:is(.message-content, .stream-line).markdown .hljs-literal,
-:is(.message-content, .stream-line).markdown .hljs-symbol,
-:is(.message-content, .stream-line).markdown .hljs-bullet,
-:is(.message-content, .stream-line).markdown .hljs-built_in,
-:is(.message-content, .stream-line).markdown .hljs-variable,
-:is(.message-content, .stream-line).markdown .hljs-template-variable {
-  color: var(--yellow);
-}
-
-:is(.message-content, .stream-line).markdown .hljs-comment,
-:is(.message-content, .stream-line).markdown .hljs-quote,
-:is(.message-content, .stream-line).markdown .hljs-meta {
-  color: var(--text-dim);
-  font-style: italic;
-}
-
-:is(.message-content, .stream-line).markdown .hljs-deletion {
-  color: var(--red);
-}
-
-:is(.message-content, .stream-line).markdown .hljs-params {
-  color: var(--text);
-}
+/* Code-token colors live in the editor's HighlightStyle (theme.ts) — the
+   console renders the same generated classes, so no token rules here. */
 
 /* ------------------------------------------------------------------ */
 /* Tool cards                                                          */
@@ -665,7 +690,7 @@ body {
 .btn.primary {
   border-color: var(--accent-dim);
   background: var(--accent-dim);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .btn.primary:hover:not(:disabled) {
@@ -673,9 +698,9 @@ body {
 }
 
 .btn.danger {
-  border-color: var(--red-dim);
-  background: var(--red-dim);
-  color: #fff;
+  border-color: var(--btn-danger);
+  background: var(--btn-danger);
+  color: var(--on-accent);
 }
 
 .btn.danger:hover:not(:disabled) {
@@ -849,6 +874,14 @@ body {
 
 .tree-row.selected {
   background: var(--accent-dim);
+  /* --text is unreadable on the accent fill in both palettes (~1.2-1.7:1) —
+     white keeps the same pairing as .btn.primary */
+  color: var(--on-accent);
+}
+
+.tree-row.selected .tree-file,
+.tree-row.selected .tree-chevron {
+  color: var(--on-accent);
 }
 
 .tree-chevron {

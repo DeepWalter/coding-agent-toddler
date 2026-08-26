@@ -3,6 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      // Apply the persisted theme before first paint (App.vue applies it
+      // again once the module graph loads — this just prevents a dark flash
+      // when light is stored).  Format matches writeStored in App.vue:
+      // JSON-stringified, so 'light' arrives as '"light"'.
+      try {
+        if (localStorage.getItem('tod.theme') === '"light"') {
+          document.documentElement.dataset.theme = 'light'
+        }
+      } catch {}
+    </script>
     <title>tod</title>
   </head>
   <body>

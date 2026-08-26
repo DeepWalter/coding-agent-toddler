@@ -3,16 +3,17 @@ import { tags } from '@lezer/highlight'
 import { EditorView } from '@codemirror/view'
 
 /**
- * Editor chrome + token colors.  Token colors mirror the highlight.js →
- * palette mapping in styles.css (`.message-content.markdown .hljs-*`), and
- * the theme uses the same CSS variables, so the whole app stays on one
- * palette even if it is retuned.
+ * Editor chrome + token colors.  Token colors read the palette variables in
+ * styles.css, and the console's markdown highlighter (`markdown.ts`) renders
+ * with this same HighlightStyle — editor and console share one token→color
+ * mapping, and the whole app stays on one palette even if it is retuned.
  */
 
-// keywords/titles/names → --accent; strings/types → --green;
+// keywords/titles/names → --accent; strings → --green; types → --violet;
 // numbers/literals/builtins/variables → --yellow; comments → --text-dim
-// italic; deletions → --red.  Params (tags.local) are intentionally left
-// unstyled — the default --text, matching `.hljs-params`.
+// italic; decorators/at-rules (tags.meta) → --violet italic; deletions →
+// --red.  Params (tags.local) are intentionally left unstyled — the
+// default --text.
 export const highlightStyle = HighlightStyle.define([
   {
     tag: [
@@ -28,14 +29,14 @@ export const highlightStyle = HighlightStyle.define([
     tag: [tags.string, tags.special(tags.string), tags.regexp, tags.character, tags.escape],
     color: 'var(--green)',
   },
-  { tag: [tags.typeName, tags.className, tags.namespace], color: 'var(--green)' },
+  { tag: [tags.typeName, tags.className, tags.namespace], color: 'var(--violet)' },
   {
     tag: [
       tags.number,
       tags.bool,
       tags.atom,
       tags.literal,
-      // "builtin" tokens (hljs built_in) map to variableName.standard
+      // legacy-mode "builtin" tokens map to variableName.standard
       tags.standard(tags.variableName),
       tags.variableName,
       tags.propertyName,
@@ -43,7 +44,11 @@ export const highlightStyle = HighlightStyle.define([
     ],
     color: 'var(--yellow)',
   },
-  { tag: [tags.comment, tags.quote, tags.meta], color: 'var(--text-dim)', fontStyle: 'italic' },
+  { tag: [tags.comment, tags.quote], color: 'var(--text-dim)', fontStyle: 'italic' },
+  // Python decorators (@dataclass), CSS at-rules (@media), yaml `---` —
+  // "meta" in the legacy grammars.  Violet italic reads as "annotation",
+  // distinct from the gray of a real comment.
+  { tag: [tags.meta], color: 'var(--violet)', fontStyle: 'italic' },
   { tag: [tags.deleted], color: 'var(--red)' },
   // html/xml tags and attributes
   { tag: [tags.tagName, tags.attributeName], color: 'var(--accent)' },
