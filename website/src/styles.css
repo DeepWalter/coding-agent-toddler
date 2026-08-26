@@ -732,11 +732,12 @@ body {
   overflow: hidden;
 }
 
-.pane-left {
+.pane-explorer,
+.pane-editor {
   flex: none;
 }
 
-.pane-right {
+.pane-console {
   flex: 1;
 }
 
@@ -759,12 +760,10 @@ body {
 /* ------------------------------------------------------------------ */
 
 .explorer {
-  flex: none;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  max-height: 45%;
-  min-height: 110px;
-  border-bottom: 1px solid var(--border);
 }
 
 .explorer-header {

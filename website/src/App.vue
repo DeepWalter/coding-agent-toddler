@@ -33,29 +33,79 @@ function toggleMode() {
   setMode(mode)
 }
 
-// Split pane: files on the left (explorer + editor stacked), console on
-// the right.  The divider drags the left pane between 20% and 80% of the
-// split width; pointer capture keeps the drag going outside the divider.
+// Three split panes: explorer | editor | console.  Each divider drags its
+// leading pane's width as a % of the split width, clamped cross-wise so
+// every pane keeps MIN_PANE% — the console takes whatever's left.
+// Pointer capture keeps the drag going outside the divider.
+const MIN_PANE = 12
 const openPath = ref<string | null>(null)
-const splitPct = ref(45)
 const splitEl = ref<HTMLElement | null>(null)
-const dragging = ref(false)
+const drag = ref<'explorer' | 'editor' | null>(null)
 
-function onDividerDown(event: PointerEvent) {
-  dragging.value = true
+// The split widths persist in localStorage, written on drag end (not every
+// pointermove) and restored on load.  Invalid or unparseable values fall
+// back to the defaults; stored widths are re-clamped against MIN_PANE in
+// case the limits changed between sessions.
+const SPLIT_STORAGE_KEY = 'tod.split'
+const DEFAULT_SPLIT = { explorer: 14, editor: 44 }
+
+function loadSplit(): { explorer: number; editor: number } {
+  try {
+    const raw = localStorage.getItem(SPLIT_STORAGE_KEY)
+    if (!raw) return { ...DEFAULT_SPLIT }
+    const parsed = JSON.parse(raw)
+    if (typeof parsed?.explorer !== 'number' || typeof parsed?.editor !== 'number') {
+      return { ...DEFAULT_SPLIT }
+    }
+    return {
+      explorer: Math.min(100 - parsed.editor - MIN_PANE, Math.max(MIN_PANE, parsed.explorer)),
+      editor: Math.min(100 - parsed.explorer - MIN_PANE, Math.max(MIN_PANE, parsed.editor)),
+    }
+  } catch {
+    return { ...DEFAULT_SPLIT }
+  }
+}
+
+function saveSplit() {
+  try {
+    localStorage.setItem(
+      SPLIT_STORAGE_KEY,
+      JSON.stringify({ explorer: explorerPct.value, editor: editorPct.value }),
+    )
+  } catch {
+    // storage unavailable (private mode, quota) — the split just won't persist
+  }
+}
+
+const split = loadSplit()
+const explorerPct = ref(split.explorer)
+const editorPct = ref(split.editor)
+
+function onDividerDown(kind: 'explorer' | 'editor', event: PointerEvent) {
+  drag.value = kind
   ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
 }
 
 function onDividerMove(event: PointerEvent) {
-  if (!dragging.value || !splitEl.value) return
+  if (!drag.value || !splitEl.value) return
   const rect = splitEl.value.getBoundingClientRect()
   const pct = ((event.clientX - rect.left) / rect.width) * 100
-  splitPct.value = Math.min(80, Math.max(20, pct))
+  if (drag.value === 'explorer') {
+    explorerPct.value = Math.min(100 - editorPct.value - MIN_PANE, Math.max(MIN_PANE, pct))
+  } else {
+    // The editor's right edge is the dragged divider, so its width is the
+    // mouse position minus the explorer's width — not the raw position.
+    editorPct.value = Math.min(
+      100 - explorerPct.value - MIN_PANE,
+      Math.max(MIN_PANE, pct - explorerPct.value),
+    )
+  }
 }
 
 function onDividerUp(event: PointerEvent) {
-  dragging.value = false
+  drag.value = null
   ;(event.currentTarget as HTMLElement).releasePointerCapture(event.pointerId)
+  saveSplit()
 }
 </script>
 
@@ -94,23 +144,34 @@ function onDividerUp(event: PointerEvent) {
     </header>
 
     <div ref="splitEl" class="split">
-      <aside class="pane pane-left" :style="{ width: splitPct + '%' }">
+      <aside class="pane pane-explorer" :style="{ width: explorerPct + '%' }">
         <FileExplorer
           :root="state.session?.cwd ?? null"
           @open-file="openPath = $event"
         />
-        <FileEditor :path="openPath" />
       </aside>
 
       <div
         class="divider"
-        :class="{ dragging }"
-        @pointerdown="onDividerDown"
+        :class="{ dragging: drag === 'explorer' }"
+        @pointerdown="onDividerDown('explorer', $event)"
         @pointermove="onDividerMove"
         @pointerup="onDividerUp"
       />
 
-      <section class="pane pane-right">
+      <section class="pane pane-editor" :style="{ width: editorPct + '%' }">
+        <FileEditor :path="openPath" />
+      </section>
+
+      <div
+        class="divider"
+        :class="{ dragging: drag === 'editor' }"
+        @pointerdown="onDividerDown('editor', $event)"
+        @pointermove="onDividerMove"
+        @pointerup="onDividerUp"
+      />
+
+      <section class="pane pane-console">
         <div class="console-wrap">
           <ConsolePane
             :blocks="state.blocks"
