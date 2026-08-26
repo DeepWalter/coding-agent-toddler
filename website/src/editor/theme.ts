@@ -50,8 +50,8 @@ export const highlightStyle = HighlightStyle.define([
 ])
 
 // Matches the old `.editor-textarea` look (styles.css): --bg background,
-// --text color, 13px/1.5 mono, 10px 12px padding, tab-size 2.  No gutters
-// or line numbers — same minimal chrome as before.
+// --text color, 13px/1.5 mono, 10px 12px padding, tab-size 2.  The line
+// number gutter sits on --bg-hover with dim --text-dim numerals.
 export const editorTheme = EditorView.theme({
   '&': {
     height: '100%',
@@ -68,6 +68,14 @@ export const editorTheme = EditorView.theme({
   },
   '.cm-scroller': {
     fontFamily: 'var(--mono)',
+  },
+  '.cm-gutters': {
+    backgroundColor: 'var(--bg-hover)',
+    color: 'var(--text-dim)',
+    borderRight: 'none',
+  },
+  '.cm-lineNumbers .cm-gutterElement': {
+    padding: '0 8px 0 12px',
   },
   '&.cm-focused': { outline: 'none' },
   '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--accent)' },

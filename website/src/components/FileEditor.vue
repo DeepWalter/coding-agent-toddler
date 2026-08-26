@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, markRaw, onMounted, onUnmounted, ref, watch } from 'vue'
 import { EditorState, type Extension } from '@codemirror/state'
-import { EditorView, drawSelection, keymap } from '@codemirror/view'
+import { EditorView, drawSelection, keymap, lineNumbers } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { forceParsing } from '@codemirror/language'
 import type { Language } from '@codemirror/language'
@@ -139,6 +139,7 @@ function buildExtensions(tab: EditorTab, language: Language | null): Extension[]
   return [
     history(),
     drawSelection(),
+    lineNumbers(),
     EditorView.lineWrapping,
     keymap.of([
       // Ctrl/Cmd+S saves — explicit Ctrl-s keeps "Ctrl works on Mac too"
