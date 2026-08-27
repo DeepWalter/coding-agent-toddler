@@ -4,16 +4,19 @@ import { EditorView } from '@codemirror/view'
 
 /**
  * Editor chrome + token colors.  Token colors read the palette variables in
- * styles.css, and the console's markdown highlighter (`markdown.ts`) renders
- * with this same HighlightStyle — editor and console share one token→color
- * mapping, and the whole app stays on one palette even if it is retuned.
+ * styles.css (each theme defines a --keyword/--function/... set), and the
+ * console's markdown highlighter (`markdown.ts`) renders with this same
+ * HighlightStyle — editor and console share one token→color mapping, and the
+ * whole app stays on one palette even if it is retuned.
  */
 
-// keywords/titles/names → --accent; strings → --green; types → --violet;
-// numbers/literals/builtins/variables → --yellow; comments → --text-dim
-// italic; decorators/at-rules (tags.meta) → --violet italic; deletions →
-// --red.  Params (tags.local) are intentionally left unstyled — the
-// default --text.
+// One rule per granular syntax variable in styles.css: keywords → --keyword,
+// calls/defs → --function, strings → --string, numbers → --number, booleans
+// and atoms/builtins → --constant, comments → --comment italic, plain
+// identifiers → --variable, operators → --operator, html tag names → --tag,
+// attribute names → --attribute, types → --type, decorators/at-rules
+// (tags.meta) → --type italic, links → --accent, diff deletions → --error.
+// Params (tags.local) are intentionally left unstyled — the default --text.
 export const highlightStyle = HighlightStyle.define([
   {
     tag: [
@@ -23,44 +26,59 @@ export const highlightStyle = HighlightStyle.define([
       tags.operatorKeyword,
       tags.definitionKeyword,
     ],
-    color: 'var(--accent)',
+    color: 'var(--keyword)',
+  },
+  // Function calls and definitions — the legacy grammars tag these
+  // function(variableName) etc., more specific than plain variableName.
+  {
+    tag: [
+      tags.function(tags.variableName),
+      tags.function(tags.propertyName),
+      tags.function(tags.definition(tags.variableName)),
+    ],
+    color: 'var(--function)',
   },
   {
     tag: [tags.string, tags.special(tags.string), tags.regexp, tags.character, tags.escape],
-    color: 'var(--green)',
+    color: 'var(--string)',
   },
-  { tag: [tags.typeName, tags.className, tags.namespace], color: 'var(--violet)' },
+  { tag: [tags.number], color: 'var(--number)' },
+  // True/None/atoms and legacy-mode "builtin" tokens (variableName.standard,
+  // e.g. self) — separated from numbers.
   {
-    tag: [
-      tags.number,
-      tags.bool,
-      tags.atom,
-      tags.literal,
-      // legacy-mode "builtin" tokens map to variableName.standard
-      tags.standard(tags.variableName),
-      tags.variableName,
-      tags.propertyName,
-      tags.definition(tags.variableName), // "def" tokens
-    ],
-    color: 'var(--yellow)',
+    tag: [tags.bool, tags.atom, tags.literal, tags.standard(tags.variableName)],
+    color: 'var(--constant)',
   },
-  { tag: [tags.comment, tags.quote], color: 'var(--text-dim)', fontStyle: 'italic' },
+  { tag: [tags.comment, tags.quote], color: 'var(--comment)', fontStyle: 'italic' },
+  // Plain identifiers ("def" tokens too) map to --variable (yellow in the
+  // canonical solarized scheme); params (tags.local) are intentionally left
+  // unstyled — the default --text.
+  {
+    tag: [tags.variableName, tags.propertyName, tags.definition(tags.variableName)],
+    color: 'var(--variable)',
+  },
+  { tag: [tags.operator], color: 'var(--operator)' },
+  // html/xml tags vs attributes
+  { tag: [tags.tagName], color: 'var(--tag)' },
+  { tag: [tags.attributeName], color: 'var(--attribute)' },
+  { tag: [tags.typeName, tags.className, tags.namespace], color: 'var(--type)' },
   // Python decorators (@dataclass), CSS at-rules (@media), yaml `---` —
-  // "meta" in the legacy grammars.  Violet italic reads as "annotation",
+  // "meta" in the legacy grammars.  Orange italic reads as "annotation",
   // distinct from the gray of a real comment.
-  { tag: [tags.meta], color: 'var(--violet)', fontStyle: 'italic' },
-  { tag: [tags.deleted], color: 'var(--red)' },
-  // html/xml tags and attributes
-  { tag: [tags.tagName, tags.attributeName], color: 'var(--accent)' },
+  { tag: [tags.meta], color: 'var(--type)', fontStyle: 'italic' },
+  { tag: [tags.link, tags.url], color: 'var(--accent)' },
+  { tag: [tags.deleted, tags.invalid], color: 'var(--error)' },
 ])
 
-// Matches the old `.editor-textarea` look (styles.css): --bg background,
-// --text color, 13px/1.5 mono, 10px 12px padding, tab-size 2.  The line
-// number gutter sits on --bg-hover with dim --text-dim numerals.
+// Matches the old `.editor-textarea` look (styles.css): --editor-bg
+// background, --text color, 13px/1.5 mono, 10px 12px padding, tab-size 2.
+// The line number gutter sits on --editor-surface-2; numerals are
+// --line-number, the active line's brighter on --active-line.  Selection
+// and caret use the theme's dedicated vars.
 export const editorTheme = EditorView.theme({
   '&': {
     height: '100%',
-    backgroundColor: 'var(--bg)',
+    backgroundColor: 'var(--editor-bg)',
     color: 'var(--text)',
     fontSize: '13px',
     lineHeight: '1.5',
@@ -68,24 +86,30 @@ export const editorTheme = EditorView.theme({
   '.cm-content': {
     padding: '10px 12px',
     fontFamily: 'var(--mono)',
-    caretColor: 'var(--accent)',
+    caretColor: 'var(--cursor)',
     tabSize: '2',
   },
   '.cm-scroller': {
     fontFamily: 'var(--mono)',
   },
   '.cm-gutters': {
-    backgroundColor: 'var(--bg-hover)',
-    color: 'var(--text-dim)',
+    backgroundColor: 'var(--editor-surface-2)',
+    color: 'var(--line-number)',
     borderRight: 'none',
   },
   '.cm-lineNumbers .cm-gutterElement': {
     padding: '0 8px 0 12px',
   },
+  '.cm-lineNumbers .cm-activeLineGutter': {
+    color: 'var(--line-number-active)',
+  },
+  '.cm-activeLine': {
+    backgroundColor: 'var(--active-line)',
+  },
   '&.cm-focused': { outline: 'none' },
-  '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--accent)' },
+  '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--cursor)' },
   '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': {
-    backgroundColor: 'var(--bg-hover)',
+    backgroundColor: 'var(--selection)',
   },
 })
 

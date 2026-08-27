@@ -1,61 +1,205 @@
-/* tod console — monospace, minimal.  Solarized palette: dark by default,
-   light via <html data-theme="light">.  Both sets keep the same variable
-   names, so every component and the CodeMirror theme follow the switch. */
+/* tod console — monospace, minimal.  Themes are named blocks applied as
+   <html data-theme="..."> by App.vue (before first paint, in index.html).
+   The selectable pair is tokyo-night (dark, default) and github-light,
+   toggled by the sun/moon button; the original solarized dark/light blocks
+   are kept in code below.  Every block defines the same variable set, so
+   each component, the CodeMirror theme, and the console's highlighted code
+   spans follow whichever block is active. */
 
+/* Shared, not theme-specific: the monospace stack and text used on solid
+   accent fills (primary/danger buttons, selected rows). */
 :root {
-  /* solarized dark (base03 bg, base02 panels, base0 text) */
-  --bg: #002b36;
-  --bg-panel: #073642;
-  /* raised surfaces = panels today; kept distinct so a palette retune can
-     separate them */
-  --bg-raised: var(--bg-panel);
-  --bg-hover: #0b3b47;
-  --border: #17505d;
-  --text: #839496;
-  --text-dim: #586e75;
-  --accent: #268bd2;
-  --accent-dim: #1e6fa5;
-  /* text on solid accent fills (primary/danger buttons, selected row) */
-  --on-accent: #fff;
-  /* strings: saturated green — solarized's own #859900 is olive and sits
-     at the same luminance as body text, so code read flat; this one pops
-     on #002b36 while staying hue-distant from the golden numbers below */
-  --green: #7eb33a;
-  --violet: #6c71c4;
-  --red: #dc322f;
-  --red-dim: #7a2d2a;
-  /* danger-button fill — red-dim doubles as a banner tint, which the light
-     theme retunes to pale pink, so the button needs its own value */
-  --btn-danger: #7a2d2a;
-  /* yellow lifted above the equal-luminance green so numbers/builtins
-     read apart from strings on the dark background */
-  --yellow: #c9a227;
   --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+  --on-accent: #fff;
 }
 
-:root[data-theme='light'] {
-  /* solarized light (base3 bg, base2 panels, base00 text) */
-  --bg: #fdf6e3;
-  --bg-panel: #eee8d5;
-  --bg-raised: var(--bg-panel);
-  --bg-hover: #e3ddc8;
-  --border: #d1cbb3;
-  --text: #657b83;
-  --text-dim: #93a1a1;
+[data-theme="solarized-dark"] {
+  /* Base colors */
+  --editor-bg: #002b36;
+  --editor-surface: #073642;
+  --editor-surface-2: #0a4553;
+  --editor-surface-3: #0f4a58;
+  --editor-border: #586e75;
+
+  /* Text */
+  --text: #839496;
+  --text-bright: #93a1a1;
+  --text-muted: #657b83;
+  --text-subtle: #586e75;
+
+  /* Syntax highlighting */
+  --keyword: #859900;
+  --function: #268bd2;
+  --string: #2aa198;
+  --number: #d33682;
+  --comment: #586e75;
+  --variable: #b58900;
+  --operator: #859900;
+  --tag: #268bd2;
+  --attribute: #b58900;
+  --constant: #d33682;
+  --type: #cb4b16;
+
+  /* Editor states */
+  --selection: #073642;
+  --cursor: #93a1a1;
+  --line-number: #586e75;
+  --line-number-active: #93a1a1;
+  --active-line: #073642;
+
+  /* UI */
   --accent: #268bd2;
-  --accent-dim: #1e6fa5;
-  --on-accent: #fff;
-  /* strings/types deepened for ≥4.5:1 on this background (solarized's own
-     sit ~3:1), with string green shifted toward true green to sit apart
-     from the ochre numbers */
-  --green: #41730f;
-  --violet: #5e63b3;
-  --red: #dc322f;
-  --red-dim: #e3b3ad;
-  /* white on this ≈6.4:1 (hover --red ≈5.9:1) */
-  --btn-danger: #a53a33;
-  --yellow: #8a6b00;
-  --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+  --accent-hover: #2aa198;
+  /* solid accent fills (primary buttons, selected rows) — the old
+     accent-dim, deep enough for white text */
+  --accent-fill: #1e6fa5;
+  --accent-secondary: #859900;
+  --error: #dc322f;
+  --warning: #b58900;
+  --success: #859900;
+}
+
+[data-theme="solarized-light"] {
+  /* Base colors */
+  --editor-bg: #fdf6e3;
+  --editor-surface: #eee8d5;
+  --editor-surface-2: #e4ddc8;
+  --editor-surface-3: #ddd6c0;
+  --editor-border: #93a1a1;
+
+  /* Text */
+  --text: #657b83;
+  --text-bright: #586e75;
+  --text-muted: #839496;
+  --text-subtle: #93a1a1;
+
+  /* Syntax highlighting */
+  --keyword: #859900;
+  --function: #268bd2;
+  --string: #2aa198;
+  --number: #d33682;
+  --comment: #93a1a1;
+  --variable: #b58900;
+  --operator: #859900;
+  --tag: #268bd2;
+  --attribute: #b58900;
+  --constant: #d33682;
+  --type: #cb4b16;
+
+  /* Editor states */
+  --selection: #eee8d5;
+  --cursor: #586e75;
+  --line-number: #93a1a1;
+  --line-number-active: #586e75;
+  --active-line: #eee8d5;
+
+  /* UI */
+  --accent: #268bd2;
+  --accent-hover: #2aa198;
+  --accent-fill: #1e6fa5;
+  --accent-secondary: #859900;
+  --error: #dc322f;
+  --warning: #b58900;
+  --success: #859900;
+}
+
+[data-theme="tokyo-night"] {
+  --editor-bg: #1a1b26;
+  --editor-surface: #16161e;
+  --editor-surface-2: #24283b;
+  --editor-surface-3: #2c3046;
+  --editor-border: #292e42;
+
+  --text: #c0caf5;
+  /* Retuned from the shipped #565f89/#3b4261 — those read ~2.6:1 and
+     ~1.3:1 on #1a1b26, too dim for the app's chrome roles (bars, meta,
+     file names, inactive tabs).  Both tiers now sit at the bright end of
+     the tokyonight.nvim palette (fg / fg_dark) — white-ish on the dark
+     background. */
+  --text-muted: #c0caf5;
+  --text-subtle: #a9b1d6;
+
+  --keyword: #bb9af7;
+  --function: #7aa2f7;
+  --string: #9ece6a;
+  --number: #ff9e64;
+  /* Retuned from #565f89 (~2.6:1) — a step brighter, still quiet */
+  --comment: #737aa2;
+  --variable: #e0af68;
+  --operator: #89ddff;
+  --tag: #f7768e;
+  --attribute: #7dcfff;
+
+  --selection: #33467c;
+  --cursor: #c0caf5;
+  /* Retuned from #3b4261 (~1.3:1) — one step brighter, still quieter
+     than comments so the gutter stays background chrome */
+  --line-number: #565f89;
+  --line-number-active: #737aa2;
+
+  --accent: #7aa2f7;
+  --accent-hover: #89ddff;
+  /* App-required (the block doesn't ship it): tokyonight blue0 — solid
+     accent fills (primary buttons, selected rows), deep enough for white
+     text (~6.6:1) */
+  --accent-fill: #3d59a1;
+
+  /* Derived — the tokyo-night block above doesn't ship these, but the app
+     needs them; values are the canonical tokyonight.nvim palette so
+     nothing falls through unset. */
+  --text-bright: #c0caf5;
+  --constant: #bb9af7;
+  --type: #e0af68;
+  --active-line: #16161e;
+  --accent-secondary: #9ece6a;
+  --error: #db4b4b;
+  --warning: #e0af68;
+  --success: #9ece6a;
+}
+
+[data-theme="github-light"] {
+  /* Base colors */
+  --editor-bg: #ffffff;
+  --editor-surface: #f6f8fa;
+  --editor-surface-2: #eaeef2;
+  --editor-surface-3: #e1e6ec;
+  --editor-border: #d0d7de;
+
+  /* Text */
+  --text: #24292f;
+  --text-bright: #1f2328;
+  --text-muted: #57606a;
+  --text-subtle: #8c959f;
+
+  /* Syntax highlighting */
+  --keyword: #cf222e;
+  --function: #8250df;
+  --string: #0a3069;
+  --number: #0550ae;
+  --comment: #6e7781;
+  --variable: #953800;
+  --operator: #cf222e;
+  --tag: #116329;
+  --attribute: #0550ae;
+  --constant: #0550ae;
+  --type: #953800;
+
+  /* Editor states */
+  --selection: #b6d7ff;
+  --cursor: #24292f;
+  --line-number: #8c959f;
+  --line-number-active: #24292f;
+  --active-line: #f6f8fa;
+
+  /* UI */
+  --accent: #0969da;
+  --accent-hover: #0550ae;
+  /* same as --accent — white text clears on it (~5.5:1) */
+  --accent-fill: #0969da;
+  --accent-secondary: #8250df;
+  --error: #cf222e;
+  --warning: #9a6700;
+  --success: #1a7f37;
 }
 
 * {
@@ -70,10 +214,15 @@ body,
 }
 
 body {
-  background: var(--bg);
+  background: var(--editor-bg);
   color: var(--text);
   font: 13px/1.55 var(--mono);
   -webkit-font-smoothing: antialiased;
+}
+
+/* Selected console text matches the editor's selection color. */
+::selection {
+  background: var(--selection);
 }
 
 .app {
@@ -91,18 +240,19 @@ body {
   align-items: center;
   gap: 10px;
   padding: 8px 14px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-panel);
+  border-bottom: 1px solid var(--editor-border);
+  background: var(--editor-surface);
   flex: none;
 }
 
 .topbar-title {
   font-weight: 600;
   letter-spacing: 0.04em;
+  color: var(--text-bright);
 }
 
 .topbar-meta {
-  color: var(--text-dim);
+  color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -117,10 +267,10 @@ body {
 }
 
 .mode-toggle {
-  border: 1px solid var(--border);
+  border: 1px solid var(--editor-border);
   border-radius: 999px;
-  background: var(--bg-raised);
-  color: var(--text-dim);
+  background: var(--editor-surface-2);
+  color: var(--text-subtle);
   font: inherit;
   font-size: 11px;
   padding: 3px 10px;
@@ -128,12 +278,12 @@ body {
 }
 
 .mode-toggle.auto {
-  color: var(--green);
-  border-color: var(--green);
+  color: var(--accent-secondary);
+  border-color: var(--accent-secondary);
 }
 
 .mode-toggle:hover:not(:disabled) {
-  background: var(--bg-hover);
+  background: var(--editor-surface-3);
 }
 
 .mode-toggle:disabled {
@@ -148,15 +298,15 @@ body {
   width: 26px;
   height: 24px;
   padding: 0;
-  border: 1px solid var(--border);
+  border: 1px solid var(--editor-border);
   border-radius: 6px;
-  background: var(--bg-raised);
-  color: var(--text-dim);
+  background: var(--editor-surface-2);
+  color: var(--text-muted);
   cursor: pointer;
 }
 
 .theme-toggle:hover {
-  background: var(--bg-hover);
+  background: var(--editor-surface-3);
   color: var(--text);
 }
 
@@ -165,9 +315,9 @@ body {
 }
 
 .session-select select {
-  background: var(--bg-raised);
+  background: var(--editor-surface-2);
   color: var(--text);
-  border: 1px solid var(--border);
+  border: 1px solid var(--editor-border);
   border-radius: 6px;
   font: inherit;
   font-size: 11px;
@@ -189,12 +339,12 @@ body {
   height: 9px;
   border-radius: 50%;
   flex: none;
-  background: var(--red);
+  background: var(--error);
 }
 
 .status-dot.on {
-  background: var(--green);
-  box-shadow: 0 0 6px var(--green);
+  background: var(--success);
+  box-shadow: 0 0 6px var(--success);
 }
 
 /* ------------------------------------------------------------------ */
@@ -219,7 +369,7 @@ body {
 }
 
 .console-empty {
-  color: var(--text-dim);
+  color: var(--text-muted);
   text-align: center;
   margin-top: 12vh;
 }
@@ -232,7 +382,7 @@ body {
 }
 
 .message-role {
-  color: var(--text-dim);
+  color: var(--text-subtle);
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -246,12 +396,12 @@ body {
   white-space: pre-wrap;
   word-wrap: break-word;
   overflow-wrap: break-word;
-  border-left: 2px solid var(--border);
+  border-left: 2px solid var(--editor-border);
   padding-left: 10px;
 }
 
 .message.user .message-content {
-  border-left-color: var(--accent-dim);
+  border-left-color: var(--accent);
 }
 
 /* ------------------------------------------------------------------ */
@@ -309,15 +459,15 @@ body {
 }
 
 :is(.message-content, .stream-line).markdown code {
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
+  background: var(--editor-surface-2);
+  border: 1px solid var(--editor-border);
   border-radius: 4px;
   padding: 1px 4px;
 }
 
 :is(.message-content, .stream-line).markdown pre {
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
+  background: var(--editor-surface-2);
+  border: 1px solid var(--editor-border);
   border-radius: 6px;
   padding: 8px 10px;
   margin: 6px 0;
@@ -346,13 +496,13 @@ body {
 :is(.message-content, .stream-line).markdown blockquote {
   margin: 6px 0;
   padding: 2px 10px;
-  border-left: 2px solid var(--accent-dim);
-  color: var(--text-dim);
+  border-left: 2px solid var(--accent);
+  color: var(--text-muted);
 }
 
 :is(.message-content, .stream-line).markdown hr {
   border: none;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--editor-border);
   margin: 8px 0;
 }
 
@@ -363,12 +513,12 @@ body {
 
 :is(.message-content, .stream-line).markdown th,
 :is(.message-content, .stream-line).markdown td {
-  border: 1px solid var(--border);
+  border: 1px solid var(--editor-border);
   padding: 3px 8px;
 }
 
 :is(.message-content, .stream-line).markdown th {
-  background: var(--bg-raised);
+  background: var(--editor-surface-2);
 }
 
 /* Code-token colors live in the editor's HighlightStyle (theme.ts) — the
@@ -379,9 +529,9 @@ body {
 /* ------------------------------------------------------------------ */
 
 .tool-card {
-  border: 1px solid var(--border);
+  border: 1px solid var(--editor-border);
   border-radius: 6px;
-  background: var(--bg-raised);
+  background: var(--editor-surface-2);
   overflow: hidden;
 }
 
@@ -400,7 +550,7 @@ body {
 }
 
 .tool-card-header:hover {
-  background: var(--bg-hover);
+  background: var(--editor-surface-3);
 }
 
 .tool-card-name {
@@ -408,29 +558,29 @@ body {
 }
 
 .tool-card-state {
-  color: var(--text-dim);
+  color: var(--text-muted);
   font-size: 11px;
   margin-left: auto;
 }
 
 .tool-card-chevron {
-  color: var(--text-dim);
+  color: var(--text-muted);
 }
 
 .tool-card.error {
-  border-color: var(--red-dim);
+  border-color: color-mix(in srgb, var(--error) 65%, var(--editor-bg));
 }
 
 .tool-card-body {
   padding: 8px 10px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--editor-border);
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
 .tool-card-section-title {
-  color: var(--text-dim);
+  color: var(--text-subtle);
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -447,18 +597,18 @@ body {
 }
 
 .tool-card-pre.dim {
-  color: var(--text-dim);
+  color: var(--text-muted);
 }
 
 .tool-card-pre.error-text {
-  color: var(--red);
+  color: var(--error);
 }
 
 /* Spinner */
 .spinner {
   width: 11px;
   height: 11px;
-  border: 2px solid var(--border);
+  border: 2px solid var(--editor-border);
   border-top-color: var(--accent);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
@@ -476,9 +626,9 @@ body {
 /* ------------------------------------------------------------------ */
 
 .plan-card {
-  border: 1px solid var(--accent-dim);
+  border: 1px solid var(--accent);
   border-radius: 6px;
-  background: var(--bg-raised);
+  background: var(--editor-surface-2);
   padding: 10px 12px;
   display: flex;
   flex-direction: column;
@@ -490,7 +640,7 @@ body {
 }
 
 .plan-card-summary {
-  color: var(--text-dim);
+  color: var(--text-muted);
 }
 
 .plan-card-steps {
@@ -505,24 +655,24 @@ body {
   display: inline-block;
   min-width: 74px;
   margin-right: 6px;
-  color: var(--text-dim);
+  color: var(--text-muted);
   font-size: 11px;
 }
 
 .step-status.status-in_progress {
-  color: var(--yellow);
+  color: var(--warning);
 }
 
 .step-status.status-completed {
-  color: var(--green);
+  color: var(--success);
 }
 
 .step-status.status-failed {
-  color: var(--red);
+  color: var(--error);
 }
 
 .plan-card-note {
-  color: var(--text-dim);
+  color: var(--text-muted);
   font-size: 11px;
 }
 
@@ -551,9 +701,9 @@ body {
 }
 
 .plan-card-feedback textarea {
-  background: var(--bg);
+  background: var(--editor-bg);
   color: var(--text);
-  border: 1px solid var(--border);
+  border: 1px solid var(--editor-border);
   border-radius: 6px;
   padding: 6px 8px;
   font: inherit;
@@ -562,7 +712,7 @@ body {
 }
 
 .plan-card-feedback textarea:focus {
-  border-color: var(--accent-dim);
+  border-color: var(--accent-hover);
 }
 
 /* ------------------------------------------------------------------ */
@@ -571,14 +721,14 @@ body {
 
 .stream-line {
   padding: 2px 10px;
-  border-left: 2px solid var(--border);
+  border-left: 2px solid var(--editor-border);
   white-space: pre-wrap;
   word-wrap: break-word;
 }
 
 .stream-line.notice {
-  color: var(--text-dim);
-  border-left-color: var(--border);
+  color: var(--text-muted);
+  border-left-color: var(--editor-border);
 }
 
 /* Markdown-rendered notices (/help, …): the renderer emits its own
@@ -587,10 +737,12 @@ body {
   white-space: normal;
 }
 
+/* error banner tint — a dimmed error, derived so the theme blocks stay
+   canonical (dark ≈ old #7a2d2a, light ≈ old pale pink #e3b3ad) */
 .stream-line.error {
-  color: var(--red);
-  border-left-color: var(--red);
-  background: var(--red-dim);
+  color: var(--error);
+  border-left-color: var(--error);
+  background: color-mix(in srgb, var(--error) 30%, var(--editor-bg));
   border-radius: 0 4px 4px 0;
   padding: 4px 10px;
 }
@@ -605,9 +757,9 @@ body {
   align-items: center;
   gap: 8px;
   padding: 8px 14px;
-  border-top: 1px solid var(--yellow);
-  background: var(--bg-raised);
-  color: var(--yellow);
+  border-top: 1px solid var(--warning);
+  background: var(--editor-surface-2);
+  color: var(--warning);
 }
 
 .pause-prompt-icon {
@@ -623,7 +775,7 @@ body {
 }
 
 .pause-prompt-hint {
-  color: var(--text-dim);
+  color: var(--text-muted);
 }
 
 .pause-prompt-actions {
@@ -640,8 +792,8 @@ body {
   display: flex;
   gap: 8px;
   padding: 10px 14px;
-  border-top: 1px solid var(--border);
-  background: var(--bg-panel);
+  border-top: 1px solid var(--editor-border);
+  background: var(--editor-surface);
   flex: none;
   align-items: stretch;
 }
@@ -649,9 +801,9 @@ body {
 .input-bar-textarea {
   flex: 1;
   resize: none;
-  background: var(--bg);
+  background: var(--editor-bg);
   color: var(--text);
-  border: 1px solid var(--border);
+  border: 1px solid var(--editor-border);
   border-radius: 6px;
   padding: 8px 10px;
   font: inherit;
@@ -659,7 +811,7 @@ body {
 }
 
 .input-bar-textarea:focus {
-  border-color: var(--accent-dim);
+  border-color: var(--accent-hover);
 }
 
 .input-bar-textarea:disabled {
@@ -667,9 +819,9 @@ body {
 }
 
 .btn {
-  border: 1px solid var(--border);
+  border: 1px solid var(--editor-border);
   border-radius: 6px;
-  background: var(--bg-raised);
+  background: var(--editor-surface-2);
   color: var(--text);
   font: inherit;
   padding: 8px 14px;
@@ -679,7 +831,7 @@ body {
 }
 
 .btn:hover:not(:disabled) {
-  background: var(--bg-hover);
+  background: var(--editor-surface-3);
 }
 
 .btn:disabled {
@@ -688,23 +840,25 @@ body {
 }
 
 .btn.primary {
-  border-color: var(--accent-dim);
-  background: var(--accent-dim);
+  border-color: var(--accent-fill);
+  background: var(--accent-fill);
   color: var(--on-accent);
 }
 
 .btn.primary:hover:not(:disabled) {
-  background: var(--accent);
+  background: var(--accent-hover);
 }
 
 .btn.danger {
-  border-color: var(--btn-danger);
-  background: var(--btn-danger);
+  border-color: var(--error);
+  background: var(--error);
   color: var(--on-accent);
 }
 
 .btn.danger:hover:not(:disabled) {
-  background: var(--red);
+  /* the base fill is now the canonical error red, so hover darkens instead
+     of the old dim→bright step — keeps white text readable */
+  background: color-mix(in srgb, var(--error) 80%, #000);
 }
 
 /* ------------------------------------------------------------------ */
@@ -716,9 +870,9 @@ body {
   align-items: center;
   gap: 6px;
   padding: 5px 14px;
-  border-top: 1px solid var(--border);
-  background: var(--bg-panel);
-  color: var(--text-dim);
+  border-top: 1px solid var(--editor-border);
+  background: var(--editor-surface);
+  color: var(--text-muted);
   font-size: 11px;
   flex: none;
 }
@@ -728,7 +882,7 @@ body {
 }
 
 .status-dim {
-  color: var(--text-dim);
+  color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -736,7 +890,7 @@ body {
 
 .status-busy {
   margin-left: auto;
-  color: var(--yellow);
+  color: var(--warning);
 }
 
 /* ------------------------------------------------------------------ */
@@ -770,14 +924,14 @@ body {
   flex: none;
   width: 5px;
   cursor: col-resize;
-  background: var(--border);
+  background: var(--editor-border);
   touch-action: none;
   user-select: none;
 }
 
 .divider:hover,
 .divider.dragging {
-  background: var(--accent-dim);
+  background: var(--accent-hover);
 }
 
 /* ------------------------------------------------------------------ */
@@ -796,8 +950,8 @@ body {
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-panel);
+  border-bottom: 1px solid var(--editor-border);
+  background: var(--editor-surface);
   flex: none;
 }
 
@@ -808,7 +962,7 @@ body {
 .explorer-root {
   flex: 1;
   min-width: 0;
-  color: var(--text-dim);
+  color: var(--text-subtle);
   font-size: 11px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -818,7 +972,7 @@ body {
 .explorer-refresh {
   flex: none;
   background: none;
-  border: 1px solid var(--border);
+  border: 1px solid var(--editor-border);
   border-radius: 4px;
   color: var(--text);
   font: inherit;
@@ -828,7 +982,7 @@ body {
 }
 
 .explorer-refresh:hover:not(:disabled) {
-  background: var(--bg-hover);
+  background: var(--editor-surface-2);
 }
 
 .explorer-refresh:disabled {
@@ -845,12 +999,12 @@ body {
 }
 
 .explorer-empty {
-  color: var(--text-dim);
+  color: var(--text-subtle);
   padding: 10px;
 }
 
 .explorer-empty.error {
-  color: var(--red);
+  color: var(--error);
 }
 
 .tree-row {
@@ -869,11 +1023,11 @@ body {
 }
 
 .tree-row:hover {
-  background: var(--bg-hover);
+  background: var(--editor-surface-2);
 }
 
 .tree-row.selected {
-  background: var(--accent-dim);
+  background: var(--accent-fill);
   /* --text is unreadable on the accent fill in both palettes (~1.2-1.7:1) —
      white keeps the same pairing as .btn.primary */
   color: var(--on-accent);
@@ -887,7 +1041,7 @@ body {
 .tree-chevron {
   flex: none;
   width: 10px;
-  color: var(--text-dim);
+  color: var(--text-subtle);
 }
 
 .tree-name {
@@ -900,7 +1054,7 @@ body {
 }
 
 .tree-file {
-  color: var(--text-dim);
+  color: var(--text-subtle);
 }
 
 /* ------------------------------------------------------------------ */
@@ -919,8 +1073,8 @@ body {
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-panel);
+  border-bottom: 1px solid var(--editor-border);
+  background: var(--editor-surface);
   flex: none;
 }
 
@@ -934,13 +1088,13 @@ body {
 
 .editor-dirty {
   flex: none;
-  color: var(--yellow);
+  color: var(--warning);
 }
 
 .editor-status {
   flex: none;
   max-width: 45%;
-  color: var(--text-dim);
+  color: var(--text-muted);
   font-size: 11px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -948,7 +1102,7 @@ body {
 }
 
 .editor-status.status-error {
-  color: var(--red);
+  color: var(--error);
 }
 
 .editor-tabs {
@@ -956,8 +1110,8 @@ body {
   flex: none;
   overflow-x: auto;
   scrollbar-width: thin;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-panel);
+  border-bottom: 1px solid var(--editor-border);
+  background: var(--editor-surface);
 }
 
 .editor-tab {
@@ -967,24 +1121,24 @@ body {
   flex: none;
   max-width: 200px;
   padding: 5px 8px 5px 12px;
-  border-right: 1px solid var(--border);
-  color: var(--text-dim);
+  border-right: 1px solid var(--editor-border);
+  color: var(--text-subtle);
   cursor: pointer;
   user-select: none;
 }
 
 .editor-tab:hover {
-  background: var(--bg-hover);
+  background: var(--editor-surface-2);
 }
 
 .editor-tab.active {
-  background: var(--bg);
+  background: var(--editor-bg);
   color: var(--text);
   box-shadow: inset 0 2px 0 var(--accent);
 }
 
 .editor-tab.dirty .editor-tab-name {
-  color: var(--yellow);
+  color: var(--warning);
 }
 
 .editor-tab-name {
@@ -995,7 +1149,7 @@ body {
 
 .editor-tab-dirty {
   flex: none;
-  color: var(--yellow);
+  color: var(--warning);
 }
 
 .editor-tab-close {
@@ -1003,7 +1157,7 @@ body {
   background: none;
   border: none;
   border-radius: 3px;
-  color: var(--text-dim);
+  color: var(--text-subtle);
   font: inherit;
   line-height: 1;
   padding: 1px 5px;
@@ -1011,7 +1165,7 @@ body {
 }
 
 .editor-tab-close:hover {
-  background: var(--bg-hover);
+  background: var(--editor-surface-2);
   color: var(--text);
 }
 
@@ -1035,12 +1189,12 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--bg);
-  color: var(--text-dim);
+  background: var(--editor-bg);
+  color: var(--text-subtle);
   padding: 12px;
   text-align: center;
 }
 
 .editor-message.error {
-  color: var(--red);
+  color: var(--error);
 }

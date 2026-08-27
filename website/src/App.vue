@@ -61,16 +61,32 @@ function writeStored(key: string, value: unknown) {
   }
 }
 
-// Color theme: solarized dark (default) or light.  The choice persists in
-// localStorage and is applied as <html data-theme> so every var(--*) in
-// styles.css — including the CodeMirror theme, which reads the same
-// variables — follows the switch.
+// Color theme: tokyo-night (dark, default) or github-light, applied as
+// named <html data-theme> values matching the CSS theme blocks.  The choice
+// persists in localStorage and every var(--*) in styles.css — including
+// the CodeMirror theme, which reads the same variables — follows the
+// switch.  Stored values from earlier lineups ('"dark"'/'"light"', then
+// '"solarized-dark"'/'"solarized-light"') map to the current pair;
+// anything else falls back to dark.
 const THEME_STORAGE_KEY = 'tod.theme'
-const theme = ref<'dark' | 'light'>(
-  readStored<'dark' | 'light'>(
+const theme = ref<'tokyo-night' | 'github-light'>(
+  readStored<'tokyo-night' | 'github-light'>(
     THEME_STORAGE_KEY,
-    (raw) => (raw === '"light"' || raw === '"dark"' ? JSON.parse(raw) : null),
-    'dark',
+    (raw) => {
+      switch (raw) {
+        case '"tokyo-night"':
+        case '"solarized-dark"':
+        case '"dark"':
+          return 'tokyo-night'
+        case '"github-light"':
+        case '"solarized-light"':
+        case '"light"':
+          return 'github-light'
+        default:
+          return null
+      }
+    },
+    'tokyo-night',
   ),
 )
 watch(
@@ -234,12 +250,12 @@ function onDividerUp(event: PointerEvent) {
         <button
           type="button"
           class="theme-toggle"
-          :title="theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'"
-          @click="theme = theme === 'dark' ? 'light' : 'dark'"
+          :title="theme === 'tokyo-night' ? 'Switch to light theme' : 'Switch to dark theme'"
+          @click="theme = theme === 'tokyo-night' ? 'github-light' : 'tokyo-night'"
         >
           <!-- dark theme → sun (switch to light); light theme → moon (switch to dark) -->
           <svg
-            v-if="theme === 'dark'"
+            v-if="theme === 'tokyo-night'"
             viewBox="0 0 24 24"
             width="14"
             height="14"

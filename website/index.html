@@ -5,14 +5,23 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <script>
       // Apply the persisted theme before first paint (App.vue applies it
-      // again once the module graph loads — this just prevents a dark flash
-      // when light is stored).  Format matches writeStored in App.vue:
-      // JSON-stringified, so 'light' arrives as '"light"'.
+      // again once the module graph loads — this just prevents a flash when
+      // the non-default theme is stored).  Format matches writeStored in
+      // App.vue: JSON-stringified.  The attribute is always set — the CSS
+      // themes are named blocks, so there is no default without it — and
+      // stored values from earlier lineups ('"light"', '"solarized-light"')
+      // map to github-light; everything else lands on tokyo-night.
       try {
-        if (localStorage.getItem('tod.theme') === '"light"') {
-          document.documentElement.dataset.theme = 'light'
-        }
-      } catch {}
+        const stored = localStorage.getItem('tod.theme')
+        document.documentElement.dataset.theme =
+          stored === '"github-light"' ||
+          stored === '"solarized-light"' ||
+          stored === '"light"'
+            ? 'github-light'
+            : 'tokyo-night'
+      } catch {
+        document.documentElement.dataset.theme = 'tokyo-night'
+      }
     </script>
     <title>tod</title>
   </head>
