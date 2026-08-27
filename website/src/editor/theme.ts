@@ -108,8 +108,12 @@ export const editorTheme = EditorView.theme({
   },
   '&.cm-focused': { outline: 'none' },
   '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--cursor)' },
+  // CM's base theme paints the selection layer with literal light-mode colors
+  // (&light .cm-selectionBackground → #d9d9d9 / #d7d4f0) that outrank this
+  // rule on specificity, so the dark theme showed a near-white selection.
+  // !important wins over those literals and keeps the palette var in charge.
   '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': {
-    backgroundColor: 'var(--selection)',
+    backgroundColor: 'var(--selection) !important',
   },
 })
 
