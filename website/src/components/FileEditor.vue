@@ -8,6 +8,8 @@ import type { Language } from '@codemirror/language'
 import { api } from '../api'
 import { languageForPath } from '../editor/languages'
 import { editorTheme, highlightExt } from '../editor/theme'
+import { gitBadgeClass } from '../gitStatus'
+import type { GitStatusState } from '../types'
 import { basename } from '../utils'
 
 /**
@@ -22,10 +24,11 @@ import { basename } from '../utils'
  * activation (unless it has unsaved edits), so the agent's writes show up.
  */
 
-const props = defineProps<{ files: string[]; active: string | null }>()
+const props = defineProps<{ files: string[]; active: string | null; git: GitStatusState }>()
 const emit = defineEmits<{
   'activate-file': [path: string]
   'close-file': [path: string]
+  'file-saved': [path: string]
 }>()
 
 interface EditorTab {
@@ -309,6 +312,7 @@ async function save() {
   const text = view.state.doc.toString()
   try {
     await api.writeFile(path, text)
+    emit('file-saved', path) // the disk changed — git status needs a refresh
     if (tabs.value[path] !== tab) return // tab closed or reopened while saving
     // Typing during the await already set dirty=true — re-derive from the
     // live doc (or the flushed state, if the user switched away mid-save)
@@ -413,6 +417,12 @@ watch(() => props.active, (path) => {
         @click="emit('activate-file', path)"
       >
         <span class="editor-tab-name">{{ basename(path) }}</span>
+        <span
+          v-if="git.files[path]"
+          class="git-badge"
+          :class="gitBadgeClass(git.files[path])"
+          :title="`git status: ${git.files[path]}`"
+        >{{ git.files[path] }}</span>
         <span v-if="isDirty(tabs[path])" class="editor-tab-dirty" title="unsaved changes">●</span>
         <button
           type="button"

@@ -1053,8 +1053,108 @@ body {
   font-weight: 600;
 }
 
+/* A directory containing changed files — the ● dot and the name take
+ * the directory's badge letter color (rules below; the name keeps its
+ * weight from .tree-dir). */
+.git-dot {
+  flex: none;
+  user-select: none;
+}
+
+.tree-dir-changed.mod,
+.git-dot.mod {
+  color: var(--warning);
+}
+
+.tree-dir-changed.add,
+.git-dot.add {
+  color: var(--success);
+}
+
+.tree-dir-changed.del,
+.git-dot.del {
+  color: var(--error);
+}
+
+.tree-dir-changed.rename,
+.git-dot.rename {
+  color: var(--accent);
+}
+
+.tree-dir-changed.untracked,
+.git-dot.untracked {
+  color: var(--accent-secondary);
+}
+
+.tree-dir-changed.conflict,
+.git-dot.conflict {
+  color: var(--error);
+}
+
 .tree-file {
   color: var(--text-subtle);
+}
+
+/* ------------------------------------------------------------------ */
+/* Git status badges (explorer rows + editor tabs) and status-bar     */
+/* counts — colors map to the theme variables in both palettes.       */
+/* ------------------------------------------------------------------ */
+
+.git-badge {
+  flex: none;
+  font-size: 13px;
+  line-height: 1.4;
+  min-width: 16px;
+  text-align: center;
+  user-select: none;
+}
+
+.tree-row .git-badge,
+.tree-row .git-dot {
+  margin-left: auto; /* right-aligned in explorer rows */
+}
+
+.git-badge.mod,
+.git-count.mod {
+  color: var(--warning);
+}
+
+.git-badge.add,
+.git-count.add {
+  color: var(--success);
+}
+
+.git-badge.del,
+.git-count.del {
+  color: var(--error);
+}
+
+.git-badge.rename,
+.git-count.rename {
+  color: var(--accent);
+}
+
+.git-badge.untracked,
+.git-count.untracked {
+  color: var(--accent-secondary);
+}
+
+.git-badge.conflict,
+.git-count.conflict {
+  color: var(--error);
+}
+
+/* Directory indicator — the same ● and warning color as the dirty dot
+ * on editor tabs, regardless of what changed inside.  Both inherit the
+ * base font, so the glyph is the same size in both places. */
+.git-dot {
+  flex: none;
+  color: var(--warning);
+  user-select: none;
+}
+
+.git-count {
+  flex: none;
 }
 
 /* ------------------------------------------------------------------ */

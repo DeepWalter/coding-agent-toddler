@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { api } from '../api'
-import type { TreeEntry, TreeNode } from '../types'
+import { gitBadgeClass } from '../gitStatus'
+import type { GitStatusState, TreeEntry, TreeNode } from '../types'
 
 /**
  * Left-pane file browser.  The backend serves a flat gitignore-aware
@@ -10,8 +11,15 @@ import type { TreeEntry, TreeNode } from '../types'
  * refresh button so files the agent writes show up.
  */
 
-const props = defineProps<{ root: string | null; activePath?: string | null }>()
-const emit = defineEmits<{ 'open-file': [path: string] }>()
+const props = defineProps<{
+  root: string | null
+  activePath?: string | null
+  git: GitStatusState
+}>()
+const emit = defineEmits<{
+  'open-file': [path: string]
+  'refresh-git': []
+}>()
 
 const tree = ref<TreeNode[]>([])
 const expanded = ref<Record<string, boolean>>({})
@@ -97,6 +105,29 @@ const visible = computed<Row[]>(() => {
   return rows
 })
 
+/** The refresh button also re-pulls git status — badges ride along. */
+function onRefresh() {
+  void load()
+  emit('refresh-git')
+}
+
+/** Badge letter for a row: files use their own status, directories the
+ * most severe status of anything under them (computed server-side).
+ * Directories render as a ● dot + colored name — the letter picks the
+ * color and only gates visibility when it's missing. */
+function badgeFor(node: TreeNode): string {
+  const letter =
+    node.type === 'dir' ? props.git.dirs[node.path] : props.git.files[node.path]
+  return letter ?? ''
+}
+
+/** Classes for a directory row's name: dir weight + the badge color. */
+function dirNameClass(node: TreeNode): string {
+  if (node.type !== 'dir') return 'tree-file'
+  const letter = badgeFor(node)
+  return letter ? `tree-dir tree-dir-changed ${gitBadgeClass(letter)}` : 'tree-dir'
+}
+
 function onRowClick(node: TreeNode) {
   if (node.type === 'dir') {
     expanded.value = { ...expanded.value, [node.path]: !expanded.value[node.path] }
@@ -116,7 +147,7 @@ function onRowClick(node: TreeNode) {
         class="explorer-refresh"
         title="Refresh — files the agent wrote show up here"
         :disabled="loading"
-        @click="load"
+        @click="onRefresh"
       >
         ↻
       </button>
@@ -141,9 +172,22 @@ function onRowClick(node: TreeNode) {
           <span class="tree-chevron">
             {{ node.type === 'dir' ? (expanded[node.path] ? '▾' : '▸') : '' }}
           </span>
-          <span class="tree-name" :class="node.type === 'dir' ? 'tree-dir' : 'tree-file'">
+          <span class="tree-name" :class="dirNameClass(node)">
             {{ node.name }}
           </span>
+          <span
+            v-if="badgeFor(node) && node.type === 'file'"
+            class="git-badge"
+            :class="gitBadgeClass(badgeFor(node))"
+          >{{ badgeFor(node) }}</span>
+          <!-- Directories show a ● dot in the badge letter's color —
+               no letter text, matching the editor-tab dirty dot's look. -->
+          <span
+            v-else-if="badgeFor(node)"
+            class="git-dot"
+            :class="gitBadgeClass(badgeFor(node))"
+            title="contains changed files"
+          >●</span>
         </button>
       </template>
       <div v-else class="explorer-empty">

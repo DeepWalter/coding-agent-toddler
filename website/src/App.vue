@@ -8,10 +8,13 @@ import PausePrompt from './components/PausePrompt.vue'
 import SessionList from './components/SessionList.vue'
 import StatusBar from './components/StatusBar.vue'
 import { useConsole } from './composables/useConsole'
+import { useGitStatus } from './composables/useGitStatus'
 import { useWebSocket } from './composables/useWebSocket'
 
 // Transport → state: every websocket frame goes through the console
 // reducer; the connection refs drive the status bar and input gating.
+// onFrame stores a SINGLE handler, so the git-status hook rides the
+// same fan-out — frames that change the working tree invalidate badges.
 const { connected, connecting, send, onFrame } = useWebSocket()
 const {
   state,
@@ -26,7 +29,12 @@ const {
   newConversation,
   switchSession,
 } = useConsole(send)
-onFrame(applyFrame)
+const git = useGitStatus()
+onFrame((frame) => {
+  applyFrame(frame)
+  git.onFrame(frame)
+})
+void git.refresh()
 
 function toggleMode() {
   const mode = state.session?.permission_mode === 'auto' ? 'manual' : 'auto'
@@ -199,6 +207,7 @@ function openFile(path: string) {
   }
   // At the tab cap the file simply doesn't open (existing tabs keep working).
   persistTabs()
+  void git.refresh() // the disk may have moved under us — refresh the badge
 }
 
 function closeFile(path: string) {
@@ -315,7 +324,9 @@ function onDividerUp(event: PointerEvent) {
         <FileExplorer
           :root="state.session?.cwd ?? null"
           :active-path="activePath"
+          :git="git.state"
           @open-file="openFile"
+          @refresh-git="git.refresh"
         />
       </aside>
 
@@ -331,8 +342,10 @@ function onDividerUp(event: PointerEvent) {
         <FileEditor
           :files="openFiles"
           :active="activePath"
+          :git="git.state"
           @activate-file="openFile"
           @close-file="closeFile"
+          @file-saved="git.refresh"
         />
       </section>
 
@@ -372,6 +385,7 @@ function onDividerUp(event: PointerEvent) {
       :state="state"
       :connected="connected"
       :connecting="connecting"
+      :git="git.state"
     />
   </div>
 </template>

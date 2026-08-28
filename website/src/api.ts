@@ -1,4 +1,4 @@
-import type { ReplayMessage, SessionSummary, TreeEntry } from './types'
+import type { GitStatusPayload, ReplayMessage, SessionSummary, TreeEntry } from './types'
 
 /**
  * Thin client for the /api REST endpoints.  Paths are relative so the
@@ -45,6 +45,12 @@ export const api = {
   messages(sessionId: string, conversationId?: string): Promise<{ messages: ReplayMessage[] }> {
     const q = conversationId ? `?conversation_id=${encodeURIComponent(conversationId)}` : ''
     return request(`/api/sessions/${sessionId}/messages${q}`) as Promise<{ messages: ReplayMessage[] }>
+  },
+
+  gitStatus(): Promise<GitStatusPayload> {
+    // no-store: polled on every refresh trigger; a heuristically cached
+    // GET would show stale badges after edits.
+    return request('/api/git/status', { cache: 'no-store' }) as Promise<GitStatusPayload>
   },
 
   tree(depth = 10): Promise<{ root: string; entries: TreeEntry[] }> {

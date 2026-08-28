@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 
 from toddler.session.models import Session, SessionSummary
-from toddler.web import files
+from toddler.web import files, git
 from toddler.web.events import serialize_transcript
 from toddler.web.files import FileApiError
 from toddler.web.state import WebAppState
@@ -115,6 +115,17 @@ async def get_messages(
             ),
         ),
     }
+
+
+# ---------------------------------------------------------------------------
+# Git status
+# ---------------------------------------------------------------------------
+
+
+@router.get("/git/status")
+async def git_status(state: WebAppState = _GetState) -> dict:
+    """Git working-tree snapshot — branch, per-path letters, dir badges."""
+    return await git.git_status(state.repo_root)
 
 
 # ---------------------------------------------------------------------------

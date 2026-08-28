@@ -216,3 +216,27 @@ export interface TreeNode {
   type: 'dir' | 'file'
   children: TreeNode[] | null
 }
+
+/** One per-file status letter from GET /api/git/status (Python normalizes
+ * XY porcelain pairs; copies collapse to R).  Letters match VS Code's
+ * file decorations: U untracked, C conflict. */
+export type GitStatusLetter = 'M' | 'A' | 'D' | 'R' | 'U' | 'T' | 'C'
+
+/** Wire payload of GET /api/git/status — only changed paths present.
+ * dirs: badge for every parent directory of a changed file (the most
+ * severe descendant wins, computed on the server), so explorer folders
+ * signal changes even below the tree's depth limit. */
+export interface GitStatusPayload {
+  branch: string | null
+  files: Record<string, GitStatusLetter>
+  dirs: Record<string, GitStatusLetter>
+}
+
+/** Reactive state of useGitStatus (payload + fetch lifecycle). */
+export interface GitStatusState {
+  branch: string | null
+  files: Record<string, GitStatusLetter>
+  dirs: Record<string, GitStatusLetter>
+  loading: boolean
+  error: string | null
+}
