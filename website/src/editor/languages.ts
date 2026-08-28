@@ -1,15 +1,12 @@
 import { StreamLanguage, type Language } from '@codemirror/language'
-import { python } from '@codemirror/legacy-modes/mode/python'
-import { javascript, json, typescript } from '@codemirror/legacy-modes/mode/javascript'
-import { c, cpp, csharp, dart, java, kotlin } from '@codemirror/legacy-modes/mode/clike'
-import { css, less, sCSS } from '@codemirror/legacy-modes/mode/css'
-import { html, xml } from '@codemirror/legacy-modes/mode/xml'
+// Legacy stream grammars — the fallback for languages with no tree-based
+// package.  They only emit plain variableName, so function names and
+// variables share the --variable color there.
 import { shell } from '@codemirror/legacy-modes/mode/shell'
 import { yaml } from '@codemirror/legacy-modes/mode/yaml'
 import { toml } from '@codemirror/legacy-modes/mode/toml'
-import { go } from '@codemirror/legacy-modes/mode/go'
-import { rust } from '@codemirror/legacy-modes/mode/rust'
-import { standardSQL } from '@codemirror/legacy-modes/mode/sql'
+import { csharp, dart, kotlin } from '@codemirror/legacy-modes/mode/clike'
+import { less } from '@codemirror/legacy-modes/mode/css'
 import { properties } from '@codemirror/legacy-modes/mode/properties'
 import { dockerFile } from '@codemirror/legacy-modes/mode/dockerfile'
 import { diff } from '@codemirror/legacy-modes/mode/diff'
@@ -22,38 +19,66 @@ import { swift } from '@codemirror/legacy-modes/mode/swift'
 import { vb } from '@codemirror/legacy-modes/mode/vb'
 import { vbScript } from '@codemirror/legacy-modes/mode/vbscript'
 import { wast } from '@codemirror/legacy-modes/mode/wast'
+// Tree-based grammars — tag function calls/defs as function(variableName),
+// so the theme's --function/--variable split renders as intended.
+import { pythonLanguage } from '@codemirror/lang-python'
+import { javascriptLanguage, typescriptLanguage, jsxLanguage, tsxLanguage } from '@codemirror/lang-javascript'
+import { jsonLanguage } from '@codemirror/lang-json'
+import { cssLanguage } from '@codemirror/lang-css'
+import { sassLanguage } from '@codemirror/lang-sass'
+import { htmlLanguage } from '@codemirror/lang-html'
+import { xmlLanguage } from '@codemirror/lang-xml'
+import { goLanguage } from '@codemirror/lang-go'
+import { rustLanguage } from '@codemirror/lang-rust'
+import { javaLanguage } from '@codemirror/lang-java'
+import { cppLanguage } from '@codemirror/lang-cpp'
+import { StandardSQL } from '@codemirror/lang-sql'
 import { basename } from '../utils'
 
 /**
- * File path or code-fence name → CodeMirror language.  Grammars come from
- * `@codemirror/legacy-modes` and are shared by the editor pane and the
- * console's markdown highlighter (`markdown.ts`), so both panes agree on
- * what a token means.  Extensions with no legacy-mode grammar (markdown,
- * makefile) return null → plain text, no highlighting.
+ * File path or code-fence name → CodeMirror language.  Common languages use
+ * the tree-based @codemirror/lang-* grammars, which tag function calls and
+ * definitions as function(variableName) — that's what the theme's --function
+ * rule matches, so calls render blue while variables stay yellow.  The rest
+ * fall back to @codemirror/legacy-modes stream grammars, which only emit
+ * plain variableName: there, functions and variables share the --variable
+ * color.  Both kinds are shared by the editor pane and the console's
+ * markdown highlighter (markdown.ts), so both panes agree on what a token
+ * means.  Extensions with no grammar at all (markdown, makefile) return
+ * null → plain text, no highlighting.
  */
 
+// Tree-based languages (LezerLanguage instances — the lang-* factories wrap
+// these in LanguageSupport, which we don't need).
+const T = {
+  python: pythonLanguage,
+  javascript: javascriptLanguage,
+  typescript: typescriptLanguage,
+  jsx: jsxLanguage,
+  tsx: tsxLanguage,
+  json: jsonLanguage,
+  css: cssLanguage,
+  scss: sassLanguage, // lang-sass's grammar accepts both .scss and .sass
+  html: htmlLanguage,
+  xml: xmlLanguage,
+  go: goLanguage,
+  rust: rustLanguage,
+  java: javaLanguage,
+  // lezer-cpp's grammar is a C++ superset, so it parses C too.
+  c: cppLanguage,
+  cpp: cppLanguage,
+  sql: StandardSQL.language,
+}
+
+// Legacy stream grammars (StreamLanguage instances).
 const L = {
-  python: StreamLanguage.define(python),
-  javascript: StreamLanguage.define(javascript),
-  typescript: StreamLanguage.define(typescript),
-  json: StreamLanguage.define(json),
-  c: StreamLanguage.define(c),
-  cpp: StreamLanguage.define(cpp),
-  java: StreamLanguage.define(java),
-  csharp: StreamLanguage.define(csharp),
-  kotlin: StreamLanguage.define(kotlin),
-  dart: StreamLanguage.define(dart),
-  css: StreamLanguage.define(css),
-  scss: StreamLanguage.define(sCSS),
-  less: StreamLanguage.define(less),
-  html: StreamLanguage.define(html),
-  xml: StreamLanguage.define(xml),
   shell: StreamLanguage.define(shell),
   yaml: StreamLanguage.define(yaml),
   toml: StreamLanguage.define(toml),
-  go: StreamLanguage.define(go),
-  rust: StreamLanguage.define(rust),
-  sql: StreamLanguage.define(standardSQL),
+  less: StreamLanguage.define(less),
+  csharp: StreamLanguage.define(csharp),
+  dart: StreamLanguage.define(dart),
+  kotlin: StreamLanguage.define(kotlin),
   properties: StreamLanguage.define(properties),
   dockerfile: StreamLanguage.define(dockerFile),
   diff: StreamLanguage.define(diff),
@@ -68,30 +93,29 @@ const L = {
   wast: StreamLanguage.define(wast),
 }
 
-// Case-insensitive extension → language.  JSX/TSX reuse the plain
-// JavaScript/TypeScript grammars: legacy-modes has no JSX mode, so tags
-// degrade to identifier tokens — acceptable, no error.
+// Case-insensitive extension → language.  JSX/TSX get their own tree
+// grammars (jsxLanguage/tsxLanguage); vue reuses html, whose parser nests
+// <script>/<style> content as JS/CSS, so templates and scripts highlight.
 const byExt: Record<string, Language> = {
-  py: L.python, pyi: L.python,
-  js: L.javascript, mjs: L.javascript, cjs: L.javascript, jsx: L.javascript,
-  ts: L.typescript, mts: L.typescript, cts: L.typescript, tsx: L.typescript,
-  json: L.json,
+  py: T.python, pyi: T.python,
+  js: T.javascript, mjs: T.javascript, cjs: T.javascript, jsx: T.jsx,
+  ts: T.typescript, mts: T.typescript, cts: T.typescript, tsx: T.tsx,
+  json: T.json,
   yaml: L.yaml, yml: L.yaml,
   toml: L.toml,
   sh: L.shell, bash: L.shell, zsh: L.shell,
-  css: L.css, scss: L.scss, less: L.less,
-  html: L.html, htm: L.html,
-  vue: L.html, // no vue grammar — template highlights, script/style stay plain
-  xml: L.xml, svg: L.xml,
-  go: L.go,
-  rs: L.rust,
-  java: L.java,
-  c: L.c, h: L.c,
-  cpp: L.cpp, cc: L.cpp, cxx: L.cpp, hpp: L.cpp, hh: L.cpp,
+  css: T.css, scss: T.scss, less: L.less,
+  html: T.html, htm: T.html, vue: T.html,
+  xml: T.xml, svg: T.xml,
+  go: T.go,
+  rs: T.rust,
+  java: T.java,
+  c: T.c, h: T.c,
+  cpp: T.cpp, cc: T.cpp, cxx: T.cpp, hpp: T.cpp, hh: T.cpp,
   cs: L.csharp,
   kt: L.kotlin, kts: L.kotlin,
   dart: L.dart,
-  sql: L.sql,
+  sql: T.sql,
   ini: L.properties, conf: L.properties,
   diff: L.diff, patch: L.diff,
   clj: L.clojure, cljs: L.clojure,
@@ -110,18 +134,18 @@ const byName: Record<string, Language> = {
 // also works as a fence name; this adds the aliases highlight.js used to
 // accept that aren't file extensions (python, node, golang, …), plus the
 // fence-only grammars that have no natural extension.  hljs also accepted
-// php/graphql/makefile/markdown/objective-c — those have no legacy-mode
-// grammar, so such fences fall back to plain text.
+// php/graphql/makefile/markdown/objective-c — those have no grammar, so
+// such fences fall back to plain text.
 const fenceAliases: Record<string, Language> = {
-  python: L.python, python3: L.python, 'python-repl': L.python,
-  javascript: L.javascript, node: L.javascript,
-  typescript: L.typescript,
+  python: T.python, python3: T.python, 'python-repl': T.python,
+  javascript: T.javascript, node: T.javascript,
+  typescript: T.typescript,
   bash: L.shell, zsh: L.shell, shell: L.shell,
-  golang: L.go,
-  rust: L.rust,
+  golang: T.go,
+  rust: T.rust,
   csharp: L.csharp, 'c#': L.csharp,
   kotlin: L.kotlin,
-  'c++': L.cpp,
+  'c++': T.cpp,
   docker: L.dockerfile, dockerfile: L.dockerfile,
   properties: L.properties,
   ruby: L.ruby, clojure: L.clojure,

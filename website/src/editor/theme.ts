@@ -28,8 +28,11 @@ export const highlightStyle = HighlightStyle.define([
     ],
     color: 'var(--keyword)',
   },
-  // Function calls and definitions — the legacy grammars tag these
-  // function(variableName) etc., more specific than plain variableName.
+  // Function calls and definitions — the tree-based grammars (lang-python,
+  // lang-javascript, …) tag these function(variableName) etc., more specific
+  // than plain variableName.  The legacy stream grammars never emit the
+  // function modifier, so in fallback languages calls/defs fall through to
+  // the --variable rule below.
   {
     tag: [
       tags.function(tags.variableName),
@@ -63,9 +66,11 @@ export const highlightStyle = HighlightStyle.define([
   { tag: [tags.attributeName], color: 'var(--attribute)' },
   { tag: [tags.typeName, tags.className, tags.namespace], color: 'var(--type)' },
   // Python decorators (@dataclass), CSS at-rules (@media), yaml `---` —
-  // "meta" in the legacy grammars.  Orange italic reads as "annotation",
-  // distinct from the gray of a real comment.
-  { tag: [tags.meta], color: 'var(--type)', fontStyle: 'italic' },
+  // "meta" in the legacy grammars.  Orange, distinct from the gray of a
+  // real comment.  No italic: the tree grammars tag only the `@` as meta
+  // while the decorator name is a plain variable, so italic would single
+  // out the punctuation and look inconsistent.
+  { tag: [tags.meta], color: 'var(--type)' },
   { tag: [tags.link, tags.url], color: 'var(--accent)' },
   { tag: [tags.deleted, tags.invalid], color: 'var(--error)' },
 ])
