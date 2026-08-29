@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { api } from '../api'
+import { useGitAction } from '../composables/useGitAction'
 import { buildRows, type DiffRow } from '../diff'
 import { gitBadgeClass } from '../gitStatus'
 import type {
@@ -36,8 +37,7 @@ const emit = defineEmits<{
 const payload = ref<GitDiffPayload | null>(null)
 const loading = ref(false)
 const error = ref<string | null>(null)
-const applying = ref(false)
-const applyError = ref<string | null>(null)
+const { busy: applying, error: applyError, run } = useGitAction()
 
 // Stale guard: an older in-flight response never overwrites a newer one
 // (same idea as FileEditor's fetch tokens).
@@ -172,36 +172,33 @@ async function applyBlock(action: HunkApplyAction, hunk: DiffHunk) {
   ) {
     return
   }
-  applying.value = true
-  applyError.value = null
   // Keep the columns where they are while the diff refetches — the
   // browser clamps the stored scrollTop if the content shrank.
   const oldTop = oldCol.value?.scrollTop ?? 0
   const newTop = newCol.value?.scrollTop ?? 0
-  try {
-    await api.gitApplyHunk({
-      path: props.tab.path,
-      staged: props.tab.staged,
-      action,
-      old_path: p.old_path,
-      new_path: p.new_path,
-      hunk,
-    })
-    await load()
-    if (oldCol.value) oldCol.value.scrollTop = oldTop
-    if (newCol.value) newCol.value.scrollTop = newTop
-    // The browser clamps scrollTop without firing a scroll event —
-    // re-pin the rail to the clamped value so the buttons land where
-    // their hunks are.
-    if (oldCol.value) {
-      actionsEl.value?.style.setProperty('--scroll-top', `${oldCol.value.scrollTop}px`)
-    }
-    emit('refresh-git')
-  } catch (err) {
-    applyError.value = (err as Error).message
-  } finally {
-    applying.value = false
-  }
+  await run(
+    () =>
+      api.gitApplyHunk({
+        path: props.tab.path,
+        staged: props.tab.staged,
+        action,
+        old_path: p.old_path,
+        new_path: p.new_path,
+        hunk,
+      }),
+    async () => {
+      await load()
+      if (oldCol.value) oldCol.value.scrollTop = oldTop
+      if (newCol.value) newCol.value.scrollTop = newTop
+      // The browser clamps scrollTop without firing a scroll event —
+      // re-pin the rail to the clamped value so the buttons land where
+      // their hunks are.
+      if (oldCol.value) {
+        actionsEl.value?.style.setProperty('--scroll-top', `${oldCol.value.scrollTop}px`)
+      }
+      emit('refresh-git')
+    },
+  )
 }
 
 /** The letter badge from the owning section, falling back to the overall

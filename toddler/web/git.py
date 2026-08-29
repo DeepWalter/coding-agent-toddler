@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -27,7 +28,9 @@ __all__ = [
     "DiffError",
     "build_sections",
     "git_apply_hunk",
+    "git_commit",
     "git_diff",
+    "git_file_action",
     "git_status",
     "parse_status",
 ]
@@ -195,7 +198,11 @@ async def _git(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=cwd,
-        env={**os.environ},
+        # C locale — error classification below sniffs git's messages
+        # ("did not match any file", "nothing to commit", "could not
+        # resolve HEAD"); localized stderr would make every substring
+        # check miss and degrade races into raw 500s.
+        env={**os.environ, "LC_ALL": "C"},
     )
     try:
         stdout, stderr = await asyncio.wait_for(
@@ -257,6 +264,24 @@ class DiffError(Exception):
         self.message = message
 
 
+async def _run_git(
+    *args: str, cwd: Path, stdin: bytes | None = None
+) -> tuple[bytes, bytes, int]:
+    """Run git, mapping spawn failures to a 500 :class:`DiffError`.
+
+    Every operation below shares this mapping: a failed spawn means git
+    is missing (FileNotFoundError) or unusable (OSError), a timeout that
+    it hung — all 500s with the same stable message, so callers classify
+    only non-zero return codes and stderr.  :func:`git_status` is the
+    one exception — it deliberately keeps the raw spawn so a missing git
+    degrades to the empty snapshot instead of an error.
+    """
+    try:
+        return await _git(*args, cwd=cwd, stdin=stdin)
+    except (FileNotFoundError, OSError, TimeoutError) as exc:
+        raise DiffError(500, f"git is not available: {exc}") from exc
+
+
 async def _diff_untracked(root: Path, rel: str) -> bytes:
     """Diff an untracked file against ``/dev/null`` (``--no-index``).
 
@@ -264,13 +289,10 @@ async def _diff_untracked(root: Path, rel: str) -> bytes:
     with stderr means the file vanished between the status call and
     the diff.
     """
-    try:
-        stdout, stderr, rc = await _git(
-            "diff", "--no-color", f"--unified={_CONTEXT_LINES}",
-            "--no-index", "--", "/dev/null", rel, cwd=root,
-        )
-    except (FileNotFoundError, OSError, TimeoutError) as exc:
-        raise DiffError(500, f"git diff failed: {exc}") from exc
+    stdout, stderr, rc = await _run_git(
+        "diff", "--no-color", f"--unified={_CONTEXT_LINES}",
+        "--no-index", "--", "/dev/null", rel, cwd=root,
+    )
     if rc == 1 and stderr.strip():
         raise DiffError(404, f"file not found: {rel!r}")
     if rc not in (0, 1):
@@ -279,6 +301,17 @@ async def _diff_untracked(root: Path, rel: str) -> bytes:
             stderr.decode("utf-8", "replace").strip() or "git diff failed",
         )
     return stdout
+
+
+def _pathspec(rel: str) -> str:
+    """A literal git pathspec for *rel*.
+
+    Glob metacharacters (*, ?, [) in a filename must never widen a git
+    operation onto sibling files — for ``discard`` that would destroy
+    changes to files the user never clicked.  ``:(literal)`` magic makes
+    every call site match exactly the path git listed.
+    """
+    return f":(literal){rel}"
 
 
 async def _path_state(root: Path, rel: str) -> tuple[str, str, str]:
@@ -291,12 +324,9 @@ async def _path_state(root: Path, rel: str) -> tuple[str, str, str]:
     and would defeat ``ls-files --error-unmatch``.  Git failures raise
     :class:`DiffError` — a pathless non-zero status means not a repo.
     """
-    try:
-        stdout, _stderr, rc = await _git(
-            "status", "--porcelain=v1", "-z", "--", rel, cwd=root,
-        )
-    except (FileNotFoundError, OSError, TimeoutError) as exc:
-        raise DiffError(500, f"git is not available: {exc}") from exc
+    stdout, _stderr, rc = await _run_git(
+        "status", "--porcelain=v1", "-z", "--", _pathspec(rel), cwd=root,
+    )
     if rc != 0:
         # Not a repository (or git is otherwise unusable) — never
         # reachable from the UI, whose file list comes from git_status.
@@ -304,9 +334,14 @@ async def _path_state(root: Path, rel: str) -> tuple[str, str, str]:
     _branch, records = _parse_records(stdout)
     if not records:
         return "clean", " ", " "
+    # A path can carry several records (a staged deletion whose file was
+    # recreated in the worktree emits both ``D  f`` and ``?? f``) — the
+    # untracked record wins: the worktree copy has no index entry, so
+    # git-backed operations would fail and only a delete can act on it.
+    for _path, x, y in records:
+        if x + y == "??":
+            return "untracked", x, y
     x, y = records[0][1], records[0][2]
-    if x + y == "??":
-        return "untracked", x, y
     if x + y in _UNMERGED:
         return "unmerged", x, y
     return "tracked", x, y
@@ -345,13 +380,11 @@ async def _diff_raw(
             raise DiffError(404, f"file not found: {rel!r}")
         stdout = b""
     else:
-        try:
-            stdout, _stderr, rc = await _git(
-                "diff", "--no-color", f"--unified={_CONTEXT_LINES}",
-                *(["--staged"] if staged else []), "--", rel, cwd=root,
-            )
-        except (FileNotFoundError, OSError, TimeoutError) as exc:
-            raise DiffError(500, f"git diff failed: {exc}") from exc
+        stdout, _stderr, rc = await _run_git(
+            "diff", "--no-color", f"--unified={_CONTEXT_LINES}",
+            *(["--staged"] if staged else []), "--", _pathspec(rel),
+            cwd=root,
+        )
         if rc != 0:
             raise DiffError(500, "git diff failed")
     return stdout, kind
@@ -470,10 +503,9 @@ async def _is_gitlink(root: Path, rel: str) -> bool:
     Submodule diffs parse into hunks ("-Subproject commit …") that git
     apply cannot apply — reject before git's cryptic error.
     """
-    try:
-        out, _err, rc = await _git("ls-files", "--stage", "--", rel, cwd=root)
-    except (FileNotFoundError, OSError, TimeoutError) as exc:
-        raise DiffError(500, f"git is not available: {exc}") from exc
+    out, _err, rc = await _run_git(
+        "ls-files", "--stage", "--", _pathspec(rel), cwd=root,
+    )
     if rc != 0:
         raise DiffError(500, "not a git repository")
     return out.lstrip().startswith(b"160000")
@@ -582,10 +614,7 @@ async def git_apply_hunk(  # noqa: C901 — guarded pipeline, see verify step
 
     args, _cached = _apply_command(action, staged)
     async with _APPLY_LOCK:
-        try:
-            _stdout, stderr, rc = await _git(*args, cwd=root, stdin=raw)
-        except (FileNotFoundError, OSError, TimeoutError) as exc:
-            raise DiffError(500, f"git is not available: {exc}") from exc
+        _stdout, stderr, rc = await _run_git(*args, cwd=root, stdin=raw)
     if rc == 0:
         return {"ok": True}
 
@@ -611,3 +640,156 @@ async def git_apply_hunk(  # noqa: C901 — guarded pipeline, see verify step
         409,
         f"{_STALE_MESSAGE} ({detail[:500]})",
     )
+
+
+# ---------------------------------------------------------------------------
+# Whole-file stage / unstage / discard + commit
+# ---------------------------------------------------------------------------
+
+
+def _unlink_untracked(literal: Path, rel: str) -> None:
+    """Delete an untracked worktree entry — file, symlink, or directory.
+
+    Operates on the literal path git listed, never on its symlink-resolved
+    target: discarding a symlink removes the link itself, and ``rmtree``
+    (which does not follow symlinks) handles raw untracked directories.
+    ``is_symlink`` also accepts dangling links, which ``exists()`` — a
+    following check — would wrongly reject.
+    """
+    if not (literal.is_symlink() or literal.exists()):
+        raise DiffError(404, f"file not found: {rel!r}")
+    try:
+        if literal.is_symlink() or literal.is_file():
+            literal.unlink()
+        else:
+            shutil.rmtree(literal)
+    except OSError as exc:
+        raise DiffError(500, f"discard failed: {exc}") from None
+
+
+async def git_file_action(  # noqa: C901 — guarded pipeline, see dispatch
+    root: Path, rel: str, *, action: str,
+) -> dict[str, Any]:
+    """Stage, unstage, or discard a whole file from the source-control panel.
+
+    The counterpart to :func:`git_apply_hunk` for row-level buttons:
+    ``stage`` adds the worktree state to the index (untracked files
+    included), ``unstage`` moves the index entry back (``restore
+    --staged``), and ``discard`` restores a tracked file from HEAD —
+    index and worktree together via ``restore --staged --worktree``, so
+    a staged-and-modified file reverts fully — or deletes an untracked
+    one outright (the link itself, never its target; there is no HEAD
+    copy to recover it from, the UI confirms that separately).  Every
+    path is a literal pathspec, so a glob character in a filename can
+    never widen an action onto sibling files.  Unmerged paths are
+    rejected (git would refuse or half-apply) and so are submodules; a
+    path that is no longer changed is stale (409) rather than silently
+    re-staged.
+    """
+    try:
+        resolve_relative(root, rel)  # containment — escapes are a 400
+    except FileApiError as exc:
+        raise DiffError(exc.status_code, exc.message) from None
+
+    kind, _x, _y = await _path_state(root, rel)
+    if kind == "clean":
+        # Unchanged or missing — the snapshot the row came from is stale
+        # (a parallel commit, or the file vanished).
+        raise DiffError(409, _STALE_MESSAGE)
+    if kind == "unmerged":
+        raise DiffError(400, "resolve conflicts before staging or reverting")
+    # Untracked paths have no index entry, so they can never be gitlinks.
+    if kind != "untracked" and await _is_gitlink(root, rel):
+        raise DiffError(400, "submodule — not supported")
+    if action == "unstage" and kind == "untracked":
+        raise DiffError(400, "untracked file — stage or revert the whole file")
+
+    # The untracked-discard unlink has no git backstop (a racing git
+    # command cannot fail for us), so its state is re-checked under the
+    # lock — a file that raced away must not be destroyed silently.
+    if action == "discard" and kind == "untracked":
+        async with _APPLY_LOCK:
+            fresh_kind, _fx, _fy = await _path_state(root, rel)
+            if fresh_kind != "untracked":
+                raise DiffError(409, _STALE_MESSAGE)
+            _unlink_untracked(root / rel, rel)
+        return {"ok": True}
+
+    async with _APPLY_LOCK:
+        args = {
+            "stage": ("add", "--", _pathspec(rel)),
+            "unstage": ("restore", "--staged", "--", _pathspec(rel)),
+            "discard": ("restore", "--staged", "--worktree", "--",
+                        _pathspec(rel)),
+        }[action]
+        _stdout, stderr, rc = await _run_git(*args, cwd=root)
+        if rc == 0:
+            return {"ok": True}
+
+        detail = stderr.decode("utf-8", "replace").strip()
+        if not detail:
+            detail = "git command failed"
+
+        if "did not match any file" in detail:
+            if action == "discard":
+                # No index/HEAD entry (a worktree rename, or a staged
+                # deletion whose file was recreated) — the worktree copy
+                # is untracked content, so discarding deletes it, like
+                # the untracked branch above.  git itself is the
+                # execution-time authority here: the restore just ran
+                # against the current index.
+                _unlink_untracked(root / rel, rel)
+                return {"ok": True}
+            # The path raced away between the state check and the operation.
+            raise DiffError(409, _STALE_MESSAGE)
+        if (
+            "could not resolve HEAD" in detail
+            and action in ("unstage", "discard")
+        ):
+            # Unborn branch — restore needs HEAD.  unstage drops the index
+            # entry (plain reset); discard also deletes the worktree copy
+            # (rm -f).  git add never fails this way.
+            fallback = (
+                ("reset", "--", _pathspec(rel))
+                if action == "unstage"
+                else ("rm", "-f", "--", _pathspec(rel))
+            )
+            _stdout, stderr, rc = await _run_git(*fallback, cwd=root)
+            if rc == 0:
+                return {"ok": True}
+            detail = stderr.decode("utf-8", "replace").strip()
+        raise DiffError(500, f"git {action} failed: {detail[:500]}")
+
+
+async def git_commit(root: Path, message: str) -> dict[str, Any]:
+    """Create a commit from the staged index with *message* via stdin.
+
+    ``-F -`` avoids shell quoting and ``--cleanup=verbatim`` commits
+    exactly what the user typed — without it git's default whitespace
+    cleanup strips trailing spaces and collapses runs of blank lines.
+    Git is the authority on whether anything is staged, so a parallel
+    agent commit races down to a friendly "nothing to commit" 400 instead
+    of a pre-check status call.
+    """
+    if not message.strip():
+        raise DiffError(400, "commit message is empty")
+    if len(message) > 100_000:  # bounds stdin for a lying client
+        raise DiffError(400, "commit message too long")
+
+    async with _APPLY_LOCK:
+        stdout, stderr, rc = await _run_git(
+            "commit", "-F", "-", "--cleanup=verbatim",
+            cwd=root, stdin=message.encode("utf-8"),
+        )
+    if rc == 0:
+        return {"ok": True}
+
+    # "nothing to commit" (fully clean) and "no changes added" (clean
+    # index, dirty worktree) are status lines on stdout; real errors
+    # (hooks, unmerged) go to stderr — check both.
+    detail = (stdout + b"\n" + stderr).decode("utf-8", "replace").strip()
+    if "nothing to commit" in detail or "no changes added" in detail:
+        raise DiffError(400, "nothing to commit — stage changes first")
+    if "unmerged" in detail:
+        raise DiffError(400, "resolve conflicts before committing")
+    raise DiffError(500, f"git commit failed: {detail[:500]}")

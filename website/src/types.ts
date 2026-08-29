@@ -315,3 +315,23 @@ export interface HunkApplyRequest {
   new_path: string | null
   hunk: DiffHunk
 }
+
+// ---------------------------------------------------------------------------
+// Whole-file git actions (POST /api/git/file, POST /api/git/commit)
+// ---------------------------------------------------------------------------
+
+/** What a source-control row button does: stage (worktree → index,
+ * untracked files included), unstage (index → worktree), discard
+ * (restore from index, or delete an untracked file). */
+export type GitFileAction = 'stage' | 'unstage' | 'discard'
+
+/** Body of POST /api/git/file. */
+export interface GitFileRequest {
+  path: string
+  action: GitFileAction
+}
+
+/** Body of POST /api/git/commit — multi-line messages are fine. */
+export interface GitCommitRequest {
+  message: string
+}

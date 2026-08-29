@@ -8,6 +8,7 @@ tests exercise a real ``git init`` repo like the one the server serves.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -51,6 +52,15 @@ def _git_repo(tmp_path) -> Path:
 
 def _git(*args: str, cwd: Path) -> None:
     subprocess.run(["git", *args], cwd=cwd, check=True)
+
+
+def _porcelain(repo: Path) -> str:
+    """Short-status output — the ground truth assertions compare against."""
+    out = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=repo,
+        capture_output=True, text=True, check=True,
+    ).stdout
+    return out
 
 
 def _app(tmp_path):
@@ -351,13 +361,6 @@ class TestHunkApplyEndpoint:
             "hunk": payload["hunks"][0],
         }
 
-    def _porcelain(self, repo: Path) -> str:
-        out = subprocess.run(
-            ["git", "status", "--porcelain"], cwd=repo,
-            capture_output=True, text=True, check=True,
-        ).stdout
-        return out
-
     def test_stage_moves_unstaged_hunk_to_index(self, tmp_path):
         repo = _git_repo(tmp_path)
         (repo / "a.txt").write_text("a\nb\nc\n")
@@ -371,7 +374,7 @@ class TestHunkApplyEndpoint:
             # The hunk left the worktree-vs-index diff…
             assert _diff_payload(client, "a.txt")["hunks"] == []
             # …and landed in the index (staged-only M in porcelain).
-            assert self._porcelain(repo) == "M  a.txt\n"
+            assert _porcelain(repo) == "M  a.txt\n"
 
     def test_unstage_moves_staged_hunk_back_to_worktree(self, tmp_path):
         repo = _git_repo(tmp_path)
@@ -385,7 +388,7 @@ class TestHunkApplyEndpoint:
             assert _diff_payload(client, "a.txt", staged=True)["hunks"] == []
             # The change is now unstaged in the worktree.
             assert _diff_payload(client, "a.txt")["hunks"]
-            assert self._porcelain(repo) == " M a.txt\n"
+            assert _porcelain(repo) == " M a.txt\n"
 
     def test_revert_unstaged_restores_worktree(self, tmp_path):
         repo = _git_repo(tmp_path)
@@ -397,7 +400,7 @@ class TestHunkApplyEndpoint:
             assert resp.status_code == 200, resp.text
             assert (repo / "a.txt").read_text() == "a"  # back to the commit
             assert _diff_payload(client, "a.txt")["hunks"] == []
-            assert self._porcelain(repo) == ""
+            assert _porcelain(repo) == ""
 
     def test_revert_staged_restores_index_and_worktree(self, tmp_path):
         repo = _git_repo(tmp_path)
@@ -411,7 +414,7 @@ class TestHunkApplyEndpoint:
             # --index: both the index and the worktree are back at HEAD —
             # a clean tree with no residual unstaged change.
             assert (repo / "a.txt").read_text() == "a"
-            assert self._porcelain(repo) == ""
+            assert _porcelain(repo) == ""
 
     def test_stage_works_on_mm_file(self, tmp_path):
         # MM — the path is in both sections, so the unstaged tab must stay
@@ -442,7 +445,7 @@ class TestHunkApplyEndpoint:
             resp = client.post("/api/git/hunk", json=self._body(diff, "revert"))
             assert resp.status_code == 200, resp.text
             assert (repo / "a.txt").read_text() == "a"
-            assert self._porcelain(repo) == ""
+            assert _porcelain(repo) == ""
 
     def test_unstage_staged_deletion_restores_index(self, tmp_path):
         repo = _git_repo(tmp_path)
@@ -453,7 +456,7 @@ class TestHunkApplyEndpoint:
             resp = client.post("/api/git/hunk", json=self._body(diff, "unstage"))
             assert resp.status_code == 200, resp.text
             assert _diff_payload(client, "a.txt", staged=True)["hunks"] == []
-            assert self._porcelain(repo) == " D a.txt\n"
+            assert _porcelain(repo) == " D a.txt\n"
 
     def test_revert_staged_deletion_restores_everywhere(self, tmp_path):
         repo = _git_repo(tmp_path)
@@ -464,7 +467,7 @@ class TestHunkApplyEndpoint:
             resp = client.post("/api/git/hunk", json=self._body(diff, "revert"))
             assert resp.status_code == 200, resp.text
             assert (repo / "a.txt").read_text() == "a"
-            assert self._porcelain(repo) == ""
+            assert _porcelain(repo) == ""
 
     def test_rename_content_hunk_applies(self, tmp_path):
         # A staged rename is served as a pure-add diff: the pathspec keeps
@@ -484,7 +487,7 @@ class TestHunkApplyEndpoint:
             assert resp.status_code == 200, resp.text
             # The index entry is gone; the worktree file is untracked and
             # the old path's deletion is staged.
-            assert self._porcelain(repo) == "D  a.txt\n?? renamed.txt\n"
+            assert _porcelain(repo) == "D  a.txt\n?? renamed.txt\n"
             # The untracked file still diffs against /dev/null on either
             # axis — the refetch can never be empty for it.
             assert _diff_payload(client, "renamed.txt", staged=True)["hunks"]
@@ -507,7 +510,7 @@ class TestHunkApplyEndpoint:
             resp = client.post("/api/git/hunk", json=self._body(diff, "stage"))
             assert resp.status_code == 200, resp.text
             assert _diff_payload(client, path)["hunks"] == []
-            assert "M " in self._porcelain(repo)
+            assert "M " in _porcelain(repo)
 
     def test_crlf_revert_restores_bytes(self, tmp_path):
         repo = _git_repo(tmp_path)
@@ -649,7 +652,7 @@ class TestHunkApplyEndpoint:
             diff = self._first_hunk(client, "crlf.txt", staged=True)
             resp = client.post("/api/git/hunk", json=self._body(diff, "revert"))
             assert resp.status_code == 200, resp.text
-            assert self._porcelain(repo) == ""
+            assert _porcelain(repo) == ""
 
     def test_stale_zero_context_hunk_conflicts(self, tmp_path):
         # A full rewrite has no context lines — git apply's fuzzy matching
@@ -792,3 +795,509 @@ class TestHunkApplyEndpoint:
             # The re-verify found the file changed — staleness, a 409.
             assert resp.status_code == 409
             assert "refresh" in resp.json()["error"]
+
+
+# ============================================================================
+# Whole-file stage / unstage / discard (source-control row buttons)
+# ============================================================================
+
+
+@pytest.mark.skipif(
+    shutil.which("git") is None, reason="git is not installed",
+)
+class TestFileActionEndpoint:
+    """Row-level file actions against a real repo: stage, unstage, discard."""
+
+    def _post(self, client, path: str, action: str):
+        return client.post("/api/git/file", json={"path": path, "action": action})
+
+    def test_stage_untracked_file(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        (repo / "u.txt").write_text("u\n")
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = self._post(client, "u.txt", "stage")
+            assert resp.status_code == 200, resp.text
+            assert resp.json() == {"ok": True}
+            assert _porcelain(repo) == "A  u.txt\n"
+
+    def test_stage_modified_file(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        (repo / "a.txt").write_text("a\nb\nc\n")
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = self._post(client, "a.txt", "stage")
+            assert resp.status_code == 200, resp.text
+            assert _porcelain(repo) == "M  a.txt\n"
+
+    def test_stage_deleted_tracked_file(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        (repo / "a.txt").unlink()
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = self._post(client, "a.txt", "stage")
+            assert resp.status_code == 200, resp.text
+            assert _porcelain(repo) == "D  a.txt\n"
+
+    def test_unstage_modified_file(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        (repo / "a.txt").write_text("a\nb\nc\n")
+        _git("add", "a.txt", cwd=repo)
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = self._post(client, "a.txt", "unstage")
+            assert resp.status_code == 200, resp.text
+            assert _porcelain(repo) == " M a.txt\n"
+
+    def test_unstage_staged_add(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        (repo / "f.txt").write_text("f\n")
+        _git("add", "f.txt", cwd=repo)
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = self._post(client, "f.txt", "unstage")
+            assert resp.status_code == 200, resp.text
+            assert _porcelain(repo) == "?? f.txt\n"
+
+    def test_unstage_staged_deletion(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        _git("rm", "-q", "a.txt", cwd=repo)
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = self._post(client, "a.txt", "unstage")
+            assert resp.status_code == 200, resp.text
+            assert _porcelain(repo) == " D a.txt\n"
+
+    def test_unstage_staged_rename(self, tmp_path):
+        # Same end state as the hunk-level unstage: the index entry for
+        # the new path is dropped — the worktree file is untracked and
+        # the old path's staged deletion remains.
+        repo = _git_repo(tmp_path)
+        _git("mv", "a.txt", "renamed.txt", cwd=repo)
+        (repo / "renamed.txt").write_text("a\nX\n")
+        _git("add", "renamed.txt", cwd=repo)
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = self._post(client, "renamed.txt", "unstage")
+            assert resp.status_code == 200, resp.text
+            assert _porcelain(repo) == "D  a.txt\n?? renamed.txt\n"
+
+    def test_discard_modified_restores_file(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        (repo / "a.txt").write_text("a\nb\nc\n")
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = self._post(client, "a.txt", "discard")
+            assert resp.status_code == 200, resp.text
+            assert (repo / "a.txt").read_text() == "a"
+            assert _porcelain(repo) == ""
+
+    def test_discard_deleted_recreates_file(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        (repo / "a.txt").unlink()
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = self._post(client, "a.txt", "discard")
+            assert resp.status_code == 200, resp.text
+            assert (repo / "a.txt").read_text() == "a"
+            assert _porcelain(repo) == ""
+
+    def test_discard_untracked_deletes_file(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        (repo / "u.txt").write_text("u\n")
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = self._post(client, "u.txt", "discard")
+            assert resp.status_code == 200, resp.text
+            assert not (repo / "u.txt").exists()
+            assert _porcelain(repo) == ""
+
+    def test_discard_untracked_in_untracked_dir(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        d = repo / "newdir"
+        d.mkdir()
+        (d / "inside.txt").write_text("x\n")
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = self._post(client, "newdir/inside.txt", "discard")
+            assert resp.status_code == 200, resp.text
+            assert not (d / "inside.txt").exists()
+            assert _porcelain(repo) == ""
+
+    def test_discard_untracked_directory(self, tmp_path):
+        # A raw untracked-dir path (never sent by the UI, which lists
+        # files) is removed wholesale.
+        repo = _git_repo(tmp_path)
+        d = repo / "newdir"
+        d.mkdir()
+        (d / "inside.txt").write_text("x\n")
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = self._post(client, "newdir", "discard")
+            assert resp.status_code == 200, resp.text
+            assert not d.exists()
+            assert _porcelain(repo) == ""
+
+    def test_discard_untracked_symlink_removes_link_not_target(self, tmp_path):
+        # The unlink branch must act on the literal path git listed — a
+        # symlink's resolved target is a different (possibly tracked) file.
+        repo = _git_repo(tmp_path)
+        (repo / "a.txt").write_text("a\nb\nc\n")
+        os.symlink("a.txt", repo / "link.txt")
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = self._post(client, "link.txt", "discard")
+            assert resp.status_code == 200, resp.text
+            assert not (repo / "link.txt").exists()  # the link itself gone
+            assert (repo / "a.txt").read_text() == "a\nb\nc\n"  # target intact
+            assert _porcelain(repo) == " M a.txt\n"
+
+    def test_discard_untracked_broken_symlink(self, tmp_path):
+        # A dangling link fails Path.exists() (a following check) but must
+        # still be discardable — the entry itself exists.
+        repo = _git_repo(tmp_path)
+        os.symlink("missing-target", repo / "broken")
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = self._post(client, "broken", "discard")
+            assert resp.status_code == 200, resp.text
+            assert not (repo / "broken").exists()
+            assert _porcelain(repo) == ""
+
+    def test_discard_glob_filename_only_touches_that_file(self, tmp_path):
+        # Glob metacharacters in a filename must not widen the destructive
+        # restore onto sibling files (a[1].txt is a char class to git).
+        repo = _git_repo(tmp_path)
+        (repo / "a1.txt").write_text("one\n")
+        (repo / "a[1].txt").write_text("two\n")
+        _git("add", ".", cwd=repo)
+        _git("commit", "-qm", "add both", cwd=repo)
+        (repo / "a1.txt").write_text("one modified\n")
+        (repo / "a[1].txt").write_text("two modified\n")
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = self._post(client, "a[1].txt", "discard")
+            assert resp.status_code == 200, resp.text
+            assert (repo / "a[1].txt").read_text() == "two\n"
+            assert (repo / "a1.txt").read_text() == "one modified\n"
+            assert _porcelain(repo) == " M a1.txt\n"
+
+    def test_stage_glob_filename_only_touches_that_file(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        (repo / "a1.txt").write_text("one\n")
+        (repo / "a[1].txt").write_text("two\n")
+        _git("add", ".", cwd=repo)
+        _git("commit", "-qm", "add both", cwd=repo)
+        (repo / "a1.txt").write_text("one modified\n")
+        (repo / "a[1].txt").write_text("two modified\n")
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = self._post(client, "a[1].txt", "stage")
+            assert resp.status_code == 200, resp.text
+            porcelain = _porcelain(repo)
+            assert "M  a[1].txt\n" in porcelain
+            assert " M a1.txt\n" in porcelain
+
+    def test_discard_mm_reverts_both_axes(self, tmp_path):
+        # A staged-and-modified file must revert index AND worktree —
+        # restoring only the worktree would leave the staged half behind.
+        repo = _git_repo(tmp_path)
+        (repo / "a.txt").write_text("a\nb\nc\n")
+        _git("add", "a.txt", cwd=repo)
+        (repo / "a.txt").write_text("a\nX\nc\n")
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = self._post(client, "a.txt", "discard")
+            assert resp.status_code == 200, resp.text
+            assert (repo / "a.txt").read_text() == "a"
+            assert _porcelain(repo) == ""
+
+    def test_discard_staged_deletion_recreates_file(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        _git("rm", "-q", "a.txt", cwd=repo)
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = self._post(client, "a.txt", "discard")
+            assert resp.status_code == 200, resp.text
+            assert (repo / "a.txt").read_text() == "a"
+            assert _porcelain(repo) == ""
+
+    def test_discard_staged_deletion_recreated_untracked(self, tmp_path):
+        # `git rm` + recreate emits both `D  a.txt` and `?? a.txt` — the
+        # worktree copy has no index entry, so discard must delete it
+        # (previously a permanent 409 the refresh could never fix).
+        repo = _git_repo(tmp_path)
+        _git("rm", "-q", "a.txt", cwd=repo)
+        (repo / "a.txt").write_text("new content\n")
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = self._post(client, "a.txt", "discard")
+            assert resp.status_code == 200, resp.text
+            assert not (repo / "a.txt").exists()
+            assert _porcelain(repo) == "D  a.txt\n"
+
+    def test_unstage_unborn_branch(self, tmp_path):
+        # No HEAD exists yet — restore --staged dies, plain reset works.
+        repo = _repo(tmp_path)
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.email", "t@t"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+        (repo / "f.txt").write_text("f\n")
+        _git("add", "f.txt", cwd=repo)
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = self._post(client, "f.txt", "unstage")
+            assert resp.status_code == 200, resp.text
+            assert _porcelain(repo) == "?? f.txt\n"
+
+    def test_discard_unborn_branch(self, tmp_path):
+        # Discarding a staged file with no HEAD = drop the index entry
+        # and delete the worktree copy (rm -f).
+        repo = _repo(tmp_path)
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.email", "t@t"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+        (repo / "f.txt").write_text("f\n")
+        _git("add", "f.txt", cwd=repo)
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = self._post(client, "f.txt", "discard")
+            assert resp.status_code == 200, resp.text
+            assert not (repo / "f.txt").exists()
+            assert _porcelain(repo) == ""
+
+    def test_untracked_unstage_rejected(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        (repo / "u.txt").write_text("u\n")
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = self._post(client, "u.txt", "unstage")
+            assert resp.status_code == 400
+            assert "untracked" in resp.json()["error"]
+
+    def test_clean_file_is_stale(self, tmp_path):
+        _git_repo(tmp_path)  # the repo _app() serves must be a git repo
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = self._post(client, "a.txt", "stage")
+            assert resp.status_code == 409
+            assert "refresh" in resp.json()["error"]
+
+    def test_missing_path_is_stale(self, tmp_path):
+        _git_repo(tmp_path)  # the repo _app() serves must be a git repo
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = self._post(client, "nope.txt", "stage")
+            assert resp.status_code == 409
+            assert "refresh" in resp.json()["error"]
+
+    def test_path_escape_rejected(self, tmp_path):
+        _git_repo(tmp_path)  # the repo _app() serves must be a git repo
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = self._post(client, "../outside.txt", "stage")
+            assert resp.status_code == 400
+            assert "escapes" in resp.json()["error"]
+
+    def test_invalid_action_rejected(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        (repo / "a.txt").write_text("a\nb\nc\n")
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = client.post(
+                "/api/git/file", json={"path": "a.txt", "action": "frobnicate"},
+            )
+            assert resp.status_code == 422
+
+    def test_unmerged_all_actions_rejected(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        (repo / "a.txt").write_text("one\ntwo\nthree\n")
+        _git("add", "a.txt", cwd=repo)
+        _git("commit", "-qm", "base", cwd=repo)
+        _git("checkout", "-qb", "side", cwd=repo)
+        (repo / "a.txt").write_text("one\nSIDE\nthree\n")
+        _git("commit", "-qam", "side", cwd=repo)
+        _git("checkout", "-q", "main", cwd=repo)
+        (repo / "a.txt").write_text("one\nMAIN\nthree\n")
+        _git("commit", "-qam", "main", cwd=repo)
+        subprocess.run(["git", "merge", "side"], cwd=repo, capture_output=True)
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            for action in ("stage", "unstage", "discard"):
+                resp = self._post(client, "a.txt", action)
+                assert resp.status_code == 400
+                assert "conflicts" in resp.json()["error"]
+
+    def test_submodule_rejected(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo,
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        subprocess.run(
+            ["git", "update-index", "--add", "--cacheinfo",
+             f"160000,{head},sub"],
+            cwd=repo, check=True,
+        )
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = self._post(client, "sub", "stage")
+            assert resp.status_code == 400
+            assert "submodule" in resp.json()["error"]
+
+
+# ============================================================================
+# Commit endpoint
+# ============================================================================
+
+
+@pytest.mark.skipif(
+    shutil.which("git") is None, reason="git is not installed",
+)
+class TestCommitEndpoint:
+    """POST /api/git/commit — messages via stdin, git as the authority."""
+
+    def _post(self, client, message: str):
+        return client.post("/api/git/commit", json={"message": message})
+
+    def _log(self, repo: Path) -> str:
+        # %B keeps the message body's trailing newline and git log adds
+        # another — strip the outer one for a stable comparison.
+        return subprocess.run(
+            ["git", "log", "-1", "--format=%B"], cwd=repo,
+            capture_output=True, text=True, check=True,
+        ).stdout.rstrip("\n")
+
+    def test_commit_creates_commit(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        (repo / "a.txt").write_text("a\nb\nc\n")
+        _git("add", "a.txt", cwd=repo)
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = self._post(client, "feat: x")
+            assert resp.status_code == 200, resp.text
+            assert resp.json() == {"ok": True}
+            assert self._log(repo) == "feat: x"
+            assert _porcelain(repo) == ""
+
+    def test_commit_multiline_message(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        (repo / "a.txt").write_text("a\nb\nc\n")
+        _git("add", "a.txt", cwd=repo)
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = self._post(client, "subject\n\nbody line")
+            assert resp.status_code == 200, resp.text
+            assert self._log(repo) == "subject\n\nbody line"
+
+    def test_commit_empty_message_rejected(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        (repo / "a.txt").write_text("a\nb\nc\n")
+        _git("add", "a.txt", cwd=repo)
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = self._post(client, "")
+            assert resp.status_code == 400
+            assert "empty" in resp.json()["error"]
+
+    def test_commit_whitespace_message_rejected(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        (repo / "a.txt").write_text("a\nb\nc\n")
+        _git("add", "a.txt", cwd=repo)
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = self._post(client, "   \n  ")
+            assert resp.status_code == 400
+            assert "empty" in resp.json()["error"]
+
+    def test_commit_nothing_staged(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        before = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo,
+            capture_output=True, text=True, check=True,
+        ).stdout
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = self._post(client, "feat: x")
+            assert resp.status_code == 400
+            assert "nothing to commit" in resp.json()["error"]
+        after = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo,
+            capture_output=True, text=True, check=True,
+        ).stdout
+        assert after == before
+
+    def test_commit_unstaged_changes_only_is_400(self, tmp_path):
+        # Clean index, dirty worktree — git says "no changes added to
+        # commit", which must surface as the friendly 400, not a 500.
+        repo = _git_repo(tmp_path)
+        (repo / "a.txt").write_text("a\nb\nc\n")
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = self._post(client, "feat: x")
+            assert resp.status_code == 400
+            assert "nothing to commit" in resp.json()["error"]
+
+    def test_commit_message_kept_verbatim(self, tmp_path):
+        # --cleanup=verbatim: trailing spaces and runs of blank lines in
+        # the typed message must survive, not be stripped/collapsed.
+        repo = _git_repo(tmp_path)
+        (repo / "a.txt").write_text("a\nb\nc\n")
+        _git("add", "a.txt", cwd=repo)
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            message = "subject  \n\nbody\n\n\nend"
+            resp = self._post(client, message)
+            assert resp.status_code == 200, resp.text
+            assert self._log(repo) == message
+
+    def test_commit_unmerged_rejected(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        (repo / "a.txt").write_text("one\ntwo\nthree\n")
+        _git("add", "a.txt", cwd=repo)
+        _git("commit", "-qm", "base", cwd=repo)
+        _git("checkout", "-qb", "side", cwd=repo)
+        (repo / "a.txt").write_text("one\nSIDE\nthree\n")
+        _git("commit", "-qam", "side", cwd=repo)
+        _git("checkout", "-q", "main", cwd=repo)
+        (repo / "a.txt").write_text("one\nMAIN\nthree\n")
+        _git("commit", "-qam", "main", cwd=repo)
+        subprocess.run(["git", "merge", "side"], cwd=repo, capture_output=True)
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = self._post(client, "feat: x")
+            assert resp.status_code == 400
+            assert "conflicts" in resp.json()["error"]
+
+    def test_commit_hook_failure_is_500(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        (repo / "a.txt").write_text("a\nb\nc\n")
+        _git("add", "a.txt", cwd=repo)
+        hook = repo / ".git" / "hooks" / "pre-commit"
+        hook.write_text("#!/bin/sh\nexit 1\n")
+        hook.chmod(0o755)
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = self._post(client, "feat: x")
+            assert resp.status_code == 500
+            assert "git commit failed" in resp.json()["error"]
+
+    def test_commit_unborn_branch(self, tmp_path):
+        repo = _repo(tmp_path)
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.email", "t@t"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+        (repo / "a.txt").write_text("a\n")
+        _git("add", "a.txt", cwd=repo)
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = self._post(client, "root commit")
+            assert resp.status_code == 200, resp.text
+            assert self._log(repo) == "root commit"
+
+    def test_commit_missing_field_rejected(self, tmp_path):
+        _git_repo(tmp_path)  # the repo _app() serves must be a git repo
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = client.post("/api/git/commit", json={})
+            assert resp.status_code == 422

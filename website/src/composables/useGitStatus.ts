@@ -47,6 +47,8 @@ export function useGitStatus() {
     }
   }
 
+  /** Debounced refresh — coalesces bursts (write tools, rapid action
+   * clicks) into one status fetch. */
   function scheduleRefresh() {
     if (debounceTimer) clearTimeout(debounceTimer) // coalesce write bursts
     debounceTimer = setTimeout(() => void refresh(), REFRESH_DEBOUNCE_MS)
@@ -65,5 +67,5 @@ export function useGitStatus() {
     }
   }
 
-  return { state, refresh, onFrame }
+  return { state, refresh, scheduleRefresh, onFrame }
 }

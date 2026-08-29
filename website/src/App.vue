@@ -430,13 +430,13 @@ function onDividerUp(event: PointerEvent) {
           :active-path="activeFilePath"
           :git="git.state"
           @open-file="openFile"
-          @refresh-git="git.refresh"
+          @refresh-git="git.scheduleRefresh"
         />
         <SourceControl
           v-else
           :git="git.state"
           @open-diff="openDiff"
-          @refresh-git="git.refresh"
+          @refresh-git="git.scheduleRefresh"
         />
       </aside>
 
@@ -457,8 +457,8 @@ function onDividerUp(event: PointerEvent) {
           @activate-tab="(t) => (activeTab = t)"
           @close-tab="closeTab"
           @open-file="openFile"
-          @file-saved="git.refresh"
-          @refresh-git="git.refresh"
+          @file-saved="git.scheduleRefresh"
+          @refresh-git="git.scheduleRefresh"
         />
       </section>
 

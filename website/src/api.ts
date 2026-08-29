@@ -1,4 +1,4 @@
-import type { GitDiffPayload, GitStatusPayload, HunkApplyRequest, ReplayMessage, SessionSummary, TreeEntry } from './types'
+import type { GitCommitRequest, GitDiffPayload, GitFileRequest, GitStatusPayload, HunkApplyRequest, ReplayMessage, SessionSummary, TreeEntry } from './types'
 
 /**
  * Thin client for the /api REST endpoints.  Paths are relative so the
@@ -63,6 +63,14 @@ export const api = {
 
   gitApplyHunk(body: HunkApplyRequest): Promise<{ ok: boolean }> {
     return request('/api/git/hunk', jsonBody(body)) as Promise<{ ok: boolean }>
+  },
+
+  gitApplyFile(body: GitFileRequest): Promise<{ ok: boolean }> {
+    return request('/api/git/file', jsonBody(body)) as Promise<{ ok: boolean }>
+  },
+
+  gitCommit(body: GitCommitRequest): Promise<{ ok: boolean }> {
+    return request('/api/git/commit', jsonBody(body)) as Promise<{ ok: boolean }>
   },
 
   tree(depth = 10): Promise<{ root: string; entries: TreeEntry[] }> {

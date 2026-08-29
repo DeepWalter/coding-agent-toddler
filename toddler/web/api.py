@@ -35,6 +35,11 @@ def _get_state(request: Request) -> WebAppState:
 _GetState = Depends(_get_state)
 
 
+def _diff_error(exc: git.DiffError) -> JSONResponse:
+    """Serialize a git API error (status code + message) to a response."""
+    return JSONResponse({"error": exc.message}, status_code=exc.status_code)
+
+
 def _summary_payload(session: Session | SessionSummary) -> dict[str, Any]:
     """Serialize a session row for the frontend session picker."""
     return {
@@ -91,6 +96,19 @@ class HunkApplyRequest(BaseModel):
     old_path: str | None = None
     new_path: str | None = None
     hunk: HunkPatch
+
+
+class GitFileRequest(BaseModel):
+    """Body for ``POST /api/git/file`` — whole-file stage/unstage/discard."""
+
+    path: str
+    action: Literal["stage", "unstage", "discard"]
+
+
+class GitCommitRequest(BaseModel):
+    """Body for ``POST /api/git/commit``."""
+
+    message: str
 
 
 # ---------------------------------------------------------------------------
@@ -174,9 +192,7 @@ async def git_diff(
     try:
         return await git.git_diff(state.repo_root, path, staged=staged)
     except git.DiffError as exc:
-        return JSONResponse(
-            {"error": exc.message}, status_code=exc.status_code,
-        )
+        return _diff_error(exc)
 
 
 @router.post("/git/hunk", response_model=None)
@@ -196,9 +212,33 @@ async def git_hunk_apply(
             hunk=payload.hunk.model_dump(),
         )
     except git.DiffError as exc:
-        return JSONResponse(
-            {"error": exc.message}, status_code=exc.status_code,
+        return _diff_error(exc)
+
+
+@router.post("/git/file", response_model=None)
+async def git_file_action(
+    payload: GitFileRequest,
+    state: WebAppState = _GetState,
+) -> dict | JSONResponse:
+    """Whole-file stage / unstage / discard from the source-control panel."""
+    try:
+        return await git.git_file_action(
+            state.repo_root, payload.path, action=payload.action,
         )
+    except git.DiffError as exc:
+        return _diff_error(exc)
+
+
+@router.post("/git/commit", response_model=None)
+async def git_commit(
+    payload: GitCommitRequest,
+    state: WebAppState = _GetState,
+) -> dict | JSONResponse:
+    """Create a commit from the staged index (message via stdin)."""
+    try:
+        return await git.git_commit(state.repo_root, payload.message)
+    except git.DiffError as exc:
+        return _diff_error(exc)
 
 
 # ---------------------------------------------------------------------------

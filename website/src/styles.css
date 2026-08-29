@@ -1131,18 +1131,87 @@ body {
   align-items: center;
   gap: 6px;
   width: 100%;
-  background: none;
-  border: none;
-  color: var(--text);
-  font: inherit;
-  text-align: left;
   padding: 3px 10px;
-  cursor: pointer;
+  cursor: default;
   white-space: nowrap;
 }
 
 .sc-row:hover {
   background: var(--editor-surface-2);
+}
+
+/* Git action chips — shared by the source-control row buttons and the
+ * diff view's hunk rail buttons: 16x14, same hover-color language
+ * (stage green, discard/revert red). */
+.sc-row-actions {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.sc-row-action,
+.diff-action-btn {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 14px;
+  padding: 0;
+  border: 1px solid var(--editor-border);
+  border-radius: 4px;
+  background: var(--editor-surface-2);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.sc-row-action:hover:not(:disabled),
+.diff-action-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.sc-row-action.stage:hover:not(:disabled),
+.diff-action-btn.stage:hover:not(:disabled) {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.sc-row-action.discard:hover:not(:disabled),
+.diff-action-btn.revert:hover:not(:disabled) {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.sc-row-action:disabled,
+.diff-action-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* The clickable name area — a real button inside the row div, so the
+ * row's action chips never nest inside it. */
+.sc-row-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  padding: 0;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sc-row-action:focus-visible,
+.sc-row-name:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
 }
 
 /* The directory prefix shrinks and ellipsizes; the basename keeps its
@@ -1155,6 +1224,55 @@ body {
 
 .sc-base {
   flex: none;
+}
+
+/* Commit box — sits between the flex:none header and the flex:1 list. */
+.sc-commit {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--editor-border);
+}
+
+.sc-commit-input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 46px;
+  resize: vertical;
+  background: var(--editor-surface);
+  color: var(--text);
+  border: 1px solid var(--editor-border);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 8px;
+}
+
+.sc-commit-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.sc-commit-input:disabled {
+  opacity: 0.6;
+}
+
+.sc-commit-btn {
+  align-self: flex-end;
+}
+
+/* Action error banner — shared by the source-control panel and the diff
+ * view. */
+.sc-error,
+.diff-apply-error {
+  flex: none;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 8%, transparent);
+  border-bottom: 1px solid var(--editor-border);
 }
 
 .tree-row {
@@ -1624,47 +1742,5 @@ body {
   gap: 3px;
 }
 
-.diff-action-btn {
-  display: grid;
-  place-items: center;
-  width: 16px;
-  height: 14px;
-  padding: 0;
-  border: 1px solid var(--editor-border);
-  border-radius: 4px;
-  background: var(--editor-surface-2);
-  color: var(--text);
-  font-size: 12px;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.diff-action-btn:hover:not(:disabled) {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.diff-action-btn.stage:hover:not(:disabled) {
-  border-color: var(--success);
-  color: var(--success);
-}
-
-.diff-action-btn.revert:hover:not(:disabled) {
-  border-color: var(--error);
-  color: var(--error);
-}
-
-.diff-action-btn:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-/* Apply errors land under the header, between it and the columns. */
-.diff-apply-error {
-  flex: none;
-  padding: 4px 10px;
-  font-size: 12px;
-  color: var(--error);
-  background: color-mix(in srgb, var(--error) 8%, transparent);
-  border-bottom: 1px solid var(--editor-border);
-}
+/* Apply errors land under the header, between it and the columns —
+ * styling shared with the source-control panel's .sc-error above. */
