@@ -222,14 +222,24 @@ export interface TreeNode {
  * file decorations: U untracked, C conflict. */
 export type GitStatusLetter = 'M' | 'A' | 'D' | 'R' | 'U' | 'T' | 'C'
 
+/** Per-axis path → letter maps for the source-control panel. */
+export interface GitSectionMap {
+  staged: Record<string, GitStatusLetter>
+  unstaged: Record<string, GitStatusLetter>
+}
+
 /** Wire payload of GET /api/git/status — only changed paths present.
  * dirs: badge for every parent directory of a changed file (the most
  * severe descendant wins, computed on the server), so explorer folders
- * signal changes even below the tree's depth limit. */
+ * signal changes even below the tree's depth limit.  sections: the same
+ * paths split by axis — staged (index vs HEAD) and unstaged (worktree
+ * vs index) — for the source-control panel; `??` untracked paths appear
+ * only in unstaged, an `MM` file in both. */
 export interface GitStatusPayload {
   branch: string | null
   files: Record<string, GitStatusLetter>
   dirs: Record<string, GitStatusLetter>
+  sections: GitSectionMap
 }
 
 /** Reactive state of useGitStatus (payload + fetch lifecycle). */
@@ -237,6 +247,52 @@ export interface GitStatusState {
   branch: string | null
   files: Record<string, GitStatusLetter>
   dirs: Record<string, GitStatusLetter>
+  sections: GitSectionMap
   loading: boolean
   error: string | null
 }
+
+// ---------------------------------------------------------------------------
+// Git diff (GET /api/git/diff)
+// ---------------------------------------------------------------------------
+
+export type DiffLineKind = 'ctx' | 'del' | 'add'
+
+/** One unified-diff content line; old_ln/new_ln is null on the side the
+ * line does not exist (adds have no old number, deletions no new one). */
+export interface DiffLine {
+  kind: DiffLineKind
+  old_ln: number | null
+  new_ln: number | null
+  text: string
+  no_newline?: boolean
+}
+
+/** A `@@ -o,c +n,c @@` section: contiguous lines from both sides. */
+export interface DiffHunk {
+  old_start: number
+  old_count: number
+  new_start: number
+  new_count: number
+  lines: DiffLine[]
+}
+
+/** Wire payload of GET /api/git/diff.  old_path/new_path are null when
+ * that side is /dev/null (added/deleted files); hunks is empty for
+ * binary files or when nothing changed. */
+export interface GitDiffPayload {
+  path: string
+  staged: boolean
+  binary: boolean
+  truncated: boolean
+  old_path: string | null
+  new_path: string | null
+  hunks: DiffHunk[]
+}
+
+/** One entry in the editor tab strip: a regular file tab or a read-only
+ * diff tab (side-by-side view of one file).  Type, not interface, so the
+ * `kind` discriminant narrows in template/type checks. */
+export type TabEntry =
+  | { kind: 'file'; path: string }
+  | { kind: 'diff'; path: string; staged: boolean }

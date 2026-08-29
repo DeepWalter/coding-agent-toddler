@@ -17,7 +17,12 @@ from fastapi.testclient import TestClient
 
 from toddler.config.settings import Settings
 from toddler.web.app import create_app
-from toddler.web.git import _dir_badges, parse_status
+from toddler.web.git import (
+    _dir_badges,
+    _parse_records,
+    build_sections,
+    parse_status,
+)
 
 # ============================================================================
 # Helpers
@@ -119,6 +124,63 @@ class TestParseStatus:
 
 
 # ============================================================================
+# build_sections — staged/unstaged split for the source-control panel
+# ============================================================================
+
+
+class TestBuildSections:
+    def test_clean(self):
+        assert build_sections([]) == ({}, {})
+
+    def test_modified_in_both_axes(self):
+        # MM — staged + unstaged modification, in both sections.
+        assert build_sections([("f.txt", "M", "M")]) == (
+            {"f.txt": "M"}, {"f.txt": "M"},
+        )
+
+    def test_untracked_is_unstaged_only(self):
+        assert build_sections([("f.txt", "?", "?")]) == (
+            {}, {"f.txt": "U"},
+        )
+
+    def test_staged_add_plus_unstaged_modify(self):
+        assert build_sections([("f.txt", "A", "M")]) == (
+            {"f.txt": "A"}, {"f.txt": "M"},
+        )
+
+    def test_rename_badges_only_the_new_path(self):
+        # The bare old-path record is dropped by _parse_records, so
+        # build_sections only ever sees the status-bearing record.
+        assert _parse_records(b"## main\x00R  new.txt\x00old.txt\x00") == (
+            "main", [("new.txt", "R", " ")],
+        )
+        assert build_sections([("new.txt", "R", " ")]) == (
+            {"new.txt": "R"}, {},
+        )
+
+    def test_unmerged_conflicts_both_sections(self):
+        for code in ("UU", "AA", "DU"):
+            assert build_sections([("f", code[0], code[1])]) == (
+                {"f": "C"}, {"f": "C"},
+            )
+
+    def test_copy_collapses_to_rename(self):
+        assert build_sections([("new.txt", "C", " ")]) == (
+            {"new.txt": "R"}, {},
+        )
+
+    def test_staged_only_change(self):
+        assert build_sections([("f.txt", "D", " ")]) == (
+            {"f.txt": "D"}, {},
+        )
+
+    def test_unstaged_only_change(self):
+        assert build_sections([("f.txt", " ", "T")]) == (
+            {}, {"f.txt": "T"},
+        )
+
+
+# ============================================================================
 # _dir_badges — directory aggregation for the explorer
 # ============================================================================
 
@@ -167,7 +229,12 @@ class TestStatusEndpoint:
         with TestClient(app) as client:
             resp = client.get("/api/git/status")
         assert resp.status_code == 200
-        assert resp.json() == {"branch": "main", "files": {}, "dirs": {}}
+        assert resp.json() == {
+            "branch": "main",
+            "files": {},
+            "dirs": {},
+            "sections": {"staged": {}, "unstaged": {}},
+        }
 
     def test_status_reports_changes(self, tmp_path):
         repo = _git_repo(tmp_path)
@@ -199,6 +266,18 @@ class TestStatusEndpoint:
             },
             # newdir holds the untracked file — the dir gets a badge too.
             "dirs": {"newdir": "U"},
+            "sections": {
+                "staged": {
+                    "renamed.txt": "R",  # the mv was staged; the edit rides along
+                    "b.txt": "D",  # git rm stages the deletion
+                    "staged.txt": "A",
+                },
+                "unstaged": {
+                    "renamed.txt": "M",
+                    "untracked.txt": "U",
+                    "newdir/inside.txt": "U",
+                },
+            },
         }
 
     def test_status_untracked_only_repo(self, tmp_path):
@@ -209,7 +288,12 @@ class TestStatusEndpoint:
         with TestClient(app) as client:
             resp = client.get("/api/git/status")
         assert resp.status_code == 200
-        assert resp.json() == {"branch": "main", "files": {"x.txt": "U"}, "dirs": {}}
+        assert resp.json() == {
+            "branch": "main",
+            "files": {"x.txt": "U"},
+            "dirs": {},
+            "sections": {"staged": {}, "unstaged": {"x.txt": "U"}},
+        }
 
     def test_status_non_repo(self, tmp_path):
         # _repo(tmp_path) without `git init` — the default repo dir.
@@ -217,11 +301,16 @@ class TestStatusEndpoint:
         with TestClient(app) as client:
             resp = client.get("/api/git/status")
         assert resp.status_code == 200
-        assert resp.json() == {"branch": None, "files": {}, "dirs": {}}
+        assert resp.json() == {
+            "branch": None,
+            "files": {},
+            "dirs": {},
+            "sections": {"staged": {}, "unstaged": {}},
+        }
 
     def test_status_payload_keys(self, tmp_path):
         _git_repo(tmp_path)
         app = _app(tmp_path)
         with TestClient(app) as client:
             resp = client.get("/api/git/status")
-        assert set(resp.json()) == {"branch", "files", "dirs"}
+        assert set(resp.json()) == {"branch", "files", "dirs", "sections"}

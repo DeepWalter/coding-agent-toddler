@@ -124,8 +124,25 @@ async def get_messages(
 
 @router.get("/git/status")
 async def git_status(state: WebAppState = _GetState) -> dict:
-    """Git working-tree snapshot — branch, per-path letters, dir badges."""
+    """Git working-tree snapshot — branch, per-path letters, dir badges,
+    and staged/unstaged sections."""
     return await git.git_status(state.repo_root)
+
+
+@router.get("/git/diff", response_model=None)
+async def git_diff(
+    path: str = Query(...),
+    staged: bool = Query(default=False),
+    state: WebAppState = _GetState,
+) -> dict | JSONResponse:
+    """Structured per-file diff — staged (index vs HEAD) or unstaged
+    (worktree vs index); untracked paths diff against /dev/null."""
+    try:
+        return await git.git_diff(state.repo_root, path, staged=staged)
+    except git.DiffError as exc:
+        return JSONResponse(
+            {"error": exc.message}, status_code=exc.status_code,
+        )
 
 
 # ---------------------------------------------------------------------------

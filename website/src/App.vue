@@ -1,15 +1,18 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import ConsolePane from './components/ConsolePane.vue'
 import FileEditor from './components/FileEditor.vue'
 import FileExplorer from './components/FileExplorer.vue'
 import InputBar from './components/InputBar.vue'
 import PausePrompt from './components/PausePrompt.vue'
 import SessionList from './components/SessionList.vue'
+import SourceControl from './components/SourceControl.vue'
 import StatusBar from './components/StatusBar.vue'
 import { useConsole } from './composables/useConsole'
 import { useGitStatus } from './composables/useGitStatus'
 import { useWebSocket } from './composables/useWebSocket'
+import type { TabEntry } from './types'
+import { tabKey } from './utils'
 
 // Transport → state: every websocket frame goes through the console
 // reducer; the connection refs drive the status bar and input gating.
@@ -135,13 +138,55 @@ function saveSplit() {
 const explorerPct = ref(split.explorer)
 const editorPct = ref(split.editor)
 
-// Open-file tabs for the editor pane.  The path list + active tab persist
-// in localStorage (content never persists — files refetch on reload, and a
-// deleted file shows the tab's error state).  Persisted paths are trusted,
-// not re-validated against /api/tree — that listing is depth-limited and
-// would wrongly drop valid paths.  Tabs are scoped to the session's repo:
-// the stored `root` (cwd) must match, or the paths resolve against the
-// wrong tree (see the cwd watcher below).
+// Activity bar: which panel occupies the left pane ('explorer' | 'sc'),
+// or null when the pane is closed (clicking the active icon toggles it,
+// VSCode-style).  Persisted — an accidentally closed pane should not
+// reset the layout every reload.
+const LEFTPANE_STORAGE_KEY = 'tod.leftpane'
+type LeftPane = 'explorer' | 'sc'
+const leftPane = ref<LeftPane | null>(
+  readStored<LeftPane | null>(
+    LEFTPANE_STORAGE_KEY,
+    (raw) => (raw === '"sc"' || raw === '"explorer"' ? JSON.parse(raw) : null),
+    'explorer',
+  ),
+)
+
+function selectPane(kind: LeftPane) {
+  leftPane.value = leftPane.value === kind ? null : kind
+  writeStored(LEFTPANE_STORAGE_KEY, leftPane.value)
+}
+
+// Collapse/expand must not resize the console: the left pane's width is
+// taken from — or given back to — the editor, never from the console's
+// share (the console keeps exactly the width its divider drag set).  The
+// clamps only bind when the editor has no room left to absorb/give up.
+// Switching which panel occupies the open pane ('explorer' ↔ 'sc') is not
+// a collapse — it must leave the widths untouched.
+watch(leftPane, (pane, prev) => {
+  if (!!pane === !!prev) return // open→open / closed→closed: no width moves
+  const x = explorerPct.value
+  editorPct.value = pane
+    ? Math.max(MIN_PANE, editorPct.value - x) // reopening — pane takes back its width
+    : Math.min(100 - MIN_PANE, editorPct.value + x) // collapsing — editor absorbs it
+})
+
+/** Changed-file count for the source-control icon badge. */
+const scCount = computed(
+  () =>
+    Object.keys(git.state.sections.staged).length +
+    Object.keys(git.state.sections.unstaged).length,
+)
+
+// Editor-pane tabs.  A tab is either a file (editable, persists in
+// localStorage) or a diff (read-only side-by-side view, ephemeral — never
+// persisted; a reload must restore only real files).  The file path list +
+// active tab persist as before (content never persists — files refetch on
+// reload, and a deleted file shows the tab's error state).  Persisted paths
+// are trusted, not re-validated against /api/tree — that listing is
+// depth-limited and would wrongly drop valid paths.  Tabs are scoped to the
+// session's repo: the stored `root` (cwd) must match, or the paths resolve
+// against the wrong tree (see the cwd watcher below).
 const TABS_STORAGE_KEY = 'tod.tabs'
 const MAX_OPEN_TABS = 50
 
@@ -172,8 +217,17 @@ const restoredTabs = readStored<PersistedTabs>(
   { open: [], active: null, root: null },
 )
 
-const openFiles = ref<string[]>(restoredTabs.open)
-const activePath = ref<string | null>(restoredTabs.active)
+const openTabs = ref<TabEntry[]>(restoredTabs.open.map((p) => ({ kind: 'file', path: p })))
+const activeTab = ref<TabEntry | null>(
+  restoredTabs.active ? { kind: 'file', path: restoredTabs.active } : null,
+)
+
+/** The file path of the active tab, if it is a file tab — the explorer's
+ * selection highlight and FileEditor's per-file machinery only care about
+ * file tabs. */
+const activeFilePath = computed(() =>
+  activeTab.value?.kind === 'file' ? activeTab.value.path : null,
+)
 
 // Tabs belong to a repo.  If the session's cwd differs from the root the
 // tabs were restored for (server restarted elsewhere, session switched),
@@ -182,8 +236,8 @@ watch(
   () => state.session?.cwd,
   (cwd) => {
     if (!cwd || restoredTabs.root === cwd) return
-    openFiles.value = []
-    activePath.value = null
+    openTabs.value = []
+    activeTab.value = null
     persistTabs()
   },
   { immediate: true },
@@ -191,32 +245,48 @@ watch(
 
 function persistTabs() {
   writeStored(TABS_STORAGE_KEY, {
-    open: openFiles.value,
-    active: activePath.value,
+    open: openTabs.value
+      .filter((t) => t.kind === 'file')
+      .map((t) => t.path), // diff tabs are ephemeral — never persisted
+    active: activeTab.value?.kind === 'file' ? activeTab.value.path : null,
     root: state.session?.cwd ?? null,
   })
 }
 
 /** Open a file in the editor: focus the existing tab, or add a new one. */
 function openFile(path: string) {
-  if (openFiles.value.includes(path)) {
-    activePath.value = path // already open → focus the existing tab
-  } else if (openFiles.value.length < MAX_OPEN_TABS) {
-    openFiles.value.push(path)
-    activePath.value = path
+  const existing = openTabs.value.find((t) => t.kind === 'file' && t.path === path)
+  if (existing) {
+    activeTab.value = existing // already open → focus the existing tab
+  } else if (openTabs.value.length < MAX_OPEN_TABS) {
+    activeTab.value = { kind: 'file', path }
+    openTabs.value.push(activeTab.value)
   }
   // At the tab cap the file simply doesn't open (existing tabs keep working).
   persistTabs()
   void git.refresh() // the disk may have moved under us — refresh the badge
 }
 
-function closeFile(path: string) {
-  const idx = openFiles.value.indexOf(path)
+/** Open the side-by-side diff of *path* (staged or unstaged) as a tab. */
+function openDiff(path: string, staged: boolean) {
+  const entry: TabEntry = { kind: 'diff', path, staged }
+  const existing = openTabs.value.find((t) => tabKey(t) === tabKey(entry))
+  if (existing) {
+    activeTab.value = existing
+  } else if (openTabs.value.length < MAX_OPEN_TABS) {
+    activeTab.value = entry
+    openTabs.value.push(entry)
+  }
+  persistTabs()
+}
+
+function closeTab(tab: TabEntry) {
+  const idx = openTabs.value.indexOf(tab)
   if (idx === -1) return
-  openFiles.value.splice(idx, 1)
-  if (activePath.value === path) {
+  openTabs.value.splice(idx, 1)
+  if (activeTab.value === tab) {
     // Prefer the tab to the right (same index after splice), fall back left.
-    activePath.value = openFiles.value[idx] ?? openFiles.value[idx - 1] ?? null
+    activeTab.value = openTabs.value[idx] ?? openTabs.value[idx - 1] ?? null
   }
   persistTabs()
 }
@@ -234,10 +304,12 @@ function onDividerMove(event: PointerEvent) {
     explorerPct.value = Math.min(100 - editorPct.value - MIN_PANE, Math.max(MIN_PANE, pct))
   } else {
     // The editor's right edge is the dragged divider, so its width is the
-    // mouse position minus the explorer's width — not the raw position.
+    // mouse position minus the left pane's width — not the raw position.
+    // A closed pane occupies nothing (its stored width stays for reopen).
+    const left = leftPane.value ? explorerPct.value : 0
     editorPct.value = Math.min(
-      100 - explorerPct.value - MIN_PANE,
-      Math.max(MIN_PANE, pct - explorerPct.value),
+      100 - left - MIN_PANE,
+      Math.max(MIN_PANE, pct - left),
     )
   }
 }
@@ -320,17 +392,56 @@ function onDividerUp(event: PointerEvent) {
     </header>
 
     <div ref="splitEl" class="split">
-      <aside class="pane pane-explorer" :style="{ width: explorerPct + '%' }">
+      <nav class="activity-bar" aria-label="sidebar">
+        <button
+          type="button"
+          class="activity-btn"
+          :class="{ active: leftPane === 'explorer' }"
+          title="Explorer"
+          @click="selectPane('explorer')"
+        >
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+            <path d="M3 10h18" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          class="activity-btn"
+          :class="{ active: leftPane === 'sc' }"
+          title="Source Control"
+          @click="selectPane('sc')"
+        >
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="6" cy="6" r="2" />
+            <circle cx="6" cy="18" r="2" />
+            <circle cx="18" cy="8" r="2" />
+            <path d="M6 8v8" />
+            <path d="M18 10c0 5-8 3-8 8" />
+          </svg>
+          <span v-if="scCount" class="activity-badge" title="changed files">{{ scCount }}</span>
+        </button>
+      </nav>
+
+      <aside v-if="leftPane" class="pane pane-left" :style="{ width: explorerPct + '%' }">
         <FileExplorer
+          v-if="leftPane === 'explorer'"
           :root="state.session?.cwd ?? null"
-          :active-path="activePath"
+          :active-path="activeFilePath"
           :git="git.state"
           @open-file="openFile"
+          @refresh-git="git.refresh"
+        />
+        <SourceControl
+          v-else
+          :git="git.state"
+          @open-diff="openDiff"
           @refresh-git="git.refresh"
         />
       </aside>
 
       <div
+        v-if="leftPane"
         class="divider"
         :class="{ dragging: drag === 'explorer' }"
         @pointerdown="onDividerDown('explorer', $event)"
@@ -340,11 +451,12 @@ function onDividerUp(event: PointerEvent) {
 
       <section class="pane pane-editor" :style="{ width: editorPct + '%' }">
         <FileEditor
-          :files="openFiles"
-          :active="activePath"
+          :files="openTabs"
+          :active="activeTab"
           :git="git.state"
-          @activate-file="openFile"
-          @close-file="closeFile"
+          @activate-tab="(t) => (activeTab = t)"
+          @close-tab="closeTab"
+          @open-file="openFile"
           @file-saved="git.refresh"
         />
       </section>

@@ -911,7 +911,7 @@ body {
   overflow: hidden;
 }
 
-.pane-explorer,
+.pane-left,
 .pane-editor {
   flex: none;
 }
@@ -935,6 +935,66 @@ body {
 }
 
 /* ------------------------------------------------------------------ */
+/* Activity bar — the narrow icon rail left of the panes; clicking the  */
+/* active icon toggles the pane (VSCode-style).                         */
+/* ------------------------------------------------------------------ */
+
+.activity-bar {
+  flex: none;
+  width: 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding-top: 4px;
+  background: var(--editor-surface);
+  border-right: 1px solid var(--editor-border);
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.activity-btn {
+  position: relative;
+  flex: none;
+  width: 44px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-subtle);
+  cursor: pointer;
+}
+
+.activity-btn:hover {
+  background: var(--editor-surface-2);
+  color: var(--text);
+}
+
+.activity-btn.active {
+  color: var(--text);
+  box-shadow: inset 2px 0 0 var(--accent); /* VSCode's left accent bar */
+}
+
+.activity-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: var(--accent-fill);
+  color: var(--on-accent);
+  font-size: 9px;
+  line-height: 14px;
+  text-align: center;
+  pointer-events: none;
+}
+
+/* ------------------------------------------------------------------ */
 /* File explorer                                                       */
 /* ------------------------------------------------------------------ */
 
@@ -945,7 +1005,8 @@ body {
   flex-direction: column;
 }
 
-.explorer-header {
+.explorer-header,
+.sc-header {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -955,11 +1016,13 @@ body {
   flex: none;
 }
 
-.explorer-title {
+.explorer-title,
+.sc-title {
   font-weight: 600;
 }
 
-.explorer-root {
+.explorer-root,
+.sc-branch {
   flex: 1;
   min-width: 0;
   color: var(--text-subtle);
@@ -969,7 +1032,9 @@ body {
   white-space: nowrap;
 }
 
-.explorer-refresh {
+.explorer-refresh,
+.sc-refresh,
+.diff-refresh {
   flex: none;
   background: none;
   border: 1px solid var(--editor-border);
@@ -981,16 +1046,21 @@ body {
   cursor: pointer;
 }
 
-.explorer-refresh:hover:not(:disabled) {
+.explorer-refresh:hover:not(:disabled),
+.sc-refresh:hover:not(:disabled),
+.diff-refresh:hover:not(:disabled) {
   background: var(--editor-surface-2);
 }
 
-.explorer-refresh:disabled {
+.explorer-refresh:disabled,
+.sc-refresh:disabled,
+.diff-refresh:disabled {
   opacity: 0.5;
   cursor: default;
 }
 
-.explorer-list {
+.explorer-list,
+.sc-list {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -998,13 +1068,92 @@ body {
   scrollbar-width: thin;
 }
 
-.explorer-empty {
+.explorer-empty,
+.sc-empty {
   color: var(--text-subtle);
   padding: 10px;
 }
 
-.explorer-empty.error {
+.explorer-empty.error,
+.sc-empty.error {
   color: var(--error);
+}
+
+/* ------------------------------------------------------------------ */
+/* Source-control panel (staged / unstaged sections, VS Code-style).   */
+/* ------------------------------------------------------------------ */
+
+.sc-section {
+  border-top: 1px solid var(--editor-border);
+}
+
+.sc-section-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  padding: 6px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sc-section-head:hover {
+  background: var(--editor-surface-2);
+}
+
+.sc-chevron {
+  flex: none;
+  width: 10px;
+  color: var(--text-subtle);
+  font-weight: 400;
+}
+
+.sc-count {
+  margin-left: auto;
+  color: var(--text-subtle);
+  font-weight: 400;
+  font-size: 12px;
+}
+
+.sc-section-body {
+  padding-bottom: 4px;
+}
+
+.sc-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  padding: 3px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sc-row:hover {
+  background: var(--editor-surface-2);
+}
+
+/* The directory prefix shrinks and ellipsizes; the basename keeps its
+ * full weight and never truncates (VS Code's SC list behavior). */
+.sc-dir {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-subtle);
+}
+
+.sc-base {
+  flex: none;
 }
 
 .tree-row {
@@ -1110,8 +1259,9 @@ body {
 }
 
 .tree-row .git-badge,
-.tree-row .git-dot {
-  margin-left: auto; /* right-aligned in explorer rows */
+.tree-row .git-dot,
+.sc-row .git-badge {
+  margin-left: auto; /* right-aligned in explorer / source-control rows */
 }
 
 .git-badge.mod,
@@ -1276,6 +1426,14 @@ body {
   position: relative;
 }
 
+/* Diff tab active — the CodeMirror host hides instead of unmounting (a
+ * remounted EditorView would lose all per-tab state; the invariant is
+ * that the view's parent never leaves the DOM).  DiffView fills the
+ * space the body would occupy. */
+.editor-body.hidden {
+  display: none;
+}
+
 .editor-cm {
   flex: 1;
   min-height: 0;
@@ -1297,4 +1455,148 @@ body {
 
 .editor-message.error {
   color: var(--error);
+}
+
+/* ------------------------------------------------------------------ */
+/* Side-by-side diff view (diff tabs in the editor pane)               */
+/* ------------------------------------------------------------------ */
+
+.diff {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.diff-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--editor-border);
+  background: var(--editor-surface);
+  flex: none;
+}
+
+.diff-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff-tag {
+  flex: none;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--editor-surface-2);
+  color: var(--text-subtle);
+  user-select: none;
+}
+
+.diff-status {
+  flex: none;
+  max-width: 45%;
+  color: var(--text-muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-subtle);
+  padding: 12px;
+  text-align: center;
+}
+
+.diff-empty.error {
+  color: var(--error);
+}
+
+.diff-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.diff-col {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  background: var(--editor-surface);
+  scrollbar-width: thin;
+}
+
+.diff-col + .diff-col {
+  border-left: 1px solid var(--editor-border);
+}
+
+/* Sticky column header: stays pinned on vertical scroll inside the
+ * column, scrolls away with the text horizontally (VSCode keeps it too). */
+.diff-col-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--editor-surface-2);
+  color: var(--line-number);
+  font-size: 11px;
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--editor-border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Fixed line-height + `pre` + min-height on empty cells is what makes
+ * both columns' rows pixel-identical, so scroll sync is exact. */
+.diff-row {
+  display: flex;
+  font: 13px/1.5 var(--mono);
+  white-space: pre;
+  min-height: 1.5em;
+}
+
+.diff-gutter {
+  flex: none;
+  min-width: 4ch;
+  padding: 0 8px;
+  text-align: right;
+  color: var(--line-number);
+  /* Opaque + sticky left: line numbers stay pinned while long lines
+   * scroll horizontally underneath them. */
+  background: var(--editor-surface);
+  position: sticky;
+  left: 0;
+  user-select: none;
+}
+
+.diff-text {
+  flex: 1;
+  min-width: 0;
+  color: var(--text);
+}
+
+/* The empty cell on the missing side takes the same class, so a
+ * deletion leaves a red slot on the right and an addition on the left —
+ * the row class rides both columns (rowClass() in DiffView). */
+.diff-row.del .diff-text {
+  background: color-mix(in srgb, var(--error) 12%, transparent);
+}
+
+.diff-row.add .diff-text {
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+}
+
+.diff-noeol {
+  color: var(--text-subtle);
+  font-style: italic;
 }

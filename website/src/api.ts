@@ -1,4 +1,4 @@
-import type { GitStatusPayload, ReplayMessage, SessionSummary, TreeEntry } from './types'
+import type { GitDiffPayload, GitStatusPayload, ReplayMessage, SessionSummary, TreeEntry } from './types'
 
 /**
  * Thin client for the /api REST endpoints.  Paths are relative so the
@@ -51,6 +51,14 @@ export const api = {
     // no-store: polled on every refresh trigger; a heuristically cached
     // GET would show stale badges after edits.
     return request('/api/git/status', { cache: 'no-store' }) as Promise<GitStatusPayload>
+  },
+
+  gitDiff(path: string, staged: boolean): Promise<GitDiffPayload> {
+    // no-store: refetched on tab activation; stale hunks after edits
+    // would be misleading.
+    return request(`/api/git/diff?path=${encodeURIComponent(path)}&staged=${staged ? 1 : 0}`, {
+      cache: 'no-store',
+    }) as Promise<GitDiffPayload>
   },
 
   tree(depth = 10): Promise<{ root: string; entries: TreeEntry[] }> {

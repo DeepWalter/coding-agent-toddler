@@ -18,6 +18,7 @@ export function useGitStatus() {
     branch: null,
     files: {},
     dirs: {},
+    sections: { staged: {}, unstaged: {} },
     loading: false,
     error: null,
   })
@@ -37,6 +38,7 @@ export function useGitStatus() {
       state.branch = payload.branch
       state.files = payload.files
       state.dirs = payload.dirs
+      state.sections = payload.sections
     } catch (err) {
       if (my !== seq) return
       state.error = (err as Error).message // keep last good data

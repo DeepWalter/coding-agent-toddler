@@ -23,15 +23,18 @@ tod serve (main.py) ──→ toddler/web/
                            ├─ events.py     AgentEvent → JSON dict serializers
                            ├─ runners.py    TurnRunner: busy gate, queue fan-out, cancel, paused snapshot
                            ├─ ws.py         /ws WebSocket router + command dispatch
-                           ├─ api.py        /api REST router (meta, sessions, messages, tree, file)
+                           ├─ api.py        /api REST router (meta, sessions, messages, tree, file, git)
+                           ├─ git.py        git status/diff (porcelain parsing, unified-diff fetch)
+                           ├─ diffparse.py  pure unified-diff parser (no git dependency)
                            ├─ files.py      path-safe read/write + gitignore-aware tree walk
                            └─ server.py     run_server() — uvicorn bootstrap
 website/  (Vue 3 + Vite)
   ├─ vite.config.ts    @vitejs/plugin-vue; proxy /api + /ws → http://localhost:8000
-  └─ src/              App.vue, main.ts, types.ts, api.ts, composables/ (useWebSocket,
-                       useConsole), components/ (ConsolePane, MessageBubble, ToolCard,
-                       PlanCard, PausePrompt, InputBar, FileExplorer, FileEditor,
-                       SessionList, StatusBar)
+  └─ src/              App.vue, main.ts, types.ts, api.ts, diff.ts (side-by-side row
+                       alignment), composables/ (useWebSocket, useConsole, useGitStatus),
+                       components/ (ConsolePane, MessageBubble, ToolCard, PlanCard,
+                       PausePrompt, InputBar, FileExplorer, FileEditor, SourceControl,
+                       DiffView, SessionList, StatusBar)
 ```
 
 The agent core is already transport-agnostic: `SessionManager.process_turn()`
@@ -195,6 +198,8 @@ GET  /api/sessions/{sid}/messages?conversation_id=  -> {messages: [{sequence_num
 GET  /api/tree?depth=4            -> {root, entries: [{path, type}]}
 GET  /api/file?path=rel           -> {path, content, total_lines}
 PUT  /api/file?path=rel           body {"content": "..."} -> {ok, bytes}
+GET  /api/git/status              -> {branch, files, dirs, sections}
+GET  /api/git/diff?path=rel&staged=0|1  -> {path, staged, binary, truncated, old_path, new_path, hunks}
 ```
 
 File endpoints use **pathlib directly** — the `ReadFile` tool returns
@@ -203,6 +208,44 @@ line-numbered output, which the editor must not parse. Path safety:
 400 on escape, 404 on missing, 400/409 on binary. Tree walk reuses
 `GitignoreMatcher` (toddler/context/workspace.py:86) + an `IGNORED_TOP` set
 (`.git`, `node_modules`, `.venv`, `dist`, `__pycache__`, ...).
+
+### Git status (`GET /api/git/status`)
+
+Whole-snapshot git state for badges and the source-control panel; clients
+fetch it (`cache: no-store`) instead of receiving it over WS.
+
+- `branch`: current branch name, or `null` outside a git repository
+- `files` / `dirs`: path → one letter per changed path; `dirs` maps every
+  parent directory of a changed file (most severe descendant wins), so
+  explorer folders signal changes even below the tree's depth limit
+- `sections`: `{staged: {path: letter}, unstaged: {path: letter}}` — the same
+  paths split by axis. Staged = index vs HEAD (porcelain X-axis letters,
+  `??` excluded), unstaged = worktree vs index (Y-axis; untracked `??` →
+  `U`). An `MM` file appears in both, with the same letter in each; unmerged
+  pairs (`UU`, `AA`, `DU`, ...) become `C` in both. Letters: `M A D R U T C`
+  (copies collapse to `R`, matching the explorer's `files` map).
+
+### Git diff (`GET /api/git/diff`)
+
+Parsed unified diff of one path (`--unified=3`, no color, path-limited with
+`--`). `staged=1` diffs index vs HEAD, `staged=0` worktree vs index.
+Untracked files (no index entry) diff against `/dev/null` via
+`git diff --no-index` — which exits **rc 1 on differences** (the success
+case); rc 1 with a non-empty stderr means the file vanished → 404. Errors:
+400 escape/directory, 404 missing file, 500 git failure, all as
+`{"error": msg}`.
+
+Payload: `hunks` is an array of `{old_start, old_count, new_start,
+new_count, lines}`; each line is `{kind: "ctx"|"del"|"add", old_ln,
+new_ln, text, no_newline}` (`old_ln`/`new_ln` null on the side the line
+does not exist, e.g. all `new_ln: null` for a deleted file). `old_path` /
+`new_path` are `null` when that side is `/dev/null` (added/deleted files);
+`binary: true` stops parsing (binary files have no hunks); `truncated: true`
+when the parser hit its line cap. A clean file returns empty hunks. Header
+lines (`diff --git`, `index`, rename/mode metadata) are never parsed for
+paths — only `--- /dev/null` / `+++ /dev/null` presence is used; rename
+detection is defeated by the `--` pathspec, so a rename renders as a
+full-file addition (accepted, noted as future work).
 
 No plan/checkpoint REST endpoints in MVP — plans stream over WS and the
 runner snapshots a pending proposal into `hello` (see protocol above), so
@@ -232,6 +275,36 @@ plans survive a client reconnect but not a server restart.
   split-pane with drag divider (clamp 20–80%), footer status bar.
 - Dev: `npm run dev` (Vite :5173, proxy to :8000) against a running `tod serve`.
   Prod: `npm run build` once, then `tod serve` alone.
+
+### Source control & diff view
+
+- **Activity bar**: 48px icon rail on the far-left edge of the split pane
+  (VSCode-style). Two buttons — Explorer and Source Control — each with an
+  active state (inset 2px accent bar); clicking the active icon toggles the
+  pane closed. Source Control shows a badge pill with the changed-file count
+  (staged + unstaged). The open pane persists in `tod.leftpane`.
+- **Source Control panel** (`SourceControl.vue`): header with branch name +
+  ↻ refresh; two collapsible sections, **Staged Changes** and **Changes**,
+  from `git.sections` with counts, sorted rows (dimmed dir prefix +
+  full-weight basename), git letter badges, muted empty states, and a single
+  "not a git repository" line when `branch` is null.
+- **Diff tabs**: clicking a row opens a read-only diff tab in the editor
+  pane — staged rows open the staged diff, unstaged rows the unstaged one;
+  an `MM` file has two distinct tabs. Tabs are `TabEntry = file | diff`,
+  keyed `f:<path>` / `d:s|u:<path>` so a file and its diffs coexist; only
+  file tabs persist to `tod.tabs` (a reload restores files, never diffs).
+- **Side-by-side diff** (`DiffView.vue` + `diff.ts`): two columns rendered
+  from the same `buildRows()` alignment (positional del/add pairing — no
+  `@@` hunk-header lines), line-number gutters, `color-mix` del/add
+  backgrounds, sticky column headers, synced vertical scroll, independent
+  horizontal scroll (pinned sticky gutters). Untracked → empty old side;
+  deleted → empty new side; binary → centered message; truncated output is
+  labeled. The CodeMirror host stays mounted while a diff tab is active —
+  the `.editor-body` hides with `display: none`, never unmounts.
+- **Freshness**: DiffView remounts per activation (keyed by tab key), so a
+  re-activated diff refetches after agent writes; a ↻ button refetches in
+  place; editor saves and agent file-writes trigger the shared git-status
+  refresh (badges + section lists update).
 
 ## Development Roadmap
 
@@ -325,6 +398,28 @@ first working release.
 7. ✅ **`docs(web): document web usage and dev workflow`**
    - README roadmap tick + `tod serve` usage line; final `ruff check .` + full
      pytest pass
+
+8. ✅ **`feat(web): add source control panel and side-by-side git diff`**
+   - `toddler/web/diffparse.py` — pure unified-diff parser (`parse_diff`,
+     `DiffLine`/`Hunk` dataclasses; no git dependency, testable from canned
+     bytes)
+   - `toddler/web/git.py` — `parse_status` refactored into `_parse_records`
+     (signature pinned by existing tests) with new `build_sections`; `git_status`
+     gains `sections: {staged, unstaged}`; new `git_diff` (staged = index vs
+     HEAD, unstaged = worktree vs index; untracked via
+     `git diff --no-index -- /dev/null <rel>` where rc 1 = differences =
+     success); `DiffError` maps to `{"error"}` statuses
+   - `toddler/web/api.py` — `GET /api/git/diff?path=&staged=` endpoint
+   - `tests/test_web_diff.py` (parser + endpoint suites on real git repos via
+     TestClient) + `TestBuildSections` in test_web_git.py
+   - Frontend: activity bar + `TabEntry` tab model (file/diff tabs, diff tabs
+     ephemeral — only files persist to `tod.tabs`); `SourceControl.vue`;
+     `diff.ts` (side-by-side row alignment) + `DiffView.vue` (synced vertical
+     scroll, independent horizontal, sticky gutters/headers); FileEditor
+     diff-tab branch — CM host hidden with `display: none`, never unmounted
+   - Verify: pytest + ruff; `npm run build`; manual pass over the plan's
+     verification list (MM files, untracked/deleted/binary, CRLF, both
+     themes, scroll sync)
 
 ## Testing Strategy
 

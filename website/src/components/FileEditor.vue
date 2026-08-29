@@ -9,25 +9,30 @@ import { api } from '../api'
 import { languageForPath } from '../editor/languages'
 import { editorTheme, highlightExt } from '../editor/theme'
 import { gitBadgeClass } from '../gitStatus'
-import type { GitStatusState } from '../types'
-import { basename } from '../utils'
+import type { GitStatusState, TabEntry } from '../types'
+import { basename, tabKey } from '../utils'
+import DiffView from './DiffView.vue'
 
 /**
- * Editor pane with one tab per open file.  The tab list and active path
- * live in App.vue; this component owns per-tab CodeMirror state.  A single
- * EditorView serves all tabs — switching tabs swaps its state via
- * `view.setState`, which carries each tab's doc, undo history, and cursor.
- * Files load via `GET /api/file`, save with Ctrl/Cmd+S via `PUT /api/file` —
- * the same path-safe endpoint the agent's WriteFile
- * tool backs onto.  Syntax highlighting comes from the CodeMirror
- * legacy grammars (`editor/languages.ts`).  A tab refetches from disk on
+ * Editor pane with one tab per open entry — a regular file tab or a
+ * read-only diff tab.  The tab list and active tab live in App.vue; this
+ * component owns per-file CodeMirror state.  A single EditorView serves
+ * all file tabs — switching tabs swaps its state via `view.setState`,
+ * which carries each tab's doc, undo history, and cursor.  While a diff
+ * tab is active the CM host stays mounted but hidden (`display: none`)
+ * and DiffView takes over the pane — the EditorView's parent must never
+ * unmount.  Files load via `GET /api/file`, save with Ctrl/Cmd+S via
+ * `PUT /api/file` — the same path-safe endpoint the agent's WriteFile
+ * tool backs onto.  Syntax highlighting comes from the CodeMirror legacy
+ * grammars (`editor/languages.ts`).  A tab refetches from disk on
  * activation (unless it has unsaved edits), so the agent's writes show up.
  */
 
-const props = defineProps<{ files: string[]; active: string | null; git: GitStatusState }>()
+const props = defineProps<{ files: TabEntry[]; active: TabEntry | null; git: GitStatusState }>()
 const emit = defineEmits<{
-  'activate-file': [path: string]
-  'close-file': [path: string]
+  'activate-tab': [tab: TabEntry]
+  'close-tab': [tab: TabEntry]
+  'open-file': [path: string]
   'file-saved': [path: string]
 }>()
 
@@ -107,8 +112,27 @@ function isStale(path: string, seq: number): boolean {
   return fetchTokens.get(path) !== seq
 }
 
-const activeTab = computed(() => (props.active ? tabs.value[props.active] ?? null : null))
+// The file tab whose CodeMirror machinery is live (null while a diff tab
+// or nothing is active).  `tabs` is keyed by path, so a diff tab for a
+// path that is also open as a file shares the key — every per-file lookup
+// below must gate on `kind === 'file'` first.
+const activeTab = computed(() =>
+  props.active?.kind === 'file' ? (tabs.value[props.active.path] ?? null) : null,
+)
 const isDirty = (tab: EditorTab | null | undefined) => !!tab && tab.dirty
+
+/** Active file path — the header, explorer highlight, and save target. */
+const activeFilePath = computed(() =>
+  props.active?.kind === 'file' ? props.active.path : null,
+)
+
+/** Active diff tab (or null) — when set, DiffView replaces the header+body. */
+const activeDiff = computed<Extract<TabEntry, { kind: 'diff' }> | null>(() =>
+  props.active?.kind === 'diff' ? props.active : null,
+)
+
+/** Strip highlight: a tab is active when its key equals the active key. */
+const activeKey = computed(() => (props.active ? tabKey(props.active) : null))
 
 const statusText = computed(() => {
   const t = activeTab.value
@@ -185,15 +209,18 @@ const emptyState = markRaw(EditorState.create({ doc: '', extensions: buildExtens
 // Capture doc, undo history, selection, and scroll offset before the state
 // is replaced — that keeps tab.state ≡ the view state last shown for it.
 // (dirty needs no capture: the update listener has kept it current.)
+function flushCurrentFile() {
+  if (!view || !currentPath) return
+  const prevTab = tabs.value[currentPath]
+  if (prevTab?.state) {
+    prevTab.state = markRaw(view.state)
+    prevTab.scrollTop = view.scrollDOM.scrollTop
+  }
+}
+
 function switchToTab(path: string) {
   if (!view) return
-  if (currentPath && currentPath !== path) {
-    const prevTab = tabs.value[currentPath]
-    if (prevTab?.state) {
-      prevTab.state = markRaw(view.state)
-      prevTab.scrollTop = view.scrollDOM.scrollTop
-    }
-  }
+  if (currentPath && currentPath !== path) flushCurrentFile()
   const tab = tabs.value[path]
   if (tab?.state) {
     showTab(tab, path, true)
@@ -236,7 +263,7 @@ async function loadTab(path: string, focusOnLoad = false) {
     tab.state = markRaw(buildState(tab, res.content, language))
     tab.dirty = false
     tab.loading = false
-    if (props.active === path && view) {
+    if (props.active?.kind === 'file' && props.active.path === path && view) {
       showTab(tab, path, focusOnLoad)
       if (language) {
         // Parse the whole document synchronously so highlighting is complete
@@ -302,9 +329,13 @@ async function refreshTab(path: string) {
 }
 
 async function save() {
-  const path = props.active
-  const tab = path ? tabs.value[path] : null
-  if (!path || !tab?.state || tab.loading || tab.saving || !view) return
+  // Only file tabs save — the keymap can't fire while a diff tab is
+  // active (the view is blurred and hidden), but the guard must not
+  // depend on that.
+  if (props.active?.kind !== 'file') return
+  const path = props.active.path
+  const tab = tabs.value[path]
+  if (!tab?.state || tab.loading || tab.saving || !view) return
   tab.saveError = null
   tab.saving = true
   // The live view IS this tab's state — the keymap only fires while it's
@@ -334,13 +365,17 @@ async function save() {
   }
 }
 
-function requestClose(path: string) {
-  const tab = tabs.value[path]
-  if (tab && isDirty(tab)) {
-    if (!window.confirm(`Close ${path}? Unsaved changes will be lost.`)) return
+function requestClose(tabEntry: TabEntry) {
+  // Diff tabs hold no CodeMirror state — close immediately.  File tabs
+  // with unsaved edits ask first, as before.
+  if (tabEntry.kind === 'file') {
+    const tab = tabs.value[tabEntry.path]
+    if (tab && isDirty(tab)) {
+      if (!window.confirm(`Close ${tabEntry.path}? Unsaved changes will be lost.`)) return
+    }
+    removeTab(tabEntry.path)
   }
-  removeTab(path)
-  emit('close-file', path)
+  emit('close-tab', tabEntry)
 }
 
 function removeTab(path: string) {
@@ -369,7 +404,9 @@ onMounted(() => {
   window.addEventListener('beforeunload', onBeforeUnload)
   // The initial activation (restored from localStorage) needs no watcher
   // fire — the immediate watcher would run before the view exists.
-  if (props.active) switchToTab(props.active)
+  // Diff tabs never persist across reloads, so the restored active tab is
+  // always a file tab; the else branch also covers the empty case.
+  if (props.active?.kind === 'file') switchToTab(props.active.path)
   else view.setState(emptyState)
 })
 
@@ -382,26 +419,32 @@ onUnmounted(() => {
   }
 })
 
-watch(() => props.active, (path) => {
-  if (!path) {
+watch(() => props.active, (tab) => {
+  if (!tab) {
     if (view) {
       // Flush the closing tab's live state before dropping the doc — the
       // flush-on-switch invariant must not depend on call order (a future
       // "close all" flow would otherwise lose unflushed keystrokes).
-      if (currentPath) {
-        const prev = tabs.value[currentPath]
-        if (prev?.state) {
-          prev.state = markRaw(view.state)
-          prev.scrollTop = view.scrollDOM.scrollTop
-        }
-      }
+      flushCurrentFile()
       view.setState(emptyState)
       view.contentDOM.blur()
     }
     currentPath = null
     return
   }
-  switchToTab(path)
+  if (tab.kind === 'diff') {
+    // Diff tabs own no CodeMirror state.  Flush the outgoing file tab,
+    // park the view on the empty doc, and blur it — the CM host stays
+    // mounted (hidden behind DiffView) so the EditorView survives.
+    if (view) {
+      flushCurrentFile()
+      view.setState(emptyState)
+      view.contentDOM.blur()
+    }
+    currentPath = null
+    return
+  }
+  switchToTab(tab.path)
 })
 </script>
 
@@ -409,35 +452,55 @@ watch(() => props.active, (path) => {
   <div class="editor">
     <div v-if="files.length" class="editor-tabs">
       <div
-        v-for="path in files"
-        :key="path"
+        v-for="tab in files"
+        :key="tabKey(tab)"
         class="editor-tab"
-        :class="{ active: path === active, dirty: isDirty(tabs[path]) }"
-        :title="path"
-        @click="emit('activate-file', path)"
+        :class="{ active: activeKey === tabKey(tab), dirty: tab.kind === 'file' && isDirty(tabs[tab.path]) }"
+        :title="tab.path"
+        @click="emit('activate-tab', tab)"
       >
-        <span class="editor-tab-name">{{ basename(path) }}</span>
+        <span class="editor-tab-name">{{ basename(tab.path) }}</span>
         <span
-          v-if="git.files[path]"
+          v-if="tab.kind === 'file' && git.files[tab.path]"
           class="git-badge"
-          :class="gitBadgeClass(git.files[path])"
-          :title="`git status: ${git.files[path]}`"
-        >{{ git.files[path] }}</span>
-        <span v-if="isDirty(tabs[path])" class="editor-tab-dirty" title="unsaved changes">●</span>
+          :class="gitBadgeClass(git.files[tab.path])"
+          :title="`git status: ${git.files[tab.path]}`"
+        >{{ git.files[tab.path] }}</span>
+        <span
+          v-else-if="tab.kind === 'diff'"
+          class="diff-tag"
+          :class="tab.staged ? 'staged' : 'unstaged'"
+        >{{ tab.staged ? 'staged' : 'unstaged' }}</span>
+        <span
+          v-if="tab.kind === 'file' && isDirty(tabs[tab.path])"
+          class="editor-tab-dirty"
+          title="unsaved changes"
+        >●</span>
         <button
           type="button"
           class="editor-tab-close"
-          :aria-label="`close ${path}`"
-          @click.stop="requestClose(path)"
+          :aria-label="`close ${tab.path}`"
+          @click.stop="requestClose(tab)"
         >
           ×
         </button>
       </div>
     </div>
 
-    <div class="editor-header">
-      <span class="editor-path" :title="active ?? undefined">
-        {{ active ?? 'no file selected' }}
+    <!-- A diff tab takes over the pane.  Keyed by tab key: switching
+         between two diff tabs remounts it, so the diff refetches fresh
+         on every activation. -->
+    <DiffView
+      v-if="activeDiff"
+      :key="tabKey(activeDiff)"
+      :tab="activeDiff"
+      :git="git"
+      @open-file="emit('open-file', $event)"
+    />
+
+    <div v-else class="editor-header">
+      <span class="editor-path" :title="activeFilePath ?? undefined">
+        {{ activeFilePath ?? 'no file selected' }}
       </span>
       <span v-if="activeTab && isDirty(activeTab)" class="editor-dirty" title="unsaved changes">●</span>
       <span class="editor-status" :class="{ 'status-error': !!(activeTab?.loadError || activeTab?.saveError) }">
@@ -447,8 +510,10 @@ watch(() => props.active, (path) => {
 
     <!-- Host stays mounted so the single view never dies; messages paint
          over it.  The overlay blocks pointer events and the view is blurred
-         while its doc is untracked, so no edits can land in limbo. -->
-    <div class="editor-body">
+         while its doc is untracked, so no edits can land in limbo.  While a
+         diff tab is active the whole body hides (`display: none`) rather
+         than unmounting — the EditorView's parent must survive. -->
+    <div class="editor-body" :class="{ hidden: !!activeDiff }">
       <div ref="editorHost" class="editor-cm" />
       <div v-if="!active" class="editor-message">
         Select a file in the explorer to edit it.
