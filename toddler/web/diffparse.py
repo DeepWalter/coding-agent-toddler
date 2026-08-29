@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-__all__ = ["DiffLine", "Hunk", "parse_diff"]
+__all__ = ["DiffLine", "Hunk", "extract_hunk", "parse_diff"]
 
 DEFAULT_MAX_LINES = 10_000
 
@@ -134,3 +134,52 @@ def parse_diff(output: bytes, *, max_lines: int = DEFAULT_MAX_LINES) -> dict:
         "old_dev_null": old_dev_null,
         "new_dev_null": new_dev_null,
     }
+
+
+def extract_hunk(
+    output: bytes, *, old_start: int, old_count: int, new_start: int, new_count: int
+) -> bytes | None:
+    """The minimal ``git apply`` patch for one hunk of *output*, verbatim.
+
+    ``git apply`` accepts just the ``---``/``+++`` header lines plus the
+    hunk, so the bytes are returned untouched — git's own formatting
+    (CRLF content, C-quoted paths, the ``\\ No newline at end of file``
+    marker) survives byte-for-byte.  The hunk is located by its header
+    counts, which are unique within one file because ``old_start``
+    strictly increases between hunks; the patch starts at the matching
+    file section's own ``--- `` line, so earlier hunks of a multi-hunk
+    diff are left out.  Returns ``None`` when no hunk matches (binary
+    or mode-only diffs have no ``--- `` line).
+    """
+    lines = output.split(b"\n")
+    if lines and lines[-1] == b"":
+        lines.pop()  # git output ends with a newline — don't re-join it
+    side = -1  # index of the current file section's ``--- `` line
+    for i, raw in enumerate(lines):
+        if raw.startswith(b"--- "):
+            side = i
+            continue
+        if not raw.startswith(b"@@"):
+            continue
+        match = _HUNK_RE.match(raw.decode("utf-8", "replace"))
+        if not (
+            match
+            and int(match.group(1)) == old_start
+            and int(match.group(2) or 1) == old_count
+            and int(match.group(3)) == new_start
+            and int(match.group(4) or 1) == new_count
+        ):
+            continue
+        if side < 0:
+            return None  # no side header — binary or mode-only diff
+        # The section's ``--- ``/``+++ `` pair is everything up to its
+        # first ``@@`` — the matched hunk may be a later one, and earlier
+        # hunks must not ride along in the patch.
+        hdr_end = side + 1
+        while hdr_end < i and not lines[hdr_end].startswith(b"@@"):
+            hdr_end += 1
+        end = i + 1
+        while end < len(lines) and not lines[end].startswith(b"@@"):
+            end += 1
+        return b"\n".join([*lines[side:hdr_end], *lines[i:end]]) + b"\n"
+    return None

@@ -1,4 +1,4 @@
-import type { GitDiffPayload, GitStatusPayload, ReplayMessage, SessionSummary, TreeEntry } from './types'
+import type { GitDiffPayload, GitStatusPayload, HunkApplyRequest, ReplayMessage, SessionSummary, TreeEntry } from './types'
 
 /**
  * Thin client for the /api REST endpoints.  Paths are relative so the
@@ -59,6 +59,10 @@ export const api = {
     return request(`/api/git/diff?path=${encodeURIComponent(path)}&staged=${staged ? 1 : 0}`, {
       cache: 'no-store',
     }) as Promise<GitDiffPayload>
+  },
+
+  gitApplyHunk(body: HunkApplyRequest): Promise<{ ok: boolean }> {
+    return request('/api/git/hunk', jsonBody(body)) as Promise<{ ok: boolean }>
   },
 
   tree(depth = 10): Promise<{ root: string; entries: TreeEntry[] }> {

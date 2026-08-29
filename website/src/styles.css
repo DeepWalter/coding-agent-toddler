@@ -416,11 +416,11 @@ body {
   margin: 4px 0;
 }
 
-:is(.message-content, .stream-line).markdown > :first-child {
+:is(.message-content, .stream-line).markdown> :first-child {
   margin-top: 0;
 }
 
-:is(.message-content, .stream-line).markdown > :last-child {
+:is(.message-content, .stream-line).markdown> :last-child {
   margin-bottom: 0;
 }
 
@@ -975,7 +975,8 @@ body {
 
 .activity-btn.active {
   color: var(--text);
-  box-shadow: inset 2px 0 0 var(--accent); /* VSCode's left accent bar */
+  box-shadow: inset 2px 0 0 var(--accent);
+  /* VSCode's left accent bar */
 }
 
 .activity-badge {
@@ -1261,7 +1262,8 @@ body {
 .tree-row .git-badge,
 .tree-row .git-dot,
 .sc-row .git-badge {
-  margin-left: auto; /* right-aligned in explorer / source-control rows */
+  margin-left: auto;
+  /* right-aligned in explorer / source-control rows */
 }
 
 .git-badge.mod,
@@ -1536,10 +1538,6 @@ body {
   scrollbar-width: thin;
 }
 
-.diff-col + .diff-col {
-  border-left: 1px solid var(--editor-border);
-}
-
 /* Sticky column header: stays pinned on vertical scroll inside the
  * column, scrolls away with the text horizontally (VSCode keeps it too). */
 .diff-col-header {
@@ -1599,4 +1597,74 @@ body {
 .diff-noeol {
   color: var(--text-subtle);
   font-style: italic;
+}
+
+/* The action rail: a thin fixed column between the two sides.  Each
+ * hunk's button pair is absolutely positioned on it, pinned to the
+ * hunk's middle by --hunk-top (content px, from the row offset math)
+ * minus --scroll-top (rewritten on every scroll); overflow: hidden
+ * clips pairs that scroll out of view. */
+.diff-mid {
+  flex: none;
+  width: 26px;
+  position: relative;
+  overflow: hidden;
+  border-left: 1px solid var(--editor-border);
+  border-right: 1px solid var(--editor-border);
+  background: var(--editor-surface);
+}
+
+.diff-action-group {
+  position: absolute;
+  left: 50%;
+  top: calc(var(--hunk-top) - var(--scroll-top, 0px));
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.diff-action-btn {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 14px;
+  padding: 0;
+  border: 1px solid var(--editor-border);
+  border-radius: 4px;
+  background: var(--editor-surface-2);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.diff-action-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.diff-action-btn.stage:hover:not(:disabled) {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.diff-action-btn.revert:hover:not(:disabled) {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.diff-action-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Apply errors land under the header, between it and the columns. */
+.diff-apply-error {
+  flex: none;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 8%, transparent);
+  border-bottom: 1px solid var(--editor-border);
 }

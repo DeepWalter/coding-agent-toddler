@@ -8,7 +8,7 @@ never reach outside it.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
@@ -57,6 +57,40 @@ class FileWrite(BaseModel):
     """Body for ``PUT /api/file``."""
 
     content: str
+
+
+class HunkLine(BaseModel):
+    """One content line of a hunk to apply.  The client sends the
+    parsed line it displays; ``old_ln``/``new_ln`` are ignored here."""
+
+    kind: Literal["ctx", "del", "add"]
+    text: str
+    no_newline: bool = False
+
+
+class HunkPatch(BaseModel):
+    """A parsed hunk — the shape ``GET /api/git/diff`` returns."""
+
+    old_start: int
+    old_count: int
+    new_start: int
+    new_count: int
+    lines: list[HunkLine]
+
+
+class HunkApplyRequest(BaseModel):
+    """Body for ``POST /api/git/hunk``.
+
+    The hunk is the one the frontend displays; git apply's context
+    matching rejects it if the file changed since the diff was shown.
+    """
+
+    path: str
+    staged: bool
+    action: Literal["stage", "unstage", "revert"]
+    old_path: str | None = None
+    new_path: str | None = None
+    hunk: HunkPatch
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +173,28 @@ async def git_diff(
     (worktree vs index); untracked paths diff against /dev/null."""
     try:
         return await git.git_diff(state.repo_root, path, staged=staged)
+    except git.DiffError as exc:
+        return JSONResponse(
+            {"error": exc.message}, status_code=exc.status_code,
+        )
+
+
+@router.post("/git/hunk", response_model=None)
+async def git_hunk_apply(
+    payload: HunkApplyRequest,
+    state: WebAppState = _GetState,
+) -> dict | JSONResponse:
+    """Apply one diff hunk — stage, unstage, or revert it."""
+    try:
+        return await git.git_apply_hunk(
+            state.repo_root,
+            payload.path,
+            staged=payload.staged,
+            action=payload.action,
+            old_path=payload.old_path,
+            new_path=payload.new_path,
+            hunk=payload.hunk.model_dump(),
+        )
     except git.DiffError as exc:
         return JSONResponse(
             {"error": exc.message}, status_code=exc.status_code,

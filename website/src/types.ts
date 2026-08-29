@@ -296,3 +296,22 @@ export interface GitDiffPayload {
 export type TabEntry =
   | { kind: 'file'; path: string }
   | { kind: 'diff'; path: string; staged: boolean }
+
+// ---------------------------------------------------------------------------
+// Git hunk apply (POST /api/git/hunk)
+// ---------------------------------------------------------------------------
+
+/** What a hunk action does: stage (worktree → index), unstage (index →
+ * HEAD), revert (discard). */
+export type HunkApplyAction = 'stage' | 'unstage' | 'revert'
+
+/** Body of POST /api/git/hunk — the hunk is the one on screen; git
+ * apply's context matching rejects a stale one (409). */
+export interface HunkApplyRequest {
+  path: string
+  staged: boolean
+  action: HunkApplyAction
+  old_path: string | null
+  new_path: string | null
+  hunk: DiffHunk
+}

@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+import toddler.web.git as web_git
 from toddler.config.settings import Settings
 from toddler.web.app import create_app
 from toddler.web.git import (
@@ -314,3 +315,480 @@ class TestStatusEndpoint:
         with TestClient(app) as client:
             resp = client.get("/api/git/status")
         assert set(resp.json()) == {"branch", "files", "dirs", "sections"}
+
+
+# ============================================================================
+# POST /api/git/hunk — per-hunk stage / unstage / revert
+# ============================================================================
+
+
+def _diff_payload(client, path: str, staged: bool = False) -> dict:
+    resp = client.get("/api/git/diff", params={"path": path, "staged": 1 if staged else 0})
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+@pytest.mark.skipif(
+    shutil.which("git") is None, reason="git is not installed",
+)
+class TestHunkApplyEndpoint:
+    """Per-hunk actions against a real repo: GET a diff, POST its first
+    hunk, refetch and assert the hunk is gone (or moved axis)."""
+
+    def _first_hunk(self, client, path: str, staged: bool = False) -> dict:
+        payload = _diff_payload(client, path, staged)
+        assert payload["hunks"], f"expected hunks for {path}"
+        return payload
+
+    def _body(self, payload: dict, action: str) -> dict:
+        """A request body built from a diff payload's first hunk."""
+        return {
+            "path": payload["path"],
+            "staged": payload["staged"],
+            "action": action,
+            "old_path": payload["old_path"],
+            "new_path": payload["new_path"],
+            "hunk": payload["hunks"][0],
+        }
+
+    def _porcelain(self, repo: Path) -> str:
+        out = subprocess.run(
+            ["git", "status", "--porcelain"], cwd=repo,
+            capture_output=True, text=True, check=True,
+        ).stdout
+        return out
+
+    def test_stage_moves_unstaged_hunk_to_index(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        (repo / "a.txt").write_text("a\nb\nc\n")
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            diff = self._first_hunk(client, "a.txt")
+            assert not diff["staged"]
+            resp = client.post("/api/git/hunk", json=self._body(diff, "stage"))
+            assert resp.status_code == 200, resp.text
+            assert resp.json() == {"ok": True}
+            # The hunk left the worktree-vs-index diff…
+            assert _diff_payload(client, "a.txt")["hunks"] == []
+            # …and landed in the index (staged-only M in porcelain).
+            assert self._porcelain(repo) == "M  a.txt\n"
+
+    def test_unstage_moves_staged_hunk_back_to_worktree(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        (repo / "a.txt").write_text("a\nb\nc\n")
+        _git("add", "a.txt", cwd=repo)
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            diff = self._first_hunk(client, "a.txt", staged=True)
+            resp = client.post("/api/git/hunk", json=self._body(diff, "unstage"))
+            assert resp.status_code == 200, resp.text
+            assert _diff_payload(client, "a.txt", staged=True)["hunks"] == []
+            # The change is now unstaged in the worktree.
+            assert _diff_payload(client, "a.txt")["hunks"]
+            assert self._porcelain(repo) == " M a.txt\n"
+
+    def test_revert_unstaged_restores_worktree(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        (repo / "a.txt").write_text("a\nb\nc\n")
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            diff = self._first_hunk(client, "a.txt")
+            resp = client.post("/api/git/hunk", json=self._body(diff, "revert"))
+            assert resp.status_code == 200, resp.text
+            assert (repo / "a.txt").read_text() == "a"  # back to the commit
+            assert _diff_payload(client, "a.txt")["hunks"] == []
+            assert self._porcelain(repo) == ""
+
+    def test_revert_staged_restores_index_and_worktree(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        (repo / "a.txt").write_text("a\nb\nc\n")
+        _git("add", "a.txt", cwd=repo)
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            diff = self._first_hunk(client, "a.txt", staged=True)
+            resp = client.post("/api/git/hunk", json=self._body(diff, "revert"))
+            assert resp.status_code == 200, resp.text
+            # --index: both the index and the worktree are back at HEAD —
+            # a clean tree with no residual unstaged change.
+            assert (repo / "a.txt").read_text() == "a"
+            assert self._porcelain(repo) == ""
+
+    def test_stage_works_on_mm_file(self, tmp_path):
+        # MM — the path is in both sections, so the unstaged tab must stay
+        # stageable (axis check, not a file-level "already staged" check).
+        repo = _git_repo(tmp_path)
+        (repo / "a.txt").write_text("a\nb\nc\n")
+        _git("add", "a.txt", cwd=repo)
+        (repo / "a.txt").write_text("a\nb\nc\nd\n")  # unstaged on top
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            diff = self._first_hunk(client, "a.txt")
+            resp = client.post("/api/git/hunk", json=self._body(diff, "stage"))
+            assert resp.status_code == 200, resp.text
+            # The unstaged hunk (adding d) moved to the index; the staged
+            # diff now carries the full worktree content (del "a" because
+            # the committed "a" had no trailing newline).
+            assert _diff_payload(client, "a.txt")["hunks"] == []
+            staged = _diff_payload(client, "a.txt", staged=True)
+            texts = [line["text"] for line in staged["hunks"][0]["lines"]]
+            assert texts == ["a", "a", "b", "c", "d"]
+
+    def test_revert_unstaged_deletion_recreates_file(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        (repo / "a.txt").unlink()
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            diff = self._first_hunk(client, "a.txt")
+            resp = client.post("/api/git/hunk", json=self._body(diff, "revert"))
+            assert resp.status_code == 200, resp.text
+            assert (repo / "a.txt").read_text() == "a"
+            assert self._porcelain(repo) == ""
+
+    def test_unstage_staged_deletion_restores_index(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        _git("rm", "-q", "a.txt", cwd=repo)
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            diff = self._first_hunk(client, "a.txt", staged=True)
+            resp = client.post("/api/git/hunk", json=self._body(diff, "unstage"))
+            assert resp.status_code == 200, resp.text
+            assert _diff_payload(client, "a.txt", staged=True)["hunks"] == []
+            assert self._porcelain(repo) == " D a.txt\n"
+
+    def test_revert_staged_deletion_restores_everywhere(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        _git("rm", "-q", "a.txt", cwd=repo)
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            diff = self._first_hunk(client, "a.txt", staged=True)
+            resp = client.post("/api/git/hunk", json=self._body(diff, "revert"))
+            assert resp.status_code == 200, resp.text
+            assert (repo / "a.txt").read_text() == "a"
+            assert self._porcelain(repo) == ""
+
+    def test_rename_content_hunk_applies(self, tmp_path):
+        # A staged rename is served as a pure-add diff: the pathspec keeps
+        # the old path out of the comparison, so git emits /dev/null for
+        # the old side (old_path None).  Unstaging that hunk drops the
+        # index entry — the rename is undone, the worktree file survives
+        # as untracked.
+        repo = _git_repo(tmp_path)
+        _git("mv", "a.txt", "renamed.txt", cwd=repo)
+        (repo / "renamed.txt").write_text("a\nX\n")
+        _git("add", "renamed.txt", cwd=repo)
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            diff = self._first_hunk(client, "renamed.txt", staged=True)
+            assert diff["old_path"] is None
+            resp = client.post("/api/git/hunk", json=self._body(diff, "unstage"))
+            assert resp.status_code == 200, resp.text
+            # The index entry is gone; the worktree file is untracked and
+            # the old path's deletion is staged.
+            assert self._porcelain(repo) == "D  a.txt\n?? renamed.txt\n"
+            # The untracked file still diffs against /dev/null on either
+            # axis — the refetch can never be empty for it.
+            assert _diff_payload(client, "renamed.txt", staged=True)["hunks"]
+            assert _diff_payload(client, "renamed.txt")["hunks"]
+
+    def test_path_with_spaces_and_unicode(self, tmp_path):
+        # Untracked files are unstageable — commit first so the hunk
+        # apply must C-quote the paths through the patch header.
+        repo = _git_repo(tmp_path)
+        path = "dir with space/ümlaut.txt"
+        p = repo / path
+        p.parent.mkdir()
+        p.write_text("one\ntwo\n")
+        _git("add", "-A", cwd=repo)
+        _git("commit", "-qm", "space", cwd=repo)
+        p.write_text("one\nTWO\n")
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            diff = self._first_hunk(client, path)
+            resp = client.post("/api/git/hunk", json=self._body(diff, "stage"))
+            assert resp.status_code == 200, resp.text
+            assert _diff_payload(client, path)["hunks"] == []
+            assert "M " in self._porcelain(repo)
+
+    def test_crlf_revert_restores_bytes(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        _git("config", "core.autocrlf", "false", cwd=repo)
+        (repo / "crlf.txt").write_bytes(b"one\r\ntwo\r\nthree\r\n")
+        _git("add", "crlf.txt", cwd=repo)
+        _git("commit", "-qm", "crlf", cwd=repo)
+        (repo / "crlf.txt").write_bytes(b"one\r\nTWO\r\nthree\r\n")
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            diff = self._first_hunk(client, "crlf.txt")
+            resp = client.post("/api/git/hunk", json=self._body(diff, "revert"))
+            assert resp.status_code == 200, resp.text
+            assert (repo / "crlf.txt").read_bytes() == b"one\r\ntwo\r\nthree\r\n"
+
+    def test_crlf_stage_updates_index(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        _git("config", "core.autocrlf", "false", cwd=repo)
+        (repo / "crlf.txt").write_bytes(b"one\r\ntwo\r\nthree\r\n")
+        _git("add", "crlf.txt", cwd=repo)
+        _git("commit", "-qm", "crlf", cwd=repo)
+        (repo / "crlf.txt").write_bytes(b"one\r\nTWO\r\nthree\r\n")
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            diff = self._first_hunk(client, "crlf.txt")
+            resp = client.post("/api/git/hunk", json=self._body(diff, "stage"))
+            assert resp.status_code == 200, resp.text
+            assert _diff_payload(client, "crlf.txt")["hunks"] == []
+            assert _diff_payload(client, "crlf.txt", staged=True)["hunks"]
+
+    def test_untracked_hunk_rejected(self, tmp_path):
+        repo = _repo(tmp_path)
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+        (repo / "u.txt").write_text("u\n")
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            diff = self._first_hunk(client, "u.txt")
+            resp = client.post("/api/git/hunk", json=self._body(diff, "stage"))
+            assert resp.status_code == 400
+            assert "untracked" in resp.json()["error"]
+
+    def test_unmerged_hunk_rejected(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        (repo / "a.txt").write_text("one\ntwo\nthree\n")
+        _git("add", "a.txt", cwd=repo)
+        _git("commit", "-qm", "base", cwd=repo)
+        _git("checkout", "-qb", "side", cwd=repo)
+        (repo / "a.txt").write_text("one\nSIDE\nthree\n")
+        _git("commit", "-qam", "side", cwd=repo)
+        _git("checkout", "-q", "main", cwd=repo)
+        (repo / "a.txt").write_text("one\nMAIN\nthree\n")
+        _git("commit", "-qam", "main", cwd=repo)
+        subprocess.run(["git", "merge", "side"], cwd=repo, capture_output=True)
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            body = {
+                "path": "a.txt",
+                "staged": False,
+                "action": "stage",
+                "old_path": "a.txt",
+                "new_path": "a.txt",
+                "hunk": {
+                    "old_start": 1, "old_count": 1,
+                    "new_start": 1, "new_count": 1,
+                    "lines": [{"kind": "ctx", "text": "one"}],
+                },
+            }
+            resp = client.post("/api/git/hunk", json=body)
+            assert resp.status_code == 400
+            assert "conflicts" in resp.json()["error"]
+
+    def test_stale_hunk_conflicts(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        (repo / "a.txt").write_text("a\nb\nc\n")
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            diff = self._first_hunk(client, "a.txt")
+            # The file changes between the diff and the apply.
+            (repo / "a.txt").write_text("a\nb\nX\n")
+            resp = client.post("/api/git/hunk", json=self._body(diff, "revert"))
+            assert resp.status_code == 409
+            assert "refresh" in resp.json()["error"]
+
+    def test_wrong_axis_rejected(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        (repo / "a.txt").write_text("a\nb\nc\n")
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            diff = self._first_hunk(client, "a.txt")  # unstaged → no unstage
+            resp = client.post("/api/git/hunk", json=self._body(diff, "unstage"))
+            assert resp.status_code == 400
+            _git("add", "a.txt", cwd=repo)
+            diff = self._first_hunk(client, "a.txt", staged=True)
+            resp = client.post("/api/git/hunk", json=self._body(diff, "stage"))
+            assert resp.status_code == 400
+
+    def test_invalid_action_rejected(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        (repo / "a.txt").write_text("a\nb\nc\n")
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            diff = self._first_hunk(client, "a.txt")
+            body = self._body(diff, "stage")
+            body["action"] = "frobnicate"
+            resp = client.post("/api/git/hunk", json=body)
+            assert resp.status_code == 422
+
+    def test_malformed_hunk_rejected(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        (repo / "a.txt").write_text("a\nb\nc\n")
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            diff = self._first_hunk(client, "a.txt")
+            body = self._body(diff, "stage")
+            body["hunk"]["lines"] = []  # empty — no change to apply
+            resp = client.post("/api/git/hunk", json=body)
+            assert resp.status_code == 400
+            assert "malformed" in resp.json()["error"]
+            # Header counts must match the lines (rejects truncated hunks).
+            body = self._body(diff, "stage")
+            body["hunk"]["old_count"] += 1
+            resp = client.post("/api/git/hunk", json=body)
+            assert resp.status_code == 400
+            assert "malformed" in resp.json()["error"]
+
+    def test_autocrlf_staged_revert(self, tmp_path):
+        # core.autocrlf=true stores LF in the index while the worktree is
+        # CRLF — the staged diff's raw bytes are what git apply needs, and
+        # --index must leave both sides at the committed content.
+        repo = _git_repo(tmp_path)
+        _git("config", "core.autocrlf", "true", cwd=repo)
+        (repo / "crlf.txt").write_bytes(b"one\r\ntwo\r\n")
+        _git("add", "crlf.txt", cwd=repo)
+        _git("commit", "-qm", "crlf", cwd=repo)
+        (repo / "crlf.txt").write_bytes(b"one\r\nTWO\r\n")
+        _git("add", "crlf.txt", cwd=repo)
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            diff = self._first_hunk(client, "crlf.txt", staged=True)
+            resp = client.post("/api/git/hunk", json=self._body(diff, "revert"))
+            assert resp.status_code == 200, resp.text
+            assert self._porcelain(repo) == ""
+
+    def test_stale_zero_context_hunk_conflicts(self, tmp_path):
+        # A full rewrite has no context lines — git apply's fuzzy matching
+        # would apply it by position, silently overwriting newer content.
+        # The server must reject it because the hunk no longer matches.
+        repo = _git_repo(tmp_path)
+        (repo / "a.txt").write_text("one\ntwo\nthree\n")
+        _git("add", "a.txt", cwd=repo)
+        _git("commit", "-qm", "base", cwd=repo)
+        (repo / "a.txt").write_text("new content\n")  # full rewrite
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            diff = self._first_hunk(client, "a.txt")
+            # Zero-context: the rewrite hunk carries no ctx lines.
+            kinds = [ln["kind"] for h in diff["hunks"] for ln in h["lines"]]
+            assert "ctx" not in kinds
+            # The file is rewritten again before the apply — the echoed
+            # hunk now matches nothing.
+            (repo / "a.txt").write_text("other rewrite\n")
+            resp = client.post("/api/git/hunk", json=self._body(diff, "revert"))
+            assert resp.status_code == 409
+            assert "refresh" in resp.json()["error"]
+            # The rewrite must not have been clobbered.
+            assert (repo / "a.txt").read_text() == "other rewrite\n"
+
+    def test_forged_side_names_conflict(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        (repo / "a.txt").write_text("a\nb\nc\n")
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            diff = self._first_hunk(client, "a.txt")
+            body = self._body(diff, "revert")
+            body["old_path"] = "other.txt"  # forged patch headers
+            body["new_path"] = "other.txt"
+            resp = client.post("/api/git/hunk", json=body)
+            assert resp.status_code == 409
+            assert "refresh" in resp.json()["error"]
+            # Nothing was reverted.
+            assert (repo / "a.txt").read_text() == "a\nb\nc\n"
+
+    def test_crlf_no_final_newline_roundtrip(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        _git("config", "core.autocrlf", "false", cwd=repo)
+        (repo / "a.txt").write_bytes(b"one\r\ntwo\r")
+        _git("add", "a.txt", cwd=repo)
+        _git("commit", "-qm", "crlf", cwd=repo)
+        (repo / "a.txt").write_bytes(b"one\r\nTWO\r")
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            diff = self._first_hunk(client, "a.txt")
+            # The final line has no newline — its \r must survive the
+            # round-trip too (this is the byte the old rebuild dropped).
+            assert diff["hunks"][0]["lines"][-1]["no_newline"] is True
+            resp = client.post("/api/git/hunk", json=self._body(diff, "stage"))
+            assert resp.status_code == 200, resp.text
+            staged = self._first_hunk(client, "a.txt", staged=True)
+            resp = client.post("/api/git/hunk", json=self._body(staged, "revert"))
+            assert resp.status_code == 200, resp.text
+            assert (repo / "a.txt").read_bytes() == b"one\r\ntwo\r"
+
+    def test_unstage_crlf_deletion_preserves_index_bytes(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        _git("config", "core.autocrlf", "false", cwd=repo)
+        (repo / "crlf.txt").write_bytes(b"one\r\ntwo\r\n")
+        _git("add", "crlf.txt", cwd=repo)
+        _git("commit", "-qm", "crlf", cwd=repo)
+        _git("rm", "-q", "crlf.txt", cwd=repo)
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            diff = self._first_hunk(client, "crlf.txt", staged=True)
+            resp = client.post("/api/git/hunk", json=self._body(diff, "unstage"))
+            assert resp.status_code == 200, resp.text
+        # The deletion is unstaged; the index entry is back — with the
+        # exact CRLF bytes, not LF-ified ones.
+        out = subprocess.run(
+            ["git", "show", ":crlf.txt"], cwd=repo, capture_output=True, check=True,
+        ).stdout
+        assert out == b"one\r\ntwo\r\n"
+
+    def test_mixed_eol_full_rewrite_stage(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        _git("config", "core.autocrlf", "false", cwd=repo)
+        (repo / "a.txt").write_bytes(b"one\r\ntwo\nthree\r\n")
+        _git("add", "a.txt", cwd=repo)
+        _git("commit", "-qm", "mixed", cwd=repo)
+        (repo / "a.txt").write_bytes(b"ONE\r\nTWO\nTHREE\r\n")
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            diff = self._first_hunk(client, "a.txt")
+            resp = client.post("/api/git/hunk", json=self._body(diff, "stage"))
+            assert resp.status_code == 200, resp.text
+        # The index must hold the worktree bytes verbatim.
+        out = subprocess.run(
+            ["git", "show", ":a.txt"], cwd=repo, capture_output=True, check=True,
+        ).stdout
+        assert out == b"ONE\r\nTWO\nTHREE\r\n"
+
+    def test_apply_failure_while_still_matching_is_500(self, tmp_path, monkeypatch):
+        real_git = web_git._git
+
+        async def failing_git(*args, cwd, stdin=None):
+            if args[0] == "apply":
+                return b"", b"patch does not apply", 1
+            return await real_git(*args, cwd=cwd, stdin=stdin)
+
+        monkeypatch.setattr(web_git, "_git", failing_git)
+        repo = _git_repo(tmp_path)
+        (repo / "a.txt").write_text("a\nb\nc\n")
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            diff = self._first_hunk(client, "a.txt")
+            resp = client.post("/api/git/hunk", json=self._body(diff, "revert"))
+            # The hunk still matches the fresh diff — this is a real apply
+            # failure, reported as a 500 with git's stderr.
+            assert resp.status_code == 500
+            assert "patch does not apply" in resp.json()["error"]
+
+    def test_apply_failure_after_stale_change_is_409(self, tmp_path, monkeypatch):
+        real_git = web_git._git
+        changed = False
+
+        async def failing_git(*args, cwd, stdin=None):
+            nonlocal changed
+            if args[0] == "apply":
+                if not changed:
+                    # Mutate the file on the first apply attempt, then
+                    # fail — the re-verify must see the new content.
+                    (Path(cwd) / "a.txt").write_text("a\nb\nX\n")
+                    changed = True
+                return b"", b"patch does not apply", 1
+            return await real_git(*args, cwd=cwd, stdin=stdin)
+
+        monkeypatch.setattr(web_git, "_git", failing_git)
+        repo = _git_repo(tmp_path)
+        (repo / "a.txt").write_text("a\nb\nc\n")
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            diff = self._first_hunk(client, "a.txt")
+            resp = client.post("/api/git/hunk", json=self._body(diff, "revert"))
+            # The re-verify found the file changed — staleness, a 409.
+            assert resp.status_code == 409
+            assert "refresh" in resp.json()["error"]

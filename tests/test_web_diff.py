@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 
 from toddler.config.settings import Settings
 from toddler.web.app import create_app
-from toddler.web.diffparse import DiffLine, parse_diff
+from toddler.web.diffparse import DiffLine, extract_hunk, parse_diff
 
 # ============================================================================
 # Helpers
@@ -229,6 +229,102 @@ class TestParseDiff:
         (hunk,) = parse_diff(out)["hunks"]
         assert (hunk.old_start, hunk.old_count) == (1, 1)
         assert (hunk.new_start, hunk.new_count) == (1, 1)
+
+
+class TestExtractHunk:
+    def test_single_hunk_verbatim(self):
+        out = (
+            b"diff --git a/a.txt b/a.txt\n"
+            b"index 1111111..2222222 100644\n"
+            b"--- a/a.txt\n"
+            b"+++ b/a.txt\n"
+            b"@@ -1,2 +1,2 @@\n"
+            b" a\n"
+            b"-b\n"
+            b"+b2\n"
+        )
+        raw = extract_hunk(out, old_start=1, old_count=2, new_start=1, new_count=2)
+        assert raw == (
+            b"--- a/a.txt\n"
+            b"+++ b/a.txt\n"
+            b"@@ -1,2 +1,2 @@\n"
+            b" a\n"
+            b"-b\n"
+            b"+b2\n"
+        )
+
+    def test_multi_hunk_picks_by_counts(self):
+        out = (
+            b"--- a/a.txt\n"
+            b"+++ b/a.txt\n"
+            b"@@ -1,1 +1,1 @@\n"
+            b" first\n"
+            b"@@ -10,2 +9,2 @@\n"
+            b" later\n"
+            b"-x\n"
+            b"+y\n"
+        )
+        raw = extract_hunk(out, old_start=10, old_count=2, new_start=9, new_count=2)
+        assert raw == (
+            b"--- a/a.txt\n"
+            b"+++ b/a.txt\n"
+            b"@@ -10,2 +9,2 @@\n"
+            b" later\n"
+            b"-x\n"
+            b"+y\n"
+        )
+
+    def test_crlf_preserved(self):
+        out = b"--- a/a.txt\n+++ b/a.txt\n@@ -1,1 +1,1 @@\n-a\r\n+b\r\n"
+        raw = extract_hunk(out, old_start=1, old_count=1, new_start=1, new_count=1)
+        assert b"\r\n" in raw
+        assert raw.endswith(b"-a\r\n+b\r\n")
+
+    def test_no_newline_marker_included(self):
+        out = (
+            b"--- a/a.txt\n"
+            b"+++ b/a.txt\n"
+            b"@@ -1,1 +1,1 @@\n"
+            b"-a\n"
+            b"\\ No newline at end of file\n"
+            b"+b\n"
+        )
+        raw = extract_hunk(out, old_start=1, old_count=1, new_start=1, new_count=1)
+        assert raw == (
+            b"--- a/a.txt\n"
+            b"+++ b/a.txt\n"
+            b"@@ -1,1 +1,1 @@\n"
+            b"-a\n"
+            b"\\ No newline at end of file\n"
+            b"+b\n"
+        )
+
+    def test_dev_null_sides(self):
+        out = (
+            b"--- /dev/null\n"
+            b"+++ b/new.txt\n"
+            b"@@ -0,0 +1,1 @@\n"
+            b"+hi\n"
+        )
+        raw = extract_hunk(out, old_start=0, old_count=0, new_start=1, new_count=1)
+        assert raw.startswith(b"--- /dev/null\n")
+        assert b"@@ -0,0 +1,1 @@" in raw
+
+    def test_counts_default_to_one(self):
+        out = b"--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-a\n+a\n"
+        raw = extract_hunk(out, old_start=1, old_count=1, new_start=1, new_count=1)
+        assert raw.endswith(b"@@ -1 +1 @@\n-a\n+a\n")
+
+    def test_absent_counts_returns_none(self):
+        out = b"--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-a\n+a\n"
+        assert extract_hunk(out, old_start=2, old_count=1, new_start=1, new_count=1) is None
+
+    def test_no_dev_null_header_returns_none(self):
+        out = b"diff --git a/x.sh b/x.sh\nold mode 100644\nnew mode 100755\n"
+        assert extract_hunk(out, old_start=1, old_count=1, new_start=1, new_count=1) is None
+
+    def test_empty_returns_none(self):
+        assert extract_hunk(b"", old_start=1, old_count=1, new_start=1, new_count=1) is None
 
 
 # ============================================================================

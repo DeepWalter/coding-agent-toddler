@@ -34,6 +34,7 @@ const emit = defineEmits<{
   'close-tab': [tab: TabEntry]
   'open-file': [path: string]
   'file-saved': [path: string]
+  'refresh-git': []
 }>()
 
 interface EditorTab {
@@ -496,6 +497,7 @@ watch(() => props.active, (tab) => {
       :tab="activeDiff"
       :git="git"
       @open-file="emit('open-file', $event)"
+      @refresh-git="emit('refresh-git')"
     />
 
     <div v-else class="editor-header">

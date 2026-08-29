@@ -458,6 +458,7 @@ function onDividerUp(event: PointerEvent) {
           @close-tab="closeTab"
           @open-file="openFile"
           @file-saved="git.refresh"
+          @refresh-git="git.refresh"
         />
       </section>
 

@@ -12,6 +12,10 @@ import type { DiffHunk, DiffLine } from './types'
 export interface DiffRow {
   old: DiffLine | null
   new: DiffLine | null
+  /** The owning hunk — set on the first row of each hunk.  Rows never
+   * span hunks (flush() runs at context lines and hunk ends), so each
+   * hunk boundary lands on exactly one row. */
+  hunk?: DiffHunk
 }
 
 export function buildRows(hunks: DiffHunk[]): DiffRow[] {
@@ -19,11 +23,13 @@ export function buildRows(hunks: DiffHunk[]): DiffRow[] {
   for (const hunk of hunks) {
     const dels: DiffLine[] = []
     const adds: DiffLine[] = []
+    let first = true
     const flush = () => {
       if (!dels.length && !adds.length) return
       const n = Math.max(dels.length, adds.length)
       for (let i = 0; i < n; i++) {
-        rows.push({ old: dels[i] ?? null, new: adds[i] ?? null })
+        rows.push({ old: dels[i] ?? null, new: adds[i] ?? null, hunk: first ? hunk : undefined })
+        first = false
       }
       dels.length = 0
       adds.length = 0
@@ -31,7 +37,8 @@ export function buildRows(hunks: DiffHunk[]): DiffRow[] {
     for (const line of hunk.lines) {
       if (line.kind === 'ctx') {
         flush()
-        rows.push({ old: line, new: line })
+        rows.push({ old: line, new: line, hunk: first ? hunk : undefined })
+        first = false
       } else if (line.kind === 'del') {
         dels.push(line)
       } else {
