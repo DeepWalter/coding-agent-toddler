@@ -54,11 +54,17 @@ def _notice_frame(message: str) -> dict:
 def _session_payload(state: WebAppState) -> dict:
     mgr = state.session_mgr
     session = mgr.session
+    # Gating is pinned to manual while a plan is explored, proposed, or
+    # awaiting approval — the pill is frozen then (see _cmd_set_mode).
+    sm = mgr.state_machine
     return {
         "id": session.id if session else None,
         "title": session.title if session else None,
         "mode_label": mgr.mode_label,
         "permission_mode": mgr.permission_mode.value,
+        "gating_editable": not (
+            sm.current_mode.is_plan_related and not sm.is_plan_executing
+        ),
         "context_usage_pct": mgr.context_usage_pct,
         "model": state.llm.model,
         "cwd": str(state.repo_root),
@@ -318,14 +324,48 @@ async def _cmd_set_mode(
     websocket: WebSocket, state: WebAppState, raw: dict,
 ) -> None:
     mode = raw.get("mode")
-    if mode not in ("manual", "auto"):
+    if not isinstance(mode, str) or mode not in ("manual", "auto", "plan"):
         await _send_error(
             websocket, "invalid_mode",
-            "mode must be 'manual' or 'auto'.",
+            "mode must be 'manual', 'auto' or 'plan'.",
         )
         return
-    state.session_mgr.set_permission_mode(PermissionMode(mode))
+    mgr = state.session_mgr
+    if mode == "plan":
+        # Plan flags the *next* turn, so it can only be set while idle.
+        # The busy check and the flag flip run under the busy lock — a
+        # turn starting on another tab cannot slip in between (same
+        # TOCTOU window as the mutating slash commands).  Gating drops
+        # to manual, as in the CLI's ``/mode plan``.
+        async with state.runner.mutation_guard() as acquired:
+            if not acquired:
+                await _send_error(
+                    websocket, "busy",
+                    "Plan mode can only be set while the agent is idle.",
+                )
+                return
+            mgr.state_machine.flag_plan_pending()
+            mgr.set_permission_mode(PermissionMode.MANUAL)
+    else:
+        # A live gating flip — a single synchronous set read per tool
+        # approval, so no busy lock is needed (same as approve_tool).
+        # The plan workflow pins gating to manual until the plan is
+        # approved: reject flips while it is explored, proposed, or
+        # awaiting approval; idle and the execution phases allow them.
+        sm = mgr.state_machine
+        if sm.current_mode.is_plan_related and not sm.is_plan_executing:
+            await _send_error(
+                websocket, "frozen",
+                "Gating is fixed to manual until the plan is approved.",
+            )
+            return
+        # ``/mode manual|auto`` clears an explicit plan flag.
+        sm.clear_plan_pending()
+        mgr.set_permission_mode(PermissionMode(mode))
     await websocket.send_json(_ack_frame("set_mode", True))
+    # Broadcast the new mode_label/permission_mode so every tab's pill
+    # (and the status bar) updates — the ack alone leaves other tabs stale.
+    state.runner.broadcast(_session_info_frame(state))
 
 
 async def _cmd_ping(websocket: WebSocket, state: WebAppState, raw: dict) -> None:

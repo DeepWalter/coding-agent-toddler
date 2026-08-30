@@ -11,7 +11,7 @@ import StatusBar from './components/StatusBar.vue'
 import { useConsole } from './composables/useConsole'
 import { useGitStatus } from './composables/useGitStatus'
 import { useWebSocket } from './composables/useWebSocket'
-import type { TabEntry } from './types'
+import type { Mode, TabEntry } from './types'
 import { tabKey } from './utils'
 
 // Transport → state: every websocket frame goes through the console
@@ -39,10 +39,17 @@ onFrame((frame) => {
 })
 void git.refresh()
 
-function toggleMode() {
-  const mode = state.session?.permission_mode === 'auto' ? 'manual' : 'auto'
-  setMode(mode)
-}
+// The input-bar dropdown's current value.  Plan is not a gating mode —
+// it flags the next turn to run in plan mode (gating drops to manual) —
+// so the pill shows the live permission gate; a separate plan badge
+// appears while mode_label reports PLAN (a pending plan or a plan turn
+// in flight).
+const pillMode = computed<Mode>(() =>
+  state.session?.permission_mode === 'auto' ? 'auto' : 'manual',
+)
+const inPlan = computed(() =>
+  (state.session?.mode_label ?? '').toUpperCase() === 'PLAN',
+)
 
 // Three split panes: explorer | editor | console.  Each divider drags its
 // leading pane's width as a % of the split width, clamped cross-wise so
@@ -371,16 +378,6 @@ function onDividerUp(event: PointerEvent) {
             <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
           </svg>
         </button>
-        <button
-          type="button"
-          class="mode-toggle"
-          :class="state.session?.permission_mode ?? 'manual'"
-          :disabled="!connected"
-          :title="`permission mode — click to switch to ${state.session?.permission_mode === 'auto' ? 'manual' : 'auto'}`"
-          @click="toggleMode"
-        >
-          {{ state.session?.permission_mode ?? 'manual' }}
-        </button>
         <SessionList
           :current="state.session"
           :connected="connected"
@@ -495,8 +492,14 @@ function onDividerUp(event: PointerEvent) {
         <InputBar
           :busy="state.busy"
           :connected="connected"
+          :mode="pillMode"
+          :gating-editable="state.session?.gating_editable ?? false"
+          :in-plan="inPlan"
+          :model="state.session?.model ?? ''"
+          :context-pct="state.session?.context_usage_pct ?? 0"
           @send="sendTurn"
           @cancel="cancelTurn"
+          @set-mode="setMode"
         />
       </section>
     </div>

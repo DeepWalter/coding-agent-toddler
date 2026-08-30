@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { countStatus } from '../gitStatus'
 import type { ConsoleState, GitStatusState } from '../types'
 
 const props = defineProps<{
@@ -9,18 +8,6 @@ const props = defineProps<{
   connecting: boolean
   git: GitStatusState
 }>()
-
-const gitCounts = computed(() => {
-  const c = countStatus(props.git.files)
-  return [
-    { letter: 'M', n: c.modified, cls: 'mod' },
-    { letter: 'A', n: c.added, cls: 'add' },
-    { letter: 'D', n: c.deleted, cls: 'del' },
-    { letter: 'R', n: c.renamed, cls: 'rename' },
-    { letter: 'U', n: c.untracked, cls: 'untracked' },
-    { letter: 'C', n: c.conflict, cls: 'conflict' },
-  ].filter((row) => row.n > 0)
-})
 
 const connectionText = computed(() => {
   if (props.connected) return 'connected'
@@ -32,23 +19,28 @@ const connectionText = computed(() => {
   <footer class="status-bar">
     <span class="status-dot" :class="connected ? 'on' : 'off'" />
     <span class="status-text">{{ connectionText }}</span>
-    <template v-if="state.session">
-      <span class="status-sep">·</span>
-      <span>{{ state.session.model }}</span>
-      <span class="status-sep">·</span>
-      <span>{{ state.session.mode_label }} mode</span>
-      <span class="status-sep">·</span>
-      <span>context {{ state.session.context_usage_pct }}%</span>
-      <span v-if="state.session.title" class="status-sep">·</span>
-      <span v-if="state.session.title" class="status-dim">{{ state.session.title }}</span>
-    </template>
     <template v-if="git.branch">
-      <span class="status-sep">·</span>
-      <span class="status-dim">{{ git.branch }}</span>
-      <template v-for="c in gitCounts" :key="c.letter">
-        <span class="status-sep">·</span>
-        <span :class="['git-count', c.cls]">{{ c.letter }} {{ c.n }}</span>
-      </template>
+      <span class="status-dim status-branch">
+        <svg
+          class="status-branch-icon"
+          viewBox="0 0 24 24"
+          width="12"
+          height="12"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <line x1="6" y1="6" x2="6" y2="15" />
+          <path d="M18 9a9 9 0 0 1-9 9" />
+          <circle cx="6" cy="3" r="3" />
+          <circle cx="18" cy="6" r="3" />
+          <circle cx="6" cy="18" r="3" />
+        </svg>
+        {{ git.branch }}
+      </span>
     </template>
     <span v-if="state.busy" class="status-busy">● running…</span>
   </footer>

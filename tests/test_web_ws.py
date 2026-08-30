@@ -21,6 +21,7 @@ from tests.mocks import (
     tool_use_response,
 )
 from toddler.agent.planner import Plan, PlanStep
+from toddler.agent.state_machine import AgentMode
 from toddler.cli.commands import CommandResult
 from toddler.config.settings import Settings
 from toddler.web.app import create_app
@@ -90,6 +91,7 @@ class TestTurnStream:
             assert hello["messages"] == []
             assert hello["session"]["model"] == "test-model"
             assert hello["session"]["permission_mode"] == "manual"
+            assert hello["session"]["gating_editable"] is True
             assert hello["session"]["cwd"] == str(tmp_path)
             assert hello["conversation"]["sequence_num"] == 1
 
@@ -471,6 +473,8 @@ class TestPlanReconnect:
                 assert hello2["paused"] is None
                 assert hello2["plan"]["plan"]["id"] == "plan-1"
                 assert hello2["plan"]["steps"] == []
+                # The pill is frozen while the plan awaits approval.
+                assert hello2["session"]["gating_editable"] is False
 
                 tab2.send_json({
                     "cmd": "approve_plan",
@@ -967,6 +971,42 @@ class TestSimpleCommands:
             assert ack == {"type": "ack", "cmd": "set_mode", "accepted": True}
             assert client.app.state.web.session_mgr.permission_mode.value == "auto"
 
+    def test_set_mode_plan(self, tmp_path):
+        """The pill's plan state flags the next turn for plan mode (same
+        semantics as ``/mode plan``) and broadcasts session_info so every
+        tab's pill updates."""
+        llm = make_mock_llm()
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "set_mode", "mode": "plan"})
+            ack = ws.receive_json()
+            assert ack == {"type": "ack", "cmd": "set_mode", "accepted": True}
+            mgr = client.app.state.web.session_mgr
+            assert mgr.permission_mode.value == "manual"
+            assert mgr.state_machine.plan_pending is True
+            info = ws.receive_json()
+            assert info["type"] == "session_info"
+            assert info["session"]["mode_label"] == "PLAN"
+
+    def test_set_mode_manual_clears_plan(self, tmp_path):
+        """Switching back to manual/auto cancels a pending plan flag,
+        mirroring the CLI's ``/mode manual``."""
+        llm = make_mock_llm()
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "set_mode", "mode": "plan"})
+            ws.receive_json()  # ack
+            ws.receive_json()  # session_info
+            ws.send_json({"cmd": "set_mode", "mode": "manual"})
+            assert ws.receive_json() == {
+                "type": "ack", "cmd": "set_mode", "accepted": True,
+            }
+            mgr = client.app.state.web.session_mgr
+            assert mgr.permission_mode.value == "manual"
+            assert mgr.state_machine.plan_pending is False
+
     def test_set_mode_invalid(self, tmp_path):
         llm = make_mock_llm()
         app = _app(tmp_path, llm)
@@ -975,6 +1015,133 @@ class TestSimpleCommands:
             ws.send_json({"cmd": "set_mode", "mode": "sneaky"})
             error = ws.receive_json()
             assert error["code"] == "invalid_mode"
+
+    def test_set_mode_non_string_rejected(self, tmp_path):
+        """A non-string mode (JSON array/object) must not raise a
+        TypeError that kills the connection — same invalid_mode error."""
+        llm = make_mock_llm()
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "set_mode", "mode": ["auto"]})
+            error = ws.receive_json()
+            assert error == {
+                "type": "error",
+                "code": "invalid_mode",
+                "message": "mode must be 'manual', 'auto' or 'plan'.",
+            }
+            # The connection survives.
+            ws.send_json({"cmd": "ping"})
+            assert ws.receive_json() == {"type": "pong"}
+
+    def test_set_mode_plan_while_busy_rejected(self, tmp_path):
+        """Plan flags the next turn, so it can only be set while idle —
+        a mid-turn click is rejected with a busy error and leaves the
+        pending flag untouched."""
+        llm = make_mock_llm(pause_on_write(str(tmp_path / "out.txt")))
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "turn", "input": "write"})
+            _wait_for(ws, "agent_paused")
+
+            ws.send_json({"cmd": "set_mode", "mode": "plan"})
+            error = ws.receive_json()
+            assert error == {
+                "type": "error",
+                "code": "busy",
+                "message": "Plan mode can only be set while the agent is idle.",
+            }
+            mgr = client.app.state.web.session_mgr
+            assert mgr.state_machine.plan_pending is False
+            assert mgr.permission_mode.value == "manual"
+
+            ws.send_json({"cmd": "cancel"})
+            _wait_for(ws, "turn_cancelled")
+
+    def test_set_mode_gating_frozen_until_plan_approved(self, tmp_path):
+        """Gating is pinned to manual while a plan awaits approval — a
+        flip is rejected with a frozen error, whichever tab clicks."""
+        llm = make_mock_llm(
+            text_response("Exploring..."),
+            plan_proposal_response(_plan()),
+        )
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({
+                "cmd": "turn",
+                "input": "refactor thing",
+                "force_plan": True,
+            })
+            _wait_for(ws, "plan_proposed")
+
+            ws.send_json({"cmd": "set_mode", "mode": "auto"})
+            error = ws.receive_json()
+            assert error == {
+                "type": "error",
+                "code": "frozen",
+                "message": "Gating is fixed to manual until the plan is approved.",
+            }
+            mgr = client.app.state.web.session_mgr
+            assert mgr.permission_mode.value == "manual"
+
+            ws.send_json({
+                "cmd": "reject_plan", "plan_id": "plan-1", "feedback": "",
+            })
+            _wait_for(ws, "agent_finished")
+
+    def test_set_mode_gating_allowed_during_executing(self, tmp_path):
+        """A live gating flip while a plain turn runs (EXECUTING) is
+        allowed and takes effect immediately."""
+        llm = make_mock_llm(
+            pause_on_write(str(tmp_path / "out.txt")),
+            text_response("Done."),
+        )
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "turn", "input": "write"})
+            _wait_for(ws, "agent_paused")
+
+            ws.send_json({"cmd": "set_mode", "mode": "auto"})
+            ack = ws.receive_json()
+            assert ack == {"type": "ack", "cmd": "set_mode", "accepted": True}
+            mgr = client.app.state.web.session_mgr
+            assert mgr.permission_mode.value == "auto"
+            info = ws.receive_json()
+            assert info["type"] == "session_info"
+            assert info["session"]["gating_editable"] is True
+            assert info["session"]["permission_mode"] == "auto"
+
+            # The parked approval is still answerable.
+            ws.send_json({"cmd": "approve_tool", "tool_id": "call_write"})
+            _wait_for(ws, "ack")
+            _wait_for(ws, "agent_finished")
+
+    def test_set_mode_gating_allowed_during_plan_executing(self, tmp_path):
+        """Once the plan is approved (PLAN_EXECUTING), gating flips are
+        live again — e.g. downgrading back to manual mid-execution."""
+        llm = make_mock_llm()
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            sm = client.app.state.web.session_mgr.state_machine
+            assert sm.transition(AgentMode.PLAN_EXPLORING)
+            assert sm.transition(AgentMode.PLAN_PROPOSING)
+            assert sm.transition(AgentMode.PLAN_WAITING)
+            assert sm.transition(AgentMode.PLAN_EXECUTING)
+
+            ws.send_json({"cmd": "set_mode", "mode": "auto"})
+            ack = ws.receive_json()
+            assert ack == {"type": "ack", "cmd": "set_mode", "accepted": True}
+            assert client.app.state.web.session_mgr.permission_mode.value == "auto"
+            info = ws.receive_json()
+            assert info["type"] == "session_info"
+            assert info["session"]["gating_editable"] is True
+            assert info["session"]["permission_mode"] == "auto"
+            # The plan turn is still reported as PLAN.
+            assert info["session"]["mode_label"] == "PLAN"
 
     def test_unknown_command(self, tmp_path):
         llm = make_mock_llm()

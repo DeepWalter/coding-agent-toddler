@@ -14,10 +14,19 @@ export interface SessionInfo {
   title: string | null
   mode_label: string
   permission_mode: 'manual' | 'auto'
+  /** True when the pill may flip gating: idle, or a turn in an execution
+   *  phase.  Frozen while a plan is explored/proposed/awaiting approval —
+   *  gating is pinned to manual until the plan is approved. */
+  gating_editable: boolean
   context_usage_pct: number
   model: string
   cwd: string
 }
+
+/** Workflow/gating mode — the input-bar pill cycles manual → auto → plan.
+ *  Plan is not a gating mode (gating drops to manual); it flags the next
+ *  turn to run in plan mode, mirroring the CLI's `/mode plan`. */
+export type Mode = 'manual' | 'auto' | 'plan'
 
 export interface ConversationInfo {
   id: string | null
@@ -148,7 +157,7 @@ export type Command =
   | { cmd: 'deny_tool'; tool_id: string }
   | { cmd: 'approve_plan'; plan_id: string; mode: 'manual' | 'auto' }
   | { cmd: 'reject_plan'; plan_id: string; feedback?: string }
-  | { cmd: 'set_mode'; mode: 'manual' | 'auto' }
+  | { cmd: 'set_mode'; mode: Mode }
   | { cmd: 'new_conversation'; title?: string }
   | { cmd: 'switch_session'; session_id: string }
   | { cmd: 'ping' }

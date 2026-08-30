@@ -14,6 +14,7 @@
 }
 
 [data-theme="solarized-dark"] {
+  color-scheme: dark;
   /* Base colors */
   --editor-bg: #002b36;
   --editor-surface: #073642;
@@ -60,6 +61,7 @@
 }
 
 [data-theme="solarized-light"] {
+  color-scheme: light;
   /* Base colors */
   --editor-bg: #fdf6e3;
   --editor-surface: #eee8d5;
@@ -104,6 +106,7 @@
 }
 
 [data-theme="tokyo-night"] {
+  color-scheme: dark;
   --editor-bg: #1a1b26;
   --editor-surface: #16161e;
   --editor-surface-2: #24283b;
@@ -158,6 +161,7 @@
 }
 
 [data-theme="github-light"] {
+  color-scheme: light;
   /* Base colors */
   --editor-bg: #ffffff;
   --editor-surface: #f6f8fa;
@@ -269,7 +273,10 @@ body {
 .mode-toggle {
   border: 1px solid var(--editor-border);
   border-radius: 999px;
-  background: var(--editor-surface-2);
+  background-color: var(--editor-surface-2);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   color: var(--text-subtle);
   font: inherit;
   font-size: 11px;
@@ -277,13 +284,121 @@ body {
   cursor: pointer;
 }
 
+.mode-toggle-icon {
+  flex: none;
+}
+
+.mode-picker {
+  position: relative;
+  display: inline-flex;
+}
+
+.mode-menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 6px);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 210px;
+  padding: 4px;
+  border: 1px solid var(--editor-border);
+  border-radius: 8px;
+  background: var(--editor-surface-2);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.25);
+}
+
+.mode-menu-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mode-menu-item:hover:not(:disabled),
+.mode-menu-item:focus-visible {
+  background: var(--editor-surface-3);
+}
+
+.mode-menu-item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.mode-menu-item:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.mode-menu-item.selected {
+  background: var(--editor-surface-3);
+}
+
+.mode-menu-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.mode-menu-icon {
+  flex: none;
+}
+
+.mode-menu-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Identity colors mirror the pill: manual = neutral, auto = accent,
+   plan = warning. */
+.mode-menu-item.auto .mode-menu-label {
+  color: var(--accent-secondary);
+}
+
+.mode-menu-item.plan .mode-menu-label {
+  color: var(--warning);
+}
+
 .mode-toggle.auto {
   color: var(--accent-secondary);
   border-color: var(--accent-secondary);
 }
 
+.mode-toggle.plan {
+  color: var(--warning);
+  border-color: var(--warning);
+}
+
+/* Plan is not a gating mode — it shows as a badge beside the pill while
+   a plan is pending or a plan turn is running; the pill itself always
+   shows the live permission gate. */
+.plan-badge {
+  align-self: center;
+  margin-left: 6px;
+  padding: 2px 7px;
+  border: 1px solid var(--warning);
+  border-radius: 999px;
+  color: var(--warning);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
 .mode-toggle:hover:not(:disabled) {
-  background: var(--editor-surface-3);
+  background-color: var(--editor-surface-3);
 }
 
 .mode-toggle:disabled {
@@ -790,16 +905,16 @@ body {
 
 .input-bar {
   display: flex;
+  flex-direction: column;
   gap: 8px;
   padding: 10px 14px;
   border-top: 1px solid var(--editor-border);
   background: var(--editor-surface);
   flex: none;
-  align-items: stretch;
 }
 
 .input-bar-textarea {
-  flex: 1;
+  width: 100%;
   resize: none;
   background: var(--editor-bg);
   color: var(--text);
@@ -816,6 +931,35 @@ body {
 
 .input-bar-textarea:disabled {
   opacity: 0.55;
+}
+
+.input-bar-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.input-bar-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  /* visible so the mode popup can open above the pill — the model name
+     still ellipsizes on its own (overflow:hidden item, min-size 0) */
+  overflow: visible;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.input-bar-meta-sep {
+  opacity: 0.6;
+}
+
+.input-bar-model {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .btn {
@@ -877,15 +1021,21 @@ body {
   flex: none;
 }
 
-.status-sep {
-  opacity: 0.6;
-}
-
 .status-dim {
   color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.status-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.status-branch-icon {
+  flex: none;
 }
 
 .status-busy {
@@ -1364,8 +1514,8 @@ body {
 }
 
 /* ------------------------------------------------------------------ */
-/* Git status badges (explorer rows + editor tabs) and status-bar     */
-/* counts — colors map to the theme variables in both palettes.       */
+/* Git status badges (explorer rows + editor tabs) — colors map to    */
+/* the theme variables in both palettes.                              */
 /* ------------------------------------------------------------------ */
 
 .git-badge {
@@ -1384,33 +1534,27 @@ body {
   /* right-aligned in explorer / source-control rows */
 }
 
-.git-badge.mod,
-.git-count.mod {
+.git-badge.mod {
   color: var(--warning);
 }
 
-.git-badge.add,
-.git-count.add {
+.git-badge.add {
   color: var(--success);
 }
 
-.git-badge.del,
-.git-count.del {
+.git-badge.del {
   color: var(--error);
 }
 
-.git-badge.rename,
-.git-count.rename {
+.git-badge.rename {
   color: var(--accent);
 }
 
-.git-badge.untracked,
-.git-count.untracked {
+.git-badge.untracked {
   color: var(--accent-secondary);
 }
 
-.git-badge.conflict,
-.git-count.conflict {
+.git-badge.conflict {
   color: var(--error);
 }
 
@@ -1421,10 +1565,6 @@ body {
   flex: none;
   color: var(--warning);
   user-select: none;
-}
-
-.git-count {
-  flex: none;
 }
 
 /* ------------------------------------------------------------------ */

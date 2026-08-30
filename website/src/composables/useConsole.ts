@@ -4,6 +4,7 @@ import type {
   Command,
   ConsoleState,
   Frame,
+  Mode,
   TokenUsage,
 } from '../types'
 
@@ -22,7 +23,7 @@ import type {
 export type ConsoleAction =
   | Frame
   | { type: 'local_user'; text: string }
-  | { type: 'local_mode'; mode: 'manual' | 'auto' }
+  | { type: 'local_mode'; mode: Mode }
 
 export function initialState(): ConsoleState {
   return {
@@ -278,14 +279,13 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
       push(s, { kind: 'user', text: action.text })
       break
     case 'local_mode': {
-      // Optimistic mode flip — the server only acks set_mode, it doesn't
-      // echo state back.  Keep a PLAN label (set server-side during plan
-      // turns) until the next hello corrects it.
+      // Optimistic gating flip — the server's session_info broadcast
+      // confirms it.  Plan is not a gating mode: it flags the next turn
+      // for plan mode, so gating reads manual.  mode_label stays
+      // server-owned — it reports PLAN for the whole plan lifecycle, so
+      // overwriting it here would be reverted by the next broadcast.
       if (s.session) {
-        s.session.permission_mode = action.mode
-        if (s.session.mode_label !== 'PLAN') {
-          s.session.mode_label = action.mode.toUpperCase()
-        }
+        s.session.permission_mode = action.mode === 'plan' ? 'manual' : action.mode
       }
       break
     }
@@ -332,8 +332,8 @@ export function useConsole(send: (cmd: Command) => void) {
     send({ cmd: 'reject_plan', plan_id: planId, feedback })
   }
 
-  function setMode(mode: 'manual' | 'auto') {
-    // Optimistic — the server acks without echoing the new mode back.
+  function setMode(mode: Mode) {
+    // Optimistic — the server's session_info broadcast confirms it.
     applyFrame({ type: 'local_mode', mode })
     send({ cmd: 'set_mode', mode })
   }
