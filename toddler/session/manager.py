@@ -256,7 +256,9 @@ class SessionManager:
         if self._sm.is_plan_exploring:
             # Every plan cycle starts from the safe baseline — the
             # approval UI then lets the user explicitly choose AUTO.
-            self._perm_mgr.set_mode(PermissionMode.MANUAL)
+            # Goes through set_permission_mode so observers (the web
+            # UI's session-info broadcaster) see the gating flip.
+            self.set_permission_mode(PermissionMode.MANUAL)
 
             async for event in self.planner.run(user_input):
                 if isinstance(event, (AgentFinished, FatalAgentError)):
@@ -312,11 +314,38 @@ class SessionManager:
             yield event
         self._sm.mark_finished()
 
+    async def cancel_turn(self) -> None:
+        """Record a cancelled turn, repair state, and persist it.
+
+        Resets the state machine to IDLE — a cancelled turn leaves it
+        mid-plan, which would keep the web UI's mode pill frozen — and
+        repairs the in-memory context: the partial messages stay so the
+        next turn can continue from them, a dangling assistant
+        ``tool_use`` is answered with a cancelled ``tool_result``, and
+        a cancellation marker is appended so the model knows the
+        previous turn was cut short.  The repair is persisted
+        immediately via :meth:`save` — the cancelled turn survives a
+        restart instead of waiting for the next turn's ``save()``.
+        Observers are notified like a transition so the web UI
+        unfreezes.
+        """
+        if self._ctx is not None:
+            self._ctx.mark_turn_cancelled()
+        await self.save()
+        self._sm.reset()
+        self._sm.notify_observers()
+
     def set_permission_mode(self, mode: PermissionMode) -> None:
         """Set the permission gating mode — shared manager updates both
         AgentLoop and ToolExecutor automatically.
+
+        State-machine observers are notified too: gating feeds the UI's
+        session payload (``permission_mode``) but is not a transition, so
+        a gating flip (``/mode auto``, plan approval with auto, plan start
+        pinning to manual) would otherwise leave the web UI stale.
         """
         self._perm_mgr.set_mode(mode)
+        self._sm.notify_observers()
 
     def approve_plan(
         self, *, plan_id: str,

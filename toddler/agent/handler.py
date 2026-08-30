@@ -72,6 +72,17 @@ class BaseHandler(ABC):
         ...
 
     @abstractmethod
+    def get_partial_content(self) -> list[ContentBlock]:
+        """Return the content the model produced so far, mid-processing.
+
+        The agent loop appends this to the conversation when a turn is
+        cancelled mid-stream, so the next turn continues from the
+        model's partial output instead of losing it.  Returns ``[]``
+        when nothing has been produced yet.
+        """
+        ...
+
+    @abstractmethod
     def clear(self) -> None:
         """Reset all internal state so the handler can be reused."""
         ...
@@ -249,12 +260,13 @@ class StreamHandler(BaseHandler):
     # Assembled output
     # ------------------------------------------------------------------
 
-    def _assemble_message(self) -> Message:
-        """Build the completed assistant :class:`Message` from accumulated data.
+    def _content_blocks(self) -> list[ContentBlock]:
+        """Build content blocks from the accumulated text and tool calls.
 
-        Returns a message with text content (if any) and tool-use blocks
-        (if any), suitable for appending to the conversation history.
-        """  # noqa: E501
+        Shared by the completed-message assembly and the partial-content
+        extraction on cancel — both expose the same content, just at
+        different points in the stream.
+        """
         blocks: list[ContentBlock] = []
 
         if self._text_buf:
@@ -271,7 +283,26 @@ class StreamHandler(BaseHandler):
                 )
             )
 
-        return Message.assistant(blocks)
+        return blocks
+
+    def _assemble_message(self) -> Message:
+        """Build the completed assistant :class:`Message` from accumulated data.
+
+        Returns a message with text content (if any) and tool-use blocks
+        (if any), suitable for appending to the conversation history.
+        """  # noqa: E501
+        return Message.assistant(self._content_blocks())
+
+    def get_partial_content(self) -> list[ContentBlock]:
+        """Return the content the model produced so far, mid-stream.
+
+        Text accumulated so far plus any tool calls started (with
+        best-effort parsed arguments).  Safe to append to the
+        conversation on cancellation — the turn's partial output is
+        preserved so the next turn can continue from it.  Returns
+        ``[]`` when nothing has been produced yet.
+        """
+        return self._content_blocks()
 
     def get_final_result(self) -> dict[str, Message | None | str | TokenUsage]:
         """Return the assembled result dict."""
@@ -397,6 +428,16 @@ class NonStreamHandler(BaseHandler):
         text = self._assistant_msg.text
         if text:
             yield TextDelta(text=text)
+
+    def get_partial_content(self) -> list[ContentBlock]:
+        """Return the response content.
+
+        The complete response is available as soon as :meth:`process`
+        starts, so a cancel at any point still preserves it.
+        """
+        if self._assistant_msg is None:
+            return []
+        return list(self._assistant_msg.content)
 
     def get_final_result(self) -> dict[str, Message | None | str | TokenUsage]:
         """Return the assembled result dict."""

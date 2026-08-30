@@ -10,6 +10,7 @@ the non-streaming plan-generation call are exercised.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 
@@ -25,6 +26,7 @@ from toddler.llm.base import BaseLLMProvider
 
 __all__ = [
     "MockLLMProvider",
+    "SlowStreamLLM",
     "make_mock_llm",
     "pause_on_write",
     "plan_proposal_response",
@@ -102,6 +104,35 @@ class MockLLMProvider(BaseLLMProvider):
 
     async def generate_compact(self, prompt: str) -> str:
         return "[compacted]"
+
+
+class SlowStreamLLM(MockLLMProvider):
+    """Streams a canned text response with real delays between chunks.
+
+    The stock mock replays a whole response in one event-loop turn, so
+    a test can never cancel mid-stream; this one sleeps between chunks
+    to give cancellation a deterministic window.
+    """
+
+    def __init__(
+        self, text: str, *, chunk_size: int = 8, delay: float = 0.02,
+    ):
+        super().__init__([text_response(text)])
+        self._chunk_size = chunk_size
+        self._delay = delay
+
+    async def _stream(self, resp: LLMResponse) -> AsyncIterator[StreamEvent]:
+        text = resp.messages[0].text
+        for i in range(0, len(text), self._chunk_size):
+            await asyncio.sleep(self._delay)
+            yield StreamEvent(
+                type="text_delta",
+                data={"text": text[i:i + self._chunk_size]},
+            )
+        yield StreamEvent(
+            type="message_stop",
+            data={"stop_reason": resp.stop_reason, "usage": resp.usage},
+        )
 
 
 # ---------------------------------------------------------------------------

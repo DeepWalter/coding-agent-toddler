@@ -35,6 +35,7 @@ State diagram (see ``docs/plans/plan.md``):
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from enum import Enum
 
 __all__ = [
@@ -263,6 +264,38 @@ class AgentStateMachine:
         Set by the ``/plan`` slash command and consumed by
         :meth:`classify_and_transition`.
         """
+        # Observers notified after every successful transition.  The web
+        # server subscribes to push ``mode_label`` / ``permission_mode`` /
+        # ``gating_editable`` to the frontend whenever the machine moves —
+        # e.g. a complex request classified into plan mode mid-turn.
+        self._observers: list[Callable[[AgentStateMachine], None]] = []
+
+    # ------------------------------------------------------------------
+    # Observers
+    # ------------------------------------------------------------------
+
+    def add_observer(
+        self, observer: Callable[[AgentStateMachine], None],
+    ) -> None:
+        """Register *observer* to be called after every successful
+        transition.
+
+        The observer receives the state machine itself (so it can read
+        :attr:`current_mode`); it is called synchronously, so it must not
+        block.  No-op for the CLI — only subscribers (the web runner)
+        pay for this.
+        """
+        self._observers.append(observer)
+
+    def notify_observers(self) -> None:
+        """Call all registered observers.
+
+        Also invoked by callers (e.g. :class:`SessionManager` after a
+        permission-gating change) when machine-adjacent state that feeds
+        the UI payload changes without a transition.
+        """
+        for observer in self._observers:
+            observer(self)
 
     # ------------------------------------------------------------------
     # Mode accessors
@@ -322,6 +355,7 @@ class AgentStateMachine:
         )
         self._previous_mode = self._mode
         self._mode = target
+        self.notify_observers()
         return True
 
     def classify_and_transition(
@@ -363,7 +397,14 @@ class AgentStateMachine:
         return self._mode
 
     def reset(self) -> None:
-        """Reset to IDLE for the next user turn."""
+        """Reset to IDLE for the next user turn.
+
+        Runs at the start of every turn, where the machine is already
+        stopped (IDLE or FINISHED) and the UI payload is unchanged, so
+        observers are *not* notified — unlike :meth:`transition`.
+        Callers that reset mid-flight (the web runner's cancel path)
+        notify observers explicitly.
+        """
         self._mode = AgentMode.IDLE
         self._previous_mode = None
 

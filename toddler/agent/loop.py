@@ -190,11 +190,23 @@ class AgentLoop:
             )
 
             llm_result: dict[str, Message | None | str | TokenUsage] = {}
-            async for event in self._call_llm(
-                messages, tools, stream=stream,
-                handler=handler, llm_result=llm_result,
-            ):
-                yield event
+            try:
+                async for event in self._call_llm(
+                    messages, tools, stream=stream,
+                    handler=handler, llm_result=llm_result,
+                ):
+                    yield event
+            except asyncio.CancelledError:
+                # A cancel mid-stream leaves the model's partial output
+                # only in the handler's accumulators.  Append it (text
+                # plus any tool calls already started) so the next turn
+                # can continue from where the model left off — the
+                # session layer's cancel repair then answers any
+                # dangling tool calls and appends the marker.
+                partial = handler.get_partial_content()
+                if partial:
+                    self._ctx.append(Message.assistant(partial))
+                raise
 
             assistant_msg = llm_result["assistant_msg"]
             stop_reason = llm_result["stop_reason"]

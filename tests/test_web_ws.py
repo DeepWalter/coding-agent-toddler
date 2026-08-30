@@ -14,6 +14,7 @@ import time
 from fastapi.testclient import TestClient
 
 from tests.mocks import (
+    SlowStreamLLM,
     make_mock_llm,
     pause_on_write,
     plan_proposal_response,
@@ -96,24 +97,29 @@ class TestTurnStream:
             assert hello["conversation"]["sequence_num"] == 1
 
             ws.send_json({"cmd": "turn", "input": "hi"})
-            frames = [ws.receive_json() for _ in range(5)]
+            frames = [ws.receive_json() for _ in range(7)]
+            # The classification and finish transitions each broadcast a
+            # session_info (mode_label, gating, permission) — a no-op for
+            # a simple turn, but the same push the plan workflow needs.
             assert [f["type"] for f in frames] == [
                 "turn_started",
                 "state",
+                "session_info",
                 "text_delta",
                 "agent_finished",
+                "session_info",
                 "state",
             ]
             assert frames[1] == {"type": "state", "busy": True}
-            assert frames[2] == {"type": "text_delta", "text": "Hello from the agent."}
-            assert frames[3]["reason"] == "LLM finished its turn."
-            assert frames[3]["usage"] == {
+            assert frames[3] == {"type": "text_delta", "text": "Hello from the agent."}
+            assert frames[4]["reason"] == "LLM finished its turn."
+            assert frames[4]["usage"] == {
                 "input_tokens": 10,
                 "output_tokens": 5,
                 "cache_read_tokens": 0,
                 "cache_creation_tokens": 0,
             }
-            assert frames[4] == {"type": "state", "busy": False}
+            assert frames[6] == {"type": "state", "busy": False}
 
     def test_hello_replays_transcript_after_turn(self, tmp_path):
         llm = make_mock_llm(text_response("Hello there."))
@@ -295,13 +301,21 @@ class TestCancel:
             _wait_for(ws, "agent_paused")
 
             ws.send_json({"cmd": "cancel"})
-            # Exactly three frames, in any task order: the ack, the
-            # turn_cancelled broadcast, and the busy reset.
-            frames = [ws.receive_json() for _ in range(3)]
+            # Exactly four frames, in any task order: the ack, the
+            # turn_cancelled broadcast, the reset's session_info (the
+            # machine is back to IDLE — pill unfrozen), and the busy
+            # reset.
+            frames = [ws.receive_json() for _ in range(4)]
             assert {"type": "ack", "cmd": "cancel", "accepted": True} in frames
             assert "turn_cancelled" in [f["type"] for f in frames]
             states = [f for f in frames if f["type"] == "state"]
             assert any(f["busy"] is False for f in states)
+            infos = [f for f in frames if f["type"] == "session_info"]
+            assert any(
+                f["session"]["mode_label"] == "MANUAL"
+                and f["session"]["gating_editable"] is True
+                for f in infos
+            )
 
     def test_paused_turn_auto_cancels_when_last_watcher_leaves(self, tmp_path):
         llm = make_mock_llm(pause_on_write(str(tmp_path / "out.txt")))
@@ -316,6 +330,40 @@ class TestCancel:
             state = client.app.state.web
             _wait_until(lambda: not state.runner.busy)
             assert state.runner.paused_snapshot is None
+
+    def test_cancel_persists_messages_without_next_turn(self, tmp_path):
+        """A cancelled turn is persisted immediately — the repair
+        (partial output + cancellation marker) survives a reconnect
+        before any next turn runs."""
+        llm = SlowStreamLLM("Partial response that never finishes")
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client:
+            with client.websocket_connect("/ws") as ws:
+                ws.receive_json()  # hello
+                ws.send_json({"cmd": "turn", "input": "explain"})
+                _wait_for(ws, "text_delta")
+                ws.send_json({"cmd": "cancel"})
+                _wait_for(ws, "ack")
+                _wait_for(ws, "turn_cancelled")
+                # busy:false is broadcast from the runner's finally,
+                # after cancel_turn() has persisted the repair.
+                assert _wait_for(ws, "state")["busy"] is False
+
+            # Reconnect — the transcript replays from SQLite.  The
+            # cancelled turn is there (user input, partial assistant
+            # text, cancellation marker) even though no next turn ran.
+            with client.websocket_connect("/ws") as ws:
+                hello = ws.receive_json()
+                msgs = hello["messages"]
+                assert [m["role"] for m in msgs] == [
+                    "user", "assistant", "user",
+                ]
+                assert msgs[0]["content"] == "explain"
+                assert "Partial" in msgs[1]["content"]
+                assert "never finishes" not in msgs[1]["content"]
+                assert msgs[2]["content"] == (
+                    "[The previous turn was cancelled by the user.]"
+                )
 
 
 # ============================================================================
@@ -396,6 +444,210 @@ class TestPlanFlow:
             # Execution phase runs the approved plan.
             finished = _wait_for(ws, "agent_finished")
             assert finished["reason"] == "LLM finished its turn."
+
+    def test_complex_turn_broadcasts_plan_mode_state(self, tmp_path):
+        """A complexity-classified plan turn pushes session_info so the
+        frontend's badge/pill follow the state machine mid-turn."""
+        llm = make_mock_llm(
+            text_response("Exploring..."),
+            plan_proposal_response(_plan()),
+            text_response("Executing plan."),
+        )
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            hello = ws.receive_json()
+            assert hello["session"]["mode_label"] == "MANUAL"
+
+            # "refactor" is a complexity keyword — no force_plan needed.
+            ws.send_json({"cmd": "turn", "input": "refactor thing"})
+
+            # Classification into plan mode broadcasts the new label.
+            info = _wait_for(ws, "session_info")
+            assert info["session"]["mode_label"] == "PLAN"
+            assert info["session"]["gating_editable"] is False
+
+            _wait_for(ws, "plan_proposed")
+            ws.send_json({
+                "cmd": "approve_plan",
+                "plan_id": "plan-1",
+                "mode": "manual",
+            })
+            _wait_for(ws, "ack")
+            _wait_for(ws, "agent_finished")
+
+            # The finish transition returns the pill/badge to idle state.
+            info = _wait_for(ws, "session_info")
+            assert info["session"]["mode_label"] == "MANUAL"
+            assert info["session"]["gating_editable"] is True
+
+    def test_approve_with_auto_broadcasts_gating_flip(self, tmp_path):
+        """Approve-with-auto flips the pill to auto — gating changes are
+        not state-machine transitions, so the runner pushes them too."""
+        llm = make_mock_llm(
+            text_response("Exploring..."),
+            plan_proposal_response(_plan()),
+            text_response("Executing plan."),
+        )
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({
+                "cmd": "turn",
+                "input": "refactor thing",
+                "force_plan": True,
+            })
+            _wait_for(ws, "plan_proposed")
+            ws.send_json({
+                "cmd": "approve_plan",
+                "plan_id": "plan-1",
+                "mode": "auto",
+            })
+            _wait_for(ws, "ack")
+            # Approval broadcasts twice (transition, then the gating
+            # flip) — drain until the pill reads auto.
+            info = _wait_for(ws, "session_info")
+            while info["session"]["permission_mode"] != "auto":
+                info = _wait_for(ws, "session_info")
+            assert info["session"]["mode_label"] == "PLAN"
+            assert info["session"]["gating_editable"] is True
+            _wait_for(ws, "agent_finished")
+
+    def test_cancel_plan_turn_unfreezes_pill(self, tmp_path):
+        """Cancelling a plan turn resets the machine to IDLE, so the
+        frozen pill unfreezes — mode_label drops back to the gate."""
+        llm = make_mock_llm(
+            text_response("Exploring..."),
+            plan_proposal_response(_plan()),
+        )
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({
+                "cmd": "turn",
+                "input": "refactor thing",
+                "force_plan": True,
+            })
+            # Frozen while the plan awaits approval.
+            info = _wait_for(ws, "session_info")
+            assert info["session"]["mode_label"] == "PLAN"
+            assert info["session"]["gating_editable"] is False
+            _wait_for(ws, "plan_proposed")
+
+            ws.send_json({"cmd": "cancel"})
+            _wait_for(ws, "ack")
+            _wait_for(ws, "turn_cancelled")
+            # The cancel resets the machine — the pill unfreezes.
+            info = _wait_for(ws, "session_info")
+            assert info["session"]["mode_label"] == "MANUAL"
+            assert info["session"]["gating_editable"] is True
+            assert _wait_for(ws, "state")["busy"] is False
+
+    def test_cancel_appends_marker_to_next_turn_context(self, tmp_path):
+        """A cancelled turn leaves a marker in the context — the next
+        turn's LLM call knows the previous turn was cut short."""
+        llm = make_mock_llm(
+            text_response("Exploring..."),
+            plan_proposal_response(_plan()),
+            text_response("Continuing."),
+        )
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({
+                "cmd": "turn",
+                "input": "refactor thing",
+                "force_plan": True,
+            })
+            _wait_for(ws, "plan_proposed")
+
+            ws.send_json({"cmd": "cancel"})
+            _wait_for(ws, "ack")
+            _wait_for(ws, "turn_cancelled")
+
+            # The next turn's first LLM call sees the marker.
+            ws.send_json({"cmd": "turn", "input": "continue anyway"})
+            _wait_for(ws, "text_delta")
+
+            call = llm.messages_history[-1]
+            assert any(
+                m.text == "[The previous turn was cancelled by the user.]"
+                for m in call
+            )
+            # The cancelled turn's own messages are still there — the
+            # model can continue from them.
+            assert [m.role for m in call].count("user") >= 2
+
+    def test_cancel_answers_pending_tool_call_in_next_turn_context(self, tmp_path):
+        """A cancel while paused on a tool approval leaves a dangling
+        assistant tool_use — the repair answers it with a cancelled
+        tool_result, so the next turn's LLM call sees a valid pair."""
+        llm = make_mock_llm(
+            pause_on_write(str(tmp_path / "out.txt")),
+            text_response("Continuing."),
+        )
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "turn", "input": "write"})
+            _wait_for(ws, "agent_paused")
+
+            ws.send_json({"cmd": "cancel"})
+            _wait_for(ws, "ack")
+            _wait_for(ws, "turn_cancelled")
+
+            ws.send_json({"cmd": "turn", "input": "continue anyway"})
+            _wait_for(ws, "text_delta")
+
+            call = llm.messages_history[-1]
+            tool_msgs = [m for m in call if m.role == "tool"]
+            assert len(tool_msgs) == 1
+            assert all(
+                b.type == "tool_result"
+                and b.is_error is True
+                and "cancelled" in b.tool_result_content
+                for b in tool_msgs[0].content
+            )
+            # The assistant message with the tool_use survives intact,
+            # immediately before the answering tool message.
+            idx = call.index(tool_msgs[0])
+            assert call[idx - 1].role == "assistant"
+            assert any(b.type == "tool_use" for b in call[idx - 1].content)
+            # The marker is still there so the model knows the turn was
+            # cut short, not finished.
+            assert any(
+                m.text == "[The previous turn was cancelled by the user.]"
+                for m in call
+            )
+
+    def test_cancel_mid_stream_keeps_partial_text_in_next_turn(self, tmp_path):
+        """A cancel while the LLM is streaming text keeps the partial
+        output in the context — the next turn's LLM call sees it."""
+        llm = SlowStreamLLM("Partial response that never finishes")
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "turn", "input": "explain"})
+            _wait_for(ws, "text_delta")
+
+            ws.send_json({"cmd": "cancel"})
+            _wait_for(ws, "ack")
+            _wait_for(ws, "turn_cancelled")
+
+            ws.send_json({"cmd": "turn", "input": "continue"})
+            _wait_for(ws, "text_delta")
+
+            call = llm.messages_history[-1]
+            assistant_msgs = [m for m in call if m.role == "assistant"]
+            # The partial output survived the cancel…
+            assert any("Partial" in m.text for m in assistant_msgs)
+            # …but the stream was cut off before the end.
+            assert all("never finishes" not in m.text for m in assistant_msgs)
+            # And the marker is there so the model knows the turn was
+            # cut short, not finished.
+            assert any(
+                m.text == "[The previous turn was cancelled by the user.]"
+                for m in call
+            )
 
     def test_plan_reject_acks_and_finishes(self, tmp_path):
         llm = make_mock_llm(
@@ -1000,9 +1252,14 @@ class TestSimpleCommands:
             ws.receive_json()  # ack
             ws.receive_json()  # session_info
             ws.send_json({"cmd": "set_mode", "mode": "manual"})
-            assert ws.receive_json() == {
+            # The gating flip is pushed by the observer before the ack —
+            # drain either way.
+            ack = _wait_for(ws, "ack")
+            assert ack == {
                 "type": "ack", "cmd": "set_mode", "accepted": True,
             }
+            info = _wait_for(ws, "session_info")
+            assert info["session"]["mode_label"] == "MANUAL"
             mgr = client.app.state.web.session_mgr
             assert mgr.permission_mode.value == "manual"
             assert mgr.state_machine.plan_pending is False
@@ -1127,17 +1384,20 @@ class TestSimpleCommands:
         with TestClient(app) as client, client.websocket_connect("/ws") as ws:
             ws.receive_json()  # hello
             sm = client.app.state.web.session_mgr.state_machine
+            # Each transition broadcasts a session_info now — drain them
+            # before asserting the ack's frame order.
             assert sm.transition(AgentMode.PLAN_EXPLORING)
             assert sm.transition(AgentMode.PLAN_PROPOSING)
             assert sm.transition(AgentMode.PLAN_WAITING)
             assert sm.transition(AgentMode.PLAN_EXECUTING)
+            for _ in range(4):
+                assert ws.receive_json()["type"] == "session_info"
 
             ws.send_json({"cmd": "set_mode", "mode": "auto"})
-            ack = ws.receive_json()
+            ack = _wait_for(ws, "ack")
             assert ack == {"type": "ack", "cmd": "set_mode", "accepted": True}
             assert client.app.state.web.session_mgr.permission_mode.value == "auto"
-            info = ws.receive_json()
-            assert info["type"] == "session_info"
+            info = _wait_for(ws, "session_info")
             assert info["session"]["gating_editable"] is True
             assert info["session"]["permission_mode"] == "auto"
             # The plan turn is still reported as PLAN.

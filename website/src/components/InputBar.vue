@@ -10,8 +10,8 @@ const props = defineProps<{
    *  is pinned to manual until the plan is approved, so the pill is
    *  frozen (see server session_info.gating_editable). */
   gatingEditable: boolean
-  /** True while a plan is pending or a plan turn is in flight — shown
-   *  as a badge beside the pill (plan is not a gating mode). */
+  /** True while a plan is pending or a plan turn is in flight — the pill
+   *  reads "plan" instead of the gating mode (plan is not a gating mode). */
   inPlan: boolean
   model: string
   contextPct: number
@@ -54,9 +54,14 @@ const MODE_OPTIONS: { value: Mode; icon: string[]; description: string }[] = [
   },
 ]
 
-/** The option matching the pill's current mode — its icon shows in the pill. */
+/** What the pill shows: "plan" while mode_label reports PLAN, else the
+ *  live permission gate.  The dropdown menu still edits the gate — its
+ *  selected entry reflects *mode*, not the display. */
+const displayMode = computed<Mode>(() => (props.inPlan ? 'plan' : props.mode))
+
+/** The option matching what the pill shows — its icon renders in the pill. */
 const currentOption = computed(() =>
-  MODE_OPTIONS.find((opt) => opt.value === props.mode),
+  MODE_OPTIONS.find((opt) => opt.value === displayMode.value),
 )
 
 const open = ref(false)
@@ -126,7 +131,7 @@ function onKeydown(event: KeyboardEvent) {
             ref="pillEl"
             type="button"
             class="mode-toggle"
-            :class="mode"
+            :class="displayMode"
             :disabled="!connected || !gatingEditable"
             aria-haspopup="menu"
             :aria-expanded="open"
@@ -147,15 +152,8 @@ function onKeydown(event: KeyboardEvent) {
             >
               <path v-for="d in currentOption?.icon" :key="d" :d="d" />
             </svg>
-            {{ mode }}
+            {{ displayMode }}
           </button>
-          <span
-            v-if="inPlan"
-            class="plan-badge"
-            title="Plan mode is pending or a plan turn is running"
-          >
-            plan
-          </span>
           <div v-if="open" class="mode-menu" role="menu" aria-label="Workflow mode">
             <button
               v-for="opt in MODE_OPTIONS"

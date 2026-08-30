@@ -21,7 +21,7 @@ from toddler.config.settings import Settings
 from toddler.context.builder import SystemPromptBuilder
 from toddler.context.summarizer import ConversationCompactor
 from toddler.context.window import ContextWindowManager
-from toddler.llm import BaseLLMProvider, Message, TokenUsage
+from toddler.llm import BaseLLMProvider, ContentBlock, Message, TokenUsage
 
 logger = logging.getLogger(__name__)
 
@@ -385,6 +385,39 @@ class ContextManager:
         messages are appended.
         """
         self._baseline_count = len(self._messages)
+
+    def mark_turn_cancelled(self) -> None:
+        """Repair the in-memory context after a cancelled turn.
+
+        The accumulated messages stay — the next turn continues from
+        them — but a cancel can leave assistant ``tool_use`` blocks
+        with no matching ``tool_result`` (a paused approval, or a
+        stream cut short mid-tool-call), which some providers reject.
+        Answer each dangling tool call with a ``tool_result`` marked as
+        an error saying the user cancelled it, then append a marker
+        message so the model knows the previous turn was cut short, not
+        finished.  Both are persisted immediately by the session
+        layer's ``cancel_turn()`` — they survive a restart, not just
+        the next turn's ``save()``.
+        """
+        if self._messages and self._messages[-1].role == "assistant":
+            tool_uses = [
+                b for b in self._messages[-1].content
+                if b.type == "tool_use" and b.tool_id
+            ]
+            if tool_uses:
+                self._messages.append(Message.tool([
+                    ContentBlock.tool_result_block(
+                        b.tool_id,
+                        "The tool call was cancelled by the user before "
+                        "it could run.",
+                        is_error=True,
+                    )
+                    for b in tool_uses
+                ]))
+        self._messages.append(Message.user(
+            "[The previous turn was cancelled by the user.]"
+        ))
 
     # ------------------------------------------------------------------
     # Internal helpers

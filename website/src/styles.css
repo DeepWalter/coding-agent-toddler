@@ -380,23 +380,6 @@ body {
   border-color: var(--warning);
 }
 
-/* Plan is not a gating mode — it shows as a badge beside the pill while
-   a plan is pending or a plan turn is running; the pill itself always
-   shows the live permission gate. */
-.plan-badge {
-  align-self: center;
-  margin-left: 6px;
-  padding: 2px 7px;
-  border: 1px solid var(--warning);
-  border-radius: 999px;
-  color: var(--warning);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
 .mode-toggle:hover:not(:disabled) {
   background-color: var(--editor-surface-3);
 }

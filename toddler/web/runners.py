@@ -32,12 +32,76 @@ from toddler.agent.events import (
     PlanProposed,
     PlanStepUpdate,
 )
+from toddler.agent.state_machine import AgentStateMachine
 from toddler.session import SessionManager
 from toddler.web.events import serialize_event
 
-__all__ = ["TurnRunner"]
+__all__ = [
+    "TurnRunner",
+    "conversation_payload",
+    "session_info_frame",
+    "session_payload",
+]
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Session-info frame builders
+#
+# Shared by the WS command handlers (explicit mode changes) and the
+# TurnRunner (state-machine transitions mid-turn) so both push exactly the
+# same payload.
+# ---------------------------------------------------------------------------
+
+
+def session_payload(mgr: SessionManager, model: str, cwd: str) -> dict:
+    """Session fields shared by the ``hello`` and ``session_info`` frames.
+
+    ``gating_editable`` is False while a plan is explored, proposed, or
+    awaiting approval — gating is pinned to manual until the plan is
+    approved, so the frontend's pill is frozen.
+    """
+    session = mgr.session
+    sm = mgr.state_machine
+    return {
+        "id": session.id if session else None,
+        "title": session.title if session else None,
+        "mode_label": mgr.mode_label,
+        "permission_mode": mgr.permission_mode.value,
+        "gating_editable": not (
+            sm.current_mode.is_plan_related and not sm.is_plan_executing
+        ),
+        "context_usage_pct": mgr.context_usage_pct,
+        "model": model,
+        "cwd": cwd,
+    }
+
+
+def conversation_payload(mgr: SessionManager) -> dict:
+    """Conversation fields shared by the ``hello`` and ``session_info``
+    frames."""
+    conv = mgr.conversation
+    return {
+        "id": conv.id if conv else None,
+        "sequence_num": conv.sequence_num if conv else None,
+        "title": conv.title if conv else None,
+    }
+
+
+def session_info_frame(mgr: SessionManager, model: str, cwd: str) -> dict:
+    """Session/conversation metadata update without a transcript replay.
+
+    Broadcast after slash commands that mutate session state but keep
+    the transcript (``/mode``, ``/plan``) and after every state-machine
+    transition — the frontend updates its header labels and the console
+    scroll-back survives.
+    """
+    return {
+        "type": "session_info",
+        "session": session_payload(mgr, model, cwd),
+        "conversation": conversation_payload(mgr),
+    }
 
 
 class TurnRunner:
@@ -45,13 +109,27 @@ class TurnRunner:
     serialized events to all subscribed WebSocket connections.
     """
 
-    def __init__(self, session_mgr: SessionManager) -> None:
+    def __init__(
+        self,
+        session_mgr: SessionManager,
+        *,
+        model: str,
+        cwd: str,
+    ) -> None:
         self._session_mgr = session_mgr
+        self._model = model
+        self._cwd = cwd
 
         # The busy gate: acquired synchronously in start() and released in
         # the runner task's finally — while held, no second turn can start
         # (SessionManager holds single-session state).
         self._lock = asyncio.Lock()
+
+        # Push session state to every tab whenever the state machine
+        # changes — a complex request classified into plan mode flips the
+        # frontend's badge/pill mid-turn, an approval unpins gating, and
+        # the finish clears it again.
+        session_mgr.state_machine.add_observer(self._on_state_changed)
 
         # App-lifetime task consuming process_turn.  Never awaited by a
         # connection; disconnects unsubscribe, they don't kill the turn.
@@ -191,6 +269,21 @@ class TurnRunner:
         for queue in self._subscribers.values():
             queue.put_nowait(frame)
 
+    def _on_state_changed(self, _sm: AgentStateMachine) -> None:
+        """Broadcast the latest session info after a state-machine change.
+
+        Synchronous observer called on every successful transition (and
+        gating flips) — e.g. classification into PLAN_EXPLORING must flip
+        the frontend's ``mode_label`` from MANUAL to PLAN mid-turn, and a
+        plan approval may unpin gating / switch to auto.  The frame is the
+        same ``session_info`` the slash commands broadcast, so tabs update
+        their pill, badge, and frozen-gating state without a transcript
+        replay.  No-op for the CLI, where nobody subscribes.
+        """
+        self.broadcast(session_info_frame(
+            self._session_mgr, self._model, self._cwd,
+        ))
+
     async def _run(self, user_input: str, *, force_plan: bool) -> None:
         """Consume the ``process_turn`` generator and broadcast its events.
 
@@ -226,6 +319,16 @@ class TurnRunner:
                 self.broadcast(frame)
         except asyncio.CancelledError:
             self.broadcast({"type": "turn_cancelled"})
+            # A cancelled turn leaves the machine mid-plan (exploring,
+            # awaiting approval, …).  The agent loop already preserved
+            # any partial output in the context; cancel_turn() resets
+            # the machine to IDLE, repairs the context (answering the
+            # orphaned tool call with a cancelled tool_result,
+            # appending a cancellation marker), persists the repair to
+            # storage so it survives a restart, and pushes the
+            # unfrozen session_info (mode_label back to the gate) to
+            # every tab.
+            await self._session_mgr.cancel_turn()
             raise
         except Exception as exc:
             # A bug must not silently kill the task: surface it to the

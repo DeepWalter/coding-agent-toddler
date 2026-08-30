@@ -7,11 +7,13 @@ conditions.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 
 import pytest
 
+from tests.mocks import SlowStreamLLM
 from toddler.agent.events import (
     AgentError,
     AgentFinished,
@@ -21,6 +23,7 @@ from toddler.agent.events import (
     ToolCallEnd,
     ToolCallStart,
 )
+from toddler.agent.handler import NonStreamHandler, StreamHandler
 from toddler.agent.loop import AgentLoop
 from toddler.config.settings import Settings
 from toddler.context.manager import ContextManager
@@ -817,6 +820,49 @@ class TestContextManager:
         assert "assistant" in roles
         assert "tool" in roles
 
+    async def test_mark_turn_cancelled_answers_dangling_tool_use(self, conv_ctx):
+        """A cancel mid-approval leaves orphaned assistant tool_use blocks —
+        the repair answers each with a cancelled tool_result (keeping the
+        assistant message intact) and appends a marker."""
+        await conv_ctx.prepare_turn("refactor thing")
+        conv_ctx.append(Message.assistant([
+            ContentBlock.text_block("I'll check the files."),
+            ContentBlock.tool_use_block("t1", "read_file", {"path": "x.py"}),
+            ContentBlock.tool_use_block("t2", "grep", {"pattern": "foo"}),
+        ]))
+
+        conv_ctx.mark_turn_cancelled()
+
+        msgs = conv_ctx.messages
+        assert [m.role for m in msgs] == [
+            "system", "user", "assistant", "tool", "user",
+        ]
+        # The assistant message is untouched — text and tool_use survive.
+        assert [b.type for b in msgs[2].content] == [
+            "text", "tool_use", "tool_use",
+        ]
+        # One tool_result per dangling call, paired by tool_id, marked
+        # as an error so the model knows the call never ran.
+        assert [b.type for b in msgs[3].content] == ["tool_result", "tool_result"]
+        assert [b.tool_id for b in msgs[3].content] == ["t1", "t2"]
+        assert all(b.is_error for b in msgs[3].content)
+        assert all("cancelled" in b.tool_result_content for b in msgs[3].content)
+        assert msgs[-1].text == "[The previous turn was cancelled by the user.]"
+
+    async def test_mark_turn_cancelled_keeps_complete_messages(self, conv_ctx):
+        """A cancel mid-stream keeps the partial history — the next turn
+        continues from it; only the marker is added."""
+        await conv_ctx.prepare_turn("write a test")
+        conv_ctx.append(Message.assistant([
+            ContentBlock.text_block("Sure — I'll start by looking at"),
+        ]))
+
+        conv_ctx.mark_turn_cancelled()
+
+        msgs = conv_ctx.messages
+        assert [m.role for m in msgs] == ["system", "user", "assistant", "user"]
+        assert msgs[-1].text == "[The previous turn was cancelled by the user.]"
+
     async def test_system_prompt_is_built_by_context(self, registry, executor, settings, conv_ctx):  # noqa: E501
         """The system prompt is assembled by ContextManager.prepare_turn()."""
         llm = MockLLMProvider(
@@ -832,6 +878,125 @@ class TestContextManager:
         assert sys_msg.role == "system"
         # Should contain base persona (not empty).
         assert "Toddler" in sys_msg.text
+
+
+# ============================================================================
+# Tests: partial output preserved on cancel
+# ============================================================================
+
+
+class TestHandlerPartialContent:
+    """``get_partial_content()`` exposes the model's output so far — the
+    loop appends it to the context when a turn is cancelled mid-stream."""
+
+    async def test_stream_handler_partial_text_mid_stream(self):
+        """A snapshot taken between chunks keeps the text so far."""
+
+        async def stream() -> AsyncIterator[StreamEvent]:
+            yield StreamEvent(type="text_delta", data={"text": "Hello "})
+            yield StreamEvent(type="text_delta", data={"text": "world"})
+
+        handler = StreamHandler()
+        gen = handler.process(stream())
+        assert isinstance(await gen.__anext__(), TextDelta)
+
+        partial = handler.get_partial_content()
+        assert [b.type for b in partial] == ["text"]
+        assert partial[0].text == "Hello "
+
+    async def test_stream_handler_partial_includes_started_tool_call(self):
+        """A tool call started before the cancel is kept, with
+        best-effort parsed arguments."""
+
+        async def stream() -> AsyncIterator[StreamEvent]:
+            yield StreamEvent(type="text_delta", data={"text": "Checking"})
+            yield StreamEvent(
+                type="tool_use_start",
+                data={"tool_id": "t1", "tool_name": "read_file"},
+            )
+            yield StreamEvent(
+                type="tool_use_delta",
+                data={
+                    "tool_id": "t1",
+                    "input_delta": {"arguments_fragment": '{"path": "x.py"}'},
+                },
+            )
+
+        handler = StreamHandler()
+        gen = handler.process(stream())
+        await gen.__anext__()
+        assert isinstance(await gen.__anext__(), ToolCallStart)
+        await gen.__anext__()  # tool_use_delta feeds the parser
+
+        partial = handler.get_partial_content()
+        assert [b.type for b in partial] == ["text", "tool_use"]
+        assert partial[1].tool_id == "t1"
+        assert partial[1].tool_name == "read_file"
+        assert partial[1].tool_input == {"path": "x.py"}
+
+    async def test_non_stream_handler_partial_content(self):
+        """The complete response is available as soon as processing
+        starts."""
+        handler = NonStreamHandler()
+        gen = handler.process(_make_llm_response(text="Complete answer"))
+        assert isinstance(await gen.__anext__(), TextDelta)
+
+        partial = handler.get_partial_content()
+        assert [b.type for b in partial] == ["text"]
+        assert partial[0].text == "Complete answer"
+
+    async def test_partial_content_empty_before_stream(self):
+        """Nothing produced yet — no partial content to preserve."""
+        assert StreamHandler().get_partial_content() == []
+        assert NonStreamHandler().get_partial_content() == []
+
+
+class TestCancelMidStream:
+    """A cancel while the LLM is streaming text preserves the partial
+    output in the context — the next turn can continue from it."""
+
+    async def test_partial_text_kept_in_context(
+        self, registry, executor, settings, conv_ctx,
+    ):
+        llm = SlowStreamLLM("Partial response that never finishes")
+        loop = AgentLoop(
+            llm, registry, executor, settings,
+            context=conv_ctx, permission_manager=PermissionManager(),
+        )
+
+        events = []
+
+        async def _collect() -> None:
+            async for event in loop.run("explain", stream=True):
+                events.append(event)
+
+        task = asyncio.create_task(_collect())
+        for _ in range(200):
+            if any(isinstance(e, TextDelta) for e in events):
+                break
+            await asyncio.sleep(0.01)
+        assert any(isinstance(e, TextDelta) for e in events), (
+            "the first text delta never streamed"
+        )
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        # The partial output landed in the context, cut off mid-stream.
+        assistant_msgs = [
+            m for m in conv_ctx.messages if m.role == "assistant"
+        ]
+        assert len(assistant_msgs) == 1
+        assert "Partial" in assistant_msgs[0].text
+        assert "never finishes" not in assistant_msgs[0].text
+
+        # The usual cancel repair follows the partial text with the marker.
+        conv_ctx.mark_turn_cancelled()
+        msgs = conv_ctx.messages
+        assert msgs[-2].role == "assistant"
+        assert msgs[-1].role == "user"
+        assert msgs[-1].text == "[The previous turn was cancelled by the user.]"
 
 
 # ============================================================================

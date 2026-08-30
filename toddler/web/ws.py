@@ -21,6 +21,11 @@ from fastapi import APIRouter, WebSocket
 
 from toddler.tools.base import PermissionMode
 from toddler.web.events import serialize_transcript
+from toddler.web.runners import (
+    conversation_payload,
+    session_info_frame,
+    session_payload,
+)
 
 if TYPE_CHECKING:
     from toddler.web.state import WebAppState
@@ -51,50 +56,6 @@ def _notice_frame(message: str) -> dict:
     return {"type": "notice", "message": message}
 
 
-def _session_payload(state: WebAppState) -> dict:
-    mgr = state.session_mgr
-    session = mgr.session
-    # Gating is pinned to manual while a plan is explored, proposed, or
-    # awaiting approval — the pill is frozen then (see _cmd_set_mode).
-    sm = mgr.state_machine
-    return {
-        "id": session.id if session else None,
-        "title": session.title if session else None,
-        "mode_label": mgr.mode_label,
-        "permission_mode": mgr.permission_mode.value,
-        "gating_editable": not (
-            sm.current_mode.is_plan_related and not sm.is_plan_executing
-        ),
-        "context_usage_pct": mgr.context_usage_pct,
-        "model": state.llm.model,
-        "cwd": str(state.repo_root),
-    }
-
-
-def _conversation_payload(state: WebAppState) -> dict:
-    mgr = state.session_mgr
-    conv = mgr.conversation
-    return {
-        "id": conv.id if conv else None,
-        "sequence_num": conv.sequence_num if conv else None,
-        "title": conv.title if conv else None,
-    }
-
-
-def _session_info_frame(state: WebAppState) -> dict:
-    """Session/conversation metadata update without a transcript replay.
-
-    Broadcast after slash commands that mutate session state but keep
-    the transcript (``/mode``, ``/plan``) — the frontend updates its
-    header labels and the console scroll-back survives.
-    """
-    return {
-        "type": "session_info",
-        "session": _session_payload(state),
-        "conversation": _conversation_payload(state),
-    }
-
-
 def _hello_frame(state: WebAppState) -> dict:
     """Build the ``hello`` frame: session info, transcript replay, and
     the live busy/paused/plan state so reconnecting tabs resume
@@ -111,8 +72,10 @@ def _hello_frame(state: WebAppState) -> dict:
         )
     return {
         "type": "hello",
-        "session": _session_payload(state),
-        "conversation": _conversation_payload(state),
+        "session": session_payload(
+            state.session_mgr, state.llm.model, str(state.repo_root),
+        ),
+        "conversation": conversation_payload(state.session_mgr),
         "busy": state.runner.busy,
         # The full agent_paused frame — the frontend re-applies it.
         "paused": state.runner.paused_snapshot,
@@ -246,7 +209,9 @@ async def _dispatch_slash_command(
             # The transcript changed — full replay so every tab re-renders.
             state.runner.broadcast(_hello_frame(state))
         elif kind == "session":
-            state.runner.broadcast(_session_info_frame(state))
+            state.runner.broadcast(session_info_frame(
+                state.session_mgr, state.llm.model, str(state.repo_root),
+            ))
     if result.message:
         state.runner.broadcast(_notice_frame(result.message))
 
@@ -365,7 +330,9 @@ async def _cmd_set_mode(
     await websocket.send_json(_ack_frame("set_mode", True))
     # Broadcast the new mode_label/permission_mode so every tab's pill
     # (and the status bar) updates — the ack alone leaves other tabs stale.
-    state.runner.broadcast(_session_info_frame(state))
+    state.runner.broadcast(session_info_frame(
+        state.session_mgr, state.llm.model, str(state.repo_root),
+    ))
 
 
 async def _cmd_ping(websocket: WebSocket, state: WebAppState, raw: dict) -> None:

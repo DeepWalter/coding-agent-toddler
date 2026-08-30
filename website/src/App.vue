@@ -41,9 +41,9 @@ void git.refresh()
 
 // The input-bar dropdown's current value.  Plan is not a gating mode —
 // it flags the next turn to run in plan mode (gating drops to manual) —
-// so the pill shows the live permission gate; a separate plan badge
-// appears while mode_label reports PLAN (a pending plan or a plan turn
-// in flight).
+// so the dropdown edits the permission gate; while mode_label reports
+// PLAN (a pending plan or a plan turn in flight) the pill displays
+// "plan" instead of the gate.
 const pillMode = computed<Mode>(() =>
   state.session?.permission_mode === 'auto' ? 'auto' : 'manual',
 )

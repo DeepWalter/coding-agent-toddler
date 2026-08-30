@@ -78,7 +78,11 @@ def create_app(
             # Slash commands entered in the web input bar dispatch
             # through the same dispatcher the CLI REPL uses.
             cmd_dispatcher=SlashCommandDispatcher(session_mgr=session_mgr),
-            runner=TurnRunner(session_mgr),
+            # model/cwd feed the session-info frames the runner broadcasts
+            # on state-machine changes.
+            runner=TurnRunner(
+                session_mgr, model=provider.model, cwd=str(root),
+            ),
             repo_root=root,
             dev=dev,
         )

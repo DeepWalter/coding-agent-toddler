@@ -227,6 +227,31 @@ class TestAgentStateMachineTransitions:
         assert sm.transition(AgentMode.PLAN_WAITING) is False
         assert sm.current_mode == AgentMode.IDLE
 
+    def test_observer_notified_after_each_transition(self, sm):
+        seen = []
+        sm.add_observer(lambda m: seen.append(m.current_mode))
+        sm.classify_and_transition("refactor auth")
+        assert seen == [AgentMode.PLAN_EXPLORING]
+        sm.transition(AgentMode.PLAN_PROPOSING)
+        assert seen == [
+            AgentMode.PLAN_EXPLORING,
+            AgentMode.PLAN_PROPOSING,
+        ]
+
+    def test_observer_not_notified_on_invalid_transition(self, sm):
+        seen = []
+        sm.add_observer(lambda m: seen.append(m.current_mode))
+        assert sm.transition(AgentMode.PLAN_WAITING) is False
+        assert seen == []
+
+    def test_notify_observers_manual_call(self, sm):
+        """Observers see a change even when state changed without a
+        transition (e.g. permission-gating flips)."""
+        seen = []
+        sm.add_observer(lambda m: seen.append(m.current_mode))
+        sm.notify_observers()
+        assert seen == [AgentMode.IDLE]
+
 
 # ============================================================================
 # Plan serialization tests
