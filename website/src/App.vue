@@ -50,6 +50,7 @@ function toggleMode() {
 // Pointer capture keeps the drag going outside the divider.
 const MIN_PANE = 12
 const splitEl = ref<HTMLElement | null>(null)
+const activityBarEl = ref<HTMLElement | null>(null)
 const drag = ref<'explorer' | 'editor' | null>(null)
 
 // localStorage is unreliable (private mode, quota) and stores untrusted
@@ -299,7 +300,13 @@ function onDividerDown(kind: 'explorer' | 'editor', event: PointerEvent) {
 function onDividerMove(event: PointerEvent) {
   if (!drag.value || !splitEl.value) return
   const rect = splitEl.value.getBoundingClientRect()
-  const pct = ((event.clientX - rect.left) / rect.width) * 100
+  // The panes begin after the fixed-width activity bar, but their widths
+  // are percentages of the whole split.  The cursor must therefore be
+  // measured against the pane region — otherwise the divider lands one
+  // activity-bar-width to the right of the cursor the moment the drag
+  // starts.
+  const barWidth = activityBarEl.value?.getBoundingClientRect().width ?? 0
+  const pct = ((event.clientX - rect.left - barWidth) / rect.width) * 100
   if (drag.value === 'explorer') {
     explorerPct.value = Math.min(100 - editorPct.value - MIN_PANE, Math.max(MIN_PANE, pct))
   } else {
@@ -392,7 +399,7 @@ function onDividerUp(event: PointerEvent) {
     </header>
 
     <div ref="splitEl" class="split">
-      <nav class="activity-bar" aria-label="sidebar">
+      <nav ref="activityBarEl" class="activity-bar" aria-label="sidebar">
         <button
           type="button"
           class="activity-btn"
