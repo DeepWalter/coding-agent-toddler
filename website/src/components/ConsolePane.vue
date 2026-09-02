@@ -24,6 +24,15 @@ const emit = defineEmits<{
 const scroller = ref<HTMLElement | null>(null)
 const atBottom = ref(true)
 
+// True from a local send until the user grabs the scroller: while set, the
+// blocks watch keeps pinning no matter where the scrollbar sat — a sent
+// message must not be answered below the fold.  Cleared only by real user
+// gestures (wheel / pointer), never by scroll events: our own programmatic
+// pins fire scroll events too, and when a burst of streamed content grows
+// the scroll height between such an event and the pin it reports, position
+// heuristics alone would drop out mid-stream.
+let follow = false
+
 function onScroll() {
   const el = scroller.value
   if (!el) return
@@ -33,7 +42,7 @@ function onScroll() {
 
 function scrollToBottom() {
   const el = scroller.value
-  if (el && atBottom.value) el.scrollTop = el.scrollHeight
+  if (el && (atBottom.value || follow)) el.scrollTop = el.scrollHeight
 }
 
 // Each reducer pass returns a new blocks array, so identity change fires
@@ -47,14 +56,11 @@ watch(() => props.blocks, async () => {
 // When an ask (tool gate / plan decision) pops into the dock, jump the
 // console to the bottom: the content it asks about (the gated tool call,
 // the proposed plan) ends up above the card — even if the user had scrolled
-// up.  The dock publishes its height as --bar-h in a ResizeObserver pass
-// shortly after it mounts, so scroll again next frame: the tail then sits
-// just above the card instead of behind it.
-// The dock publishes its height as --bar-h on the pane only after layout
-// (ResizeObserver), and each change grows this scroller's bottom padding —
-// so after an ask pops, keep re-pinning across a few frames until that
-// settles.  Once pinned, the blocks watch keeps newer output glued to the
-// bottom.  Cancelled when the ask resolves (a newer watch run owns the pin).
+// up.  The dock publishes its height as --bar-h on the pane only after
+// layout (ResizeObserver), and each change grows this scroller's bottom
+// padding — so keep re-pinning across a few frames until that settles.
+// Once pinned, the blocks watch keeps newer output glued to the bottom.
+// Cancelled when the ask resolves (a newer watch run owns the pin).
 let askPin = 0
 watch(
   () => props.askVisible,
@@ -67,6 +73,33 @@ watch(
       if (pin !== askPin || frames-- <= 0) return
       const el = scroller.value
       if (el) el.scrollTop = el.scrollHeight // deliberate: ask wins over atBottom
+      requestAnimationFrame(force)
+    }
+    force()
+  },
+)
+
+// Sending a message appends the user block on the spot (local_user reducer),
+// even while the scrollbar sits up in history — jump to the bottom then and
+// follow: the message and the answer streaming in below it must show, so set
+// follow for the blocks watch above to keep pinning until the user scrolls
+// away.  User blocks only grow on sends, never on streamed deltas.  The
+// pre-flush watch runs before the patch adds the block, so re-pin over the
+// next few frames to cover the patch, then follow takes over.
+watch(
+  () => {
+    let sent = 0
+    for (const b of props.blocks) if (b.kind === 'user') sent++
+    return sent
+  },
+  (sent, prev) => {
+    if (sent <= prev) return
+    follow = true
+    let frames = 3
+    const force = () => {
+      if (frames-- <= 0) return
+      const el = scroller.value
+      if (el) el.scrollTop = el.scrollHeight // deliberate: send wins over atBottom
       requestAnimationFrame(force)
     }
     force()
@@ -87,6 +120,9 @@ watch(
 // box only changes on pane resize — gate resolution never jumps the content.)
 let boxObserver: ResizeObserver | null = null
 let lastBoxHeight = 0
+const releaseFollow = () => {
+  follow = false
+}
 
 onMounted(() => {
   const el = scroller.value
@@ -103,8 +139,14 @@ onMounted(() => {
     if (atBottom.value) scrollToBottom()
   })
   boxObserver.observe(el)
+  el.addEventListener('wheel', releaseFollow, { passive: true })
+  el.addEventListener('pointerdown', releaseFollow)
 })
-onBeforeUnmount(() => boxObserver?.disconnect())
+onBeforeUnmount(() => {
+  boxObserver?.disconnect()
+  scroller.value?.removeEventListener('wheel', releaseFollow)
+  scroller.value?.removeEventListener('pointerdown', releaseFollow)
+})
 </script>
 
 <template>
