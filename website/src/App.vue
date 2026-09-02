@@ -39,11 +39,13 @@ onFrame((frame) => {
 })
 void git.refresh()
 
-// The input-bar dropdown's current value.  Plan is not a gating mode —
-// it flags the next turn to run in plan mode (gating drops to manual) —
-// so the dropdown edits the permission gate; while mode_label reports
-// PLAN (a pending plan or a plan turn in flight) the pill displays
-// "plan" instead of the gate.
+// The gate the pill falls back to when no plan is on.  Plan is not a
+// gating mode — it flags the next turn to run in plan mode (gating drops
+// to manual) — so the pill shows the gate, except while mode_label
+// reports PLAN (a plan armed while idle, or a plan turn in flight), when
+// it displays "plan" instead.  In the dropdown a plan armed on an idle
+// agent is itself a selectable state: picking manual/auto there leaves
+// plan mode (the server clears the flag).
 const pillMode = computed<Mode>(() =>
   state.session?.permission_mode === 'auto' ? 'auto' : 'manual',
 )

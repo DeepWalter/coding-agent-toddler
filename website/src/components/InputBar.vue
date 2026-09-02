@@ -54,10 +54,21 @@ const MODE_OPTIONS: { value: Mode; icon: string[]; description: string }[] = [
   },
 ]
 
-/** What the pill shows: "plan" while mode_label reports PLAN, else the
- *  live permission gate.  The dropdown menu still edits the gate — its
- *  selected entry reflects *mode*, not the display. */
+/** What the pill shows: "plan" while mode_label reports PLAN (a plan is
+ *  armed or in flight), else the live permission gate. */
 const displayMode = computed<Mode>(() => (props.inPlan ? 'plan' : props.mode))
+
+/** The dropdown's selected entry (what re-picking must not re-emit).
+ *  Plan is only a selectable state while it is *armed* — pending on an
+ *  idle agent, where picking manual/auto must leave plan mode (arming
+ *  already dropped gating to manual, so comparing against the gate
+ *  would swallow those picks).  Once the plan is in flight the pill
+ *  freezes before approval and the gate goes live again while the plan
+ *  executes, so the selection tracks the gate — which is what the
+ *  manual/auto entries edit in that state. */
+const selectedMode = computed<Mode>(() =>
+  props.inPlan && !props.busy ? 'plan' : props.mode,
+)
 
 /** The option matching what the pill shows — its icon renders in the pill. */
 const currentOption = computed(() =>
@@ -76,7 +87,10 @@ function toggle() {
 function choose(mode: Mode) {
   open.value = false
   // A native select only fires change on an actual change — same here.
-  if (mode !== props.mode) emit('set-mode', mode)
+  // The comparison is against the entry the dropdown shows selected, not
+  // the gate: while an armed plan reads "plan", picking manual must fire
+  // even though gating is already manual — it is what leaves plan mode.
+  if (mode !== selectedMode.value) emit('set-mode', mode)
 }
 
 function onPickerKeydown(event: KeyboardEvent) {
@@ -197,8 +211,8 @@ onBeforeUnmount(() => barObserver?.disconnect())
               type="button"
               role="menuitemradio"
               class="mode-menu-item"
-              :class="[opt.value, { selected: opt.value === mode }]"
-              :aria-checked="opt.value === mode"
+              :class="[opt.value, { selected: opt.value === selectedMode }]"
+              :aria-checked="opt.value === selectedMode"
               :disabled="opt.value === 'plan' && busy"
               :title="opt.value === 'plan' && busy ? 'Set while the agent is idle' : undefined"
               @click="choose(opt.value)"
