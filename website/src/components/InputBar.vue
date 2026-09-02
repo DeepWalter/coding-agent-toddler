@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { Mode } from '../types'
 
 const props = defineProps<{
@@ -112,14 +112,50 @@ function onKeydown(event: KeyboardEvent) {
     submit()
   }
 }
+
+// The textarea grows with its content up to 14 lines (CSS max-height caps it;
+// beyond that it scrolls internally) while the bar floats over the console —
+// typing never shrinks the console's visible output.  "auto" first, then
+// measure, so the box also shrinks back when text is cleared after submit.
+const rootEl = ref<HTMLElement | null>(null)
+const textareaEl = ref<HTMLTextAreaElement | null>(null)
+let barObserver: ResizeObserver | null = null
+
+function autosizeTextarea() {
+  const ta = textareaEl.value
+  if (!ta) return
+  ta.style.height = 'auto'
+  ta.style.height = `${ta.scrollHeight}px`
+}
+
+watch(text, async () => {
+  await nextTick()
+  autosizeTextarea()
+})
+
+onMounted(() => {
+  autosizeTextarea()
+  // The bar is positioned against .pane-console — its parentElement — whose
+  // scroller's bottom padding reads --bar-h, so pinned console output always
+  // ends just above the card, at whatever height it grew to.
+  const el = rootEl.value
+  const host = el?.parentElement
+  if (!el || !host) return
+  const applyBarHeight = () => host.style.setProperty('--bar-h', `${el.offsetHeight}px`)
+  applyBarHeight()
+  barObserver = new ResizeObserver(applyBarHeight)
+  barObserver.observe(el)
+})
+onBeforeUnmount(() => barObserver?.disconnect())
 </script>
 
 <template>
-  <div class="input-bar">
+  <div ref="rootEl" class="input-bar">
     <textarea
+      ref="textareaEl"
       v-model="text"
       class="input-bar-textarea"
-      rows="2"
+      rows="1"
       placeholder="Describe a task…"
       :disabled="!connected"
       @keydown="onKeydown"

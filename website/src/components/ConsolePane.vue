@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { Block } from '../types'
 import { renderMarkdown } from '../markdown'
 import MessageBubble from './MessageBubble.vue'
@@ -35,6 +35,37 @@ watch(() => props.blocks, async () => {
   await nextTick()
   scrollToBottom()
 })
+
+// Growing the input card writes a taller --bar-h, which grows this scroller's
+// bottom padding and shrinks its content box — a ResizeObserver report with
+// an unchanged border box.  That must NOT scroll the console: the card is an
+// overlay, so while the user composes it may cover the tail instead of
+// shoving the output up (typing never moves what's on screen, pinned or not).
+// Streaming content grows the scroll height without resizing this box, so
+// the blocks watch above stays the pin mechanism and keeps the newest line
+// just above the card.  Re-pin only when the scroller's own height changed
+// (border box) — pane resize, the paused strip toggling — keeping the bottom
+// edge glued for the user sitting at it.
+let boxObserver: ResizeObserver | null = null
+let lastBoxHeight = 0
+
+onMounted(() => {
+  const el = scroller.value
+  if (!el) return
+  // Seed with the current height so the first border-box report (barring
+  // sub-pixel drift) reads as no change instead of an unrequested scroll.
+  lastBoxHeight = el.getBoundingClientRect().height
+  boxObserver = new ResizeObserver((entries) => {
+    const blockSize = entries[0]?.borderBoxSize[0]?.blockSize
+    if (typeof blockSize !== 'number' || Math.abs(blockSize - lastBoxHeight) < 0.5) {
+      return
+    }
+    lastBoxHeight = blockSize
+    if (atBottom.value) scrollToBottom()
+  })
+  boxObserver.observe(el)
+})
+onBeforeUnmount(() => boxObserver?.disconnect())
 </script>
 
 <template>

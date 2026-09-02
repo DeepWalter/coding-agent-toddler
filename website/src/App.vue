@@ -481,7 +481,7 @@ function onDividerUp(event: PointerEvent) {
       />
 
       <section class="pane pane-console">
-        <div class="console-wrap">
+        <div class="console-wrap" :class="{ paused: state.paused }">
           <ConsolePane
             :blocks="state.blocks"
             @approve-plan="approvePlan"
