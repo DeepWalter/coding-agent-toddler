@@ -28,6 +28,11 @@ export interface SessionInfo {
  *  turn to run in plan mode, mirroring the CLI's `/mode plan`. */
 export type Mode = 'manual' | 'auto' | 'plan'
 
+/** How THIS tab decided a proposed plan.  Same-tab truth: the ack frames for
+ *  approve_plan/reject_plan carry no plan id, so decisions can't wait for the
+ *  server — they are marked optimistically and undone if the ack refuses. */
+export type PlanDecision = 'manual' | 'auto' | 'rejected'
+
 export interface ConversationInfo {
   id: string | null
   sequence_num: number | null
@@ -179,7 +184,15 @@ export type Block =
       result: ToolResult | null
       open: boolean
     }
-  | { id: number; kind: 'plan'; plan: Plan; steps: PlanStepRow[] }
+  | {
+      id: number
+      kind: 'plan'
+      plan: Plan
+      steps: PlanStepRow[]
+      /** null until this tab decides (hello rebuilds and live proposals both
+       *  start undecided).  The server never replays a decision. */
+      decision: PlanDecision | null
+    }
   | { id: number; kind: 'error'; message: string }
   | { id: number; kind: 'notice'; message: string }
 

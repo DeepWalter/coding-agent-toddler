@@ -111,13 +111,15 @@ function onPointerDown(event: PointerEvent) {
 onMounted(() => document.addEventListener('pointerdown', onPointerDown))
 onBeforeUnmount(() => document.removeEventListener('pointerdown', onPointerDown))
 
-const text = ref('')
+// The draft is owned by the console dock (v-model:draft), which stays mounted
+// while a confirmation card replaces this bar — typing is never lost.
+const draft = defineModel<string>('draft', { default: '' })
 
 function submit() {
-  const trimmed = text.value.trim()
+  const trimmed = draft.value.trim()
   if (!trimmed || props.busy || !props.connected) return
   emit('send', trimmed)
-  text.value = ''
+  draft.value = ''
 }
 
 function onKeydown(event: KeyboardEvent) {
@@ -131,9 +133,9 @@ function onKeydown(event: KeyboardEvent) {
 // beyond that it scrolls internally) while the bar floats over the console —
 // typing never shrinks the console's visible output.  "auto" first, then
 // measure, so the box also shrinks back when text is cleared after submit.
-const rootEl = ref<HTMLElement | null>(null)
+// (The dock's own height — not this bar's — is what --bar-h reports now; the
+// card chrome and its measurement live in ConsoleDock.)
 const textareaEl = ref<HTMLTextAreaElement | null>(null)
-let barObserver: ResizeObserver | null = null
 
 function autosizeTextarea() {
   const ta = textareaEl.value
@@ -142,32 +144,27 @@ function autosizeTextarea() {
   ta.style.height = `${ta.scrollHeight}px`
 }
 
-watch(text, async () => {
+watch(draft, async () => {
   await nextTick()
   autosizeTextarea()
 })
 
 onMounted(() => {
   autosizeTextarea()
-  // The bar is positioned against .pane-console — its parentElement — whose
-  // scroller's bottom padding reads --bar-h, so pinned console output always
-  // ends just above the card, at whatever height it grew to.
-  const el = rootEl.value
-  const host = el?.parentElement
-  if (!el || !host) return
-  const applyBarHeight = () => host.style.setProperty('--bar-h', `${el.offsetHeight}px`)
-  applyBarHeight()
-  barObserver = new ResizeObserver(applyBarHeight)
-  barObserver.observe(el)
+  // Returning from a confirmation with a non-empty draft (a real cache
+  // restore) — take focus back so typing can continue.  A plain remount
+  // (page load, busy Cancel) leaves focus where it is.
+  if (draft.value.trim()) {
+    nextTick(() => textareaEl.value?.focus())
+  }
 })
-onBeforeUnmount(() => barObserver?.disconnect())
 </script>
 
 <template>
-  <div ref="rootEl" class="input-bar">
+  <div class="input-bar">
     <textarea
       ref="textareaEl"
-      v-model="text"
+      v-model="draft"
       class="input-bar-textarea"
       rows="1"
       placeholder="Describe a task…"
@@ -257,7 +254,7 @@ onBeforeUnmount(() => barObserver?.disconnect())
         v-else
         type="button"
         class="btn primary small"
-        :disabled="!connected || !text.trim()"
+        :disabled="!connected || !draft.trim()"
         @click="submit"
       >
         Send

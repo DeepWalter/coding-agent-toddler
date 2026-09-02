@@ -5,6 +5,7 @@ import type {
   ConsoleState,
   Frame,
   Mode,
+  PlanDecision,
   TokenUsage,
 } from '../types'
 
@@ -24,6 +25,7 @@ export type ConsoleAction =
   | Frame
   | { type: 'local_user'; text: string }
   | { type: 'local_mode'; mode: Mode }
+  | { type: 'local_plan_decision'; planId: number; decision: PlanDecision | null }
 
 export function initialState(): ConsoleState {
   return {
@@ -150,7 +152,12 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
       // new tab can still see and approve it.  Same busy gate as paused
       // — the snapshot can outlive the turn by a race.
       if (action.busy && action.plan) {
-        push(s, { kind: 'plan', plan: action.plan.plan, steps: action.plan.steps })
+        push(s, {
+          kind: 'plan',
+          plan: action.plan.plan,
+          steps: action.plan.steps,
+          decision: null,
+        })
       }
       break
     }
@@ -209,11 +216,23 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
       break
     }
     case 'plan_proposed':
-      push(s, { kind: 'plan', plan: action.plan, steps: [] })
+      push(s, { kind: 'plan', plan: action.plan, steps: [], decision: null })
       break
     case 'plan_step_update': {
       const last = [...s.blocks].reverse().find((b) => b.kind === 'plan')
       if (last && last.kind === 'plan') last.steps = action.steps
+      break
+    }
+    case 'local_plan_decision': {
+      // Optimistic, same-tab mark of a plan decision — acks carry no plan id,
+      // so the shared state can't learn the outcome from the server.
+      for (let i = s.blocks.length - 1; i >= 0; i--) {
+        const b = s.blocks[i]
+        if (b.kind === 'plan' && b.id === action.planId) {
+          b.decision = action.decision
+          break
+        }
+      }
       break
     }
     case 'agent_paused':
@@ -259,7 +278,24 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
       s.paused = null
       push(s, { kind: 'notice', message: '— turn cancelled' })
       break
-    case 'ack':
+    case 'ack': {
+      // A refused plan decision means the server had already decided (another
+      // tab, or the machine moved on) — undo the optimistic mark while the
+      // block is still fully pending, so it reads undecided instead of lying
+      // "approved…" and re-offers.  Steps running means our decision was real.
+      if (!action.accepted && ['approve_plan', 'reject_plan'].includes(action.cmd)) {
+        for (let i = s.blocks.length - 1; i >= 0; i--) {
+          const b = s.blocks[i]
+          if (
+            b.kind === 'plan'
+            && b.decision !== null
+            && b.steps.every(([, , st]) => st === 'pending')
+          ) {
+            b.decision = null
+            break
+          }
+        }
+      }
       if (
         action.accepted
         && ['approve_tool', 'deny_tool', 'approve_plan', 'reject_plan'].includes(action.cmd)
@@ -267,6 +303,7 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
         s.paused = null
       }
       break
+    }
     case 'error':
       push(s, {
         kind: 'error',
@@ -324,11 +361,34 @@ export function useConsole(send: (cmd: Command) => void) {
     if (toolId) send({ cmd: 'deny_tool', tool_id: toolId })
   }
 
+  // The shared decision path for the dock ask and the inline card: mark the
+  // block's decision optimistically (a refused ack undoes it) and send the
+  // command.  The decision === null guard keeps double-clicks idempotent.
   function approvePlan(planId: string, mode: 'manual' | 'auto') {
+    const raw = toRaw(state)
+    for (let i = raw.blocks.length - 1; i >= 0; i--) {
+      const b = raw.blocks[i]
+      if (b.kind === 'plan' && b.plan.id === planId) {
+        if (b.decision === null) {
+          applyFrame({ type: 'local_plan_decision', planId: b.id, decision: mode })
+        }
+        break // at most one block per plan id
+      }
+    }
     send({ cmd: 'approve_plan', plan_id: planId, mode })
   }
 
   function rejectPlan(planId: string, feedback: string) {
+    const raw = toRaw(state)
+    for (let i = raw.blocks.length - 1; i >= 0; i--) {
+      const b = raw.blocks[i]
+      if (b.kind === 'plan' && b.plan.id === planId) {
+        if (b.decision === null) {
+          applyFrame({ type: 'local_plan_decision', planId: b.id, decision: 'rejected' })
+        }
+        break
+      }
+    }
     send({ cmd: 'reject_plan', plan_id: planId, feedback })
   }
 

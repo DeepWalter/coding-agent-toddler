@@ -2,37 +2,38 @@
 import { computed, ref } from 'vue'
 import type { Block } from '../types'
 
-const props = defineProps<{ block: Extract<Block, { kind: 'plan' }> }>()
+const props = defineProps<{
+  block: Extract<Block, { kind: 'plan' }>
+  /** True while THIS block is the plan the console dock is asking about —
+   *  the decision lives in the dock, so the card renders read-only. */
+  awaiting?: boolean
+}>()
 const emit = defineEmits<{
   approve: [planId: string, mode: 'manual' | 'auto']
   reject: [planId: string, feedback: string]
 }>()
 
-// Each plan block gets its own component instance (keyed by block id in
-// the console), so `chosen` needs no reset: a re-explored plan arrives
-// as a new block and a fresh card.
-const chosen = ref<'manual' | 'auto' | 'reject' | null>(null)
-const showFeedback = ref(false)
-const feedback = ref('')
-
-// A card rebuilt from a hello snapshot can arrive with steps already
-// running (the plan was approved from another tab) — then the decision
-// is made and the action buttons must not re-offer approval.
+// The decision is recorded on the block by the reducer (dock ask or inline
+// card) the moment a button is clicked, so no component-local state is
+// needed — and a card rebuilt from a hello snapshot that arrives with steps
+// already running (the plan was approved from another tab) reads resolved
+// from the steps alone and never re-offers approval.
+const chosen = computed(() => props.block.decision)
 const resolved = computed(
   () =>
     chosen.value !== null
     || props.block.steps.some(([, , status]) => status !== 'pending'),
 )
 
+// These are transient editor state, not decisions — local is fine.
+const showFeedback = ref(false)
+const feedback = ref('')
+
 function choose(mode: 'manual' | 'auto') {
-  if (chosen.value) return
-  chosen.value = mode
   emit('approve', props.block.plan.id, mode)
 }
 
 function submitReject() {
-  if (chosen.value) return
-  chosen.value = 'reject'
   emit('reject', props.block.plan.id, feedback.value.trim())
 }
 </script>
@@ -66,22 +67,25 @@ function submitReject() {
       ~{{ block.plan.estimated_files_touched }} file(s) touched
     </div>
 
-    <div v-if="!resolved" class="plan-card-actions">
+    <div v-if="awaiting" class="plan-card-note">
+      awaiting your decision — approve in the bar below…
+    </div>
+    <div v-else-if="!resolved" class="plan-card-actions">
       <button type="button" class="btn primary" @click="choose('manual')">Approve</button>
       <button type="button" class="btn" @click="choose('auto')">Approve + auto</button>
       <button type="button" class="btn danger" @click="showFeedback = true">Deny</button>
     </div>
     <div v-else class="plan-card-note">
       {{
-        chosen === 'reject'
-          ? 'plan rejected — re-exploring…'
+        chosen === 'rejected'
+          ? 'plan rejected'
           : chosen === 'auto'
             ? 'approved — running with auto-accept…'
             : 'approved — running…'
       }}
     </div>
 
-    <div v-if="showFeedback && !chosen" class="plan-card-feedback">
+    <div v-if="showFeedback && !resolved && !awaiting" class="plan-card-feedback">
       <textarea
         v-model="feedback"
         rows="2"

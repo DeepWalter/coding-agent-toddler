@@ -499,23 +499,12 @@ body {
   min-height: 0;
 }
 
-/* Paused, the approval strip is the bottommost control — the wrap pads up
-   by the card's height so the strip floats above the input card, and the
-   scroller drops its own card clearance (the strip provides the separation). */
-.console-wrap.paused {
-  padding-bottom: calc(var(--bar-h, 0px) + 22px);
-}
-
-.console-wrap.paused .console-pane {
-  padding-bottom: 14px;
-}
-
 .console-pane {
   flex: 1;
   overflow-y: auto;
   /* Bottom = 14px base + 14px card inset + the card's own height (--bar-h,
-     set by the input bar on .pane-console): pinned output always ends just
-     above the floating card, whatever height it grew to. */
+     set by the console dock on .pane-console): pinned output always ends
+     just above the floating card, whatever height it grew to. */
   padding: 14px 14px calc(28px + var(--bar-h, 0px));
   display: flex;
   flex-direction: column;
@@ -905,27 +894,37 @@ body {
 /* Pause prompt                                                        */
 /* ------------------------------------------------------------------ */
 
+/* Tool-gate card inside the console dock (the card chrome comes from
+   .console-dock): the gate question leads as the title with the ✕ close on
+   the head row, and the choices are stacked full-width rows.  Only the ⚠
+   icon keeps the warning color — inside a neutral card an all-warning title
+   would read like an error banner. */
 .pause-prompt {
-  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pause-prompt-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 14px;
-  border-top: 1px solid var(--warning);
-  background: var(--editor-surface-2);
-  color: var(--warning);
+  min-width: 0;
 }
 
 .pause-prompt-icon {
   flex: none;
+  color: var(--warning);
 }
 
-.pause-prompt-text {
+.pause-prompt-title {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--text);
+  font-weight: 600;
 }
 
 .pause-prompt-hint {
@@ -934,18 +933,30 @@ body {
 
 .pause-prompt-actions {
   display: flex;
+  flex-direction: column;
   gap: 6px;
-  flex: none;
+}
+
+/* A choice fills the card width as its own row (base .btn styling applies,
+   with slimmer top/bottom padding so the rows sit tight in the card). */
+.pause-prompt-actions .btn {
+  width: 100%;
+  text-align: left;
+  padding-block: 2px;
 }
 
 /* ------------------------------------------------------------------ */
-/* Input bar                                                           */
+/* Console dock (floating card over the console's bottom edge)         */
 /* ------------------------------------------------------------------ */
 
-.input-bar {
-  /* Floating card over the console's bottom edge — out of flow, so its
-     height (textarea up to 14 lines) never shrinks the console's visible
-     output.  InputBar reports the height as --bar-h on .pane-console. */
+/* One floating card — the tool gate, an awaiting plan's decision bar, or
+   the input bar — inset over .pane-console's bottom edge, out of flow so
+   its height never shrinks the console's visible output.  The dock reports
+   its height as --bar-h on .pane-console (its offset parent — ConsoleDock
+   enforces that by template placement).  It needs no z-index: .pane-console
+   is positioned but not a stacking context, and the dock is its positioned
+   last child, so it paints above the console content. */
+.console-dock {
   position: absolute;
   left: 14px;
   right: 14px;
@@ -958,6 +969,34 @@ body {
   border-radius: 10px;
   background: var(--editor-surface-2);
   box-shadow: 0 6px 18px rgb(0 0 0 / 0.25);
+}
+
+/* ✕ close on the ask cards' head row (tool gate, plan ask) — replaces the
+   old text Cancel; cancels the running turn, so it only shows while busy. */
+.ask-close {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.ask-close:hover {
+  background: var(--editor-surface-3);
+  color: var(--text);
+}
+
+.input-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .input-bar-textarea {
@@ -1012,6 +1051,63 @@ body {
 .input-bar-model {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* ------------------------------------------------------------------ */
+/* Plan ask (compact decision bar in the console dock)                 */
+/* ------------------------------------------------------------------ */
+
+.plan-ask {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.plan-ask-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.plan-ask-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.plan-ask-label {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.plan-ask-summary {
+  color: var(--text-muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-ask-meta {
+  opacity: 0.7;
+}
+
+.plan-ask-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Choices fill the card width as their own rows — mirrors the tool gate
+   (including the slim top/bottom padding). */
+.plan-ask-actions .btn {
+  width: 100%;
+  text-align: left;
+  padding-block: 2px;
 }
 
 .btn {
@@ -1119,7 +1215,8 @@ body {
 }
 
 .pane-console {
-  /* Offset parent for the floating input card (absolute, bottom-inset). */
+  /* Offset parent for the floating console dock (absolute, bottom-inset),
+     which reports --bar-h here. */
   position: relative;
   flex: 1;
 }

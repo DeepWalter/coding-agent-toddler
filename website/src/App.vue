@@ -1,17 +1,16 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import ConsoleDock from './components/ConsoleDock.vue'
 import ConsolePane from './components/ConsolePane.vue'
 import FileEditor from './components/FileEditor.vue'
 import FileExplorer from './components/FileExplorer.vue'
-import InputBar from './components/InputBar.vue'
-import PausePrompt from './components/PausePrompt.vue'
 import SessionList from './components/SessionList.vue'
 import SourceControl from './components/SourceControl.vue'
 import StatusBar from './components/StatusBar.vue'
 import { useConsole } from './composables/useConsole'
 import { useGitStatus } from './composables/useGitStatus'
 import { useWebSocket } from './composables/useWebSocket'
-import type { Mode, TabEntry } from './types'
+import type { Block, Mode, TabEntry } from './types'
 import { tabKey } from './utils'
 
 // Transport → state: every websocket frame goes through the console
@@ -52,6 +51,28 @@ const pillMode = computed<Mode>(() =>
 const inPlan = computed(() =>
   (state.session?.mode_label ?? '').toUpperCase() === 'PLAN',
 )
+
+// The plan block awaiting THIS tab's decision, if any — the console dock
+// floats its decision bar over the input bar while it exists.  busy is
+// required: an undecided plan while idle keeps its inline actions and must
+// not float (the user can still type).  Only the LAST plan block counts —
+// at most one undecided plan exists in practice (rejected/approved blocks
+// are decided, new proposals supersede decided ones).
+const awaitingPlan = computed<Extract<Block, { kind: 'plan' }> | null>(() => {
+  if (!state.busy) return null
+  for (let i = state.blocks.length - 1; i >= 0; i--) {
+    const b = state.blocks[i]
+    if (b.kind !== 'plan') continue
+    if (b.decision === null && b.steps.every(([, , st]) => st === 'pending')) return b
+    return null // a later, decided plan supersedes any earlier undecided one
+  }
+  return null
+})
+const awaitingPlanId = computed(() => awaitingPlan.value?.id ?? null)
+// True while the console dock floats an ask (tool gate or awaiting plan)
+// over the input bar — the console pins to the bottom then, so the content
+// being asked about sits right above the card.
+const askVisible = computed(() => state.paused !== null || awaitingPlanId.value !== null)
 
 // Three split panes: explorer | editor | console.  Each divider drags its
 // leading pane's width as a % of the split width, clamped cross-wise so
@@ -483,21 +504,22 @@ function onDividerUp(event: PointerEvent) {
       />
 
       <section class="pane pane-console">
-        <div class="console-wrap" :class="{ paused: state.paused }">
+        <div class="console-wrap">
           <ConsolePane
             :blocks="state.blocks"
+            :awaiting-plan-id="awaitingPlanId"
+            :ask-visible="askVisible"
             @approve-plan="approvePlan"
             @reject-plan="rejectPlan"
             @open-file="openFile"
           />
-          <PausePrompt
-            v-if="state.paused"
-            :paused="state.paused"
-            @approve="approveTool"
-            @deny="denyTool"
-          />
         </div>
-        <InputBar
+        <!-- One floating card occupies the bottom slot: the tool gate, an
+             awaiting plan's decision bar, or the input bar.  The dock is
+             positioned against this pane and reports --bar-h to it. -->
+        <ConsoleDock
+          :paused="state.paused"
+          :awaiting-plan="awaitingPlan"
           :busy="state.busy"
           :connected="connected"
           :mode="pillMode"
@@ -508,6 +530,10 @@ function onDividerUp(event: PointerEvent) {
           @send="sendTurn"
           @cancel="cancelTurn"
           @set-mode="setMode"
+          @approve-tool="approveTool"
+          @deny-tool="denyTool"
+          @approve-plan="approvePlan"
+          @reject-plan="rejectPlan"
         />
       </section>
     </div>
