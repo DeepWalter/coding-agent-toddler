@@ -121,11 +121,15 @@ function badgeFor(node: TreeNode): string {
   return letter ?? ''
 }
 
-/** Classes for a directory row's name: dir weight + the badge color. */
-function dirNameClass(node: TreeNode): string {
-  if (node.type !== 'dir') return 'tree-file'
+/** Classes for a row's name.  Directories: dir weight plus the badge
+ * color of whatever changed underneath them.  Files: their own letter's
+ * color when changed (dimmed otherwise, since clean files stay muted). */
+function nameClass(node: TreeNode): string {
   const letter = badgeFor(node)
-  return letter ? `tree-dir tree-dir-changed ${gitBadgeClass(letter)}` : 'tree-dir'
+  if (node.type === 'dir') {
+    return letter ? `tree-dir tree-dir-changed ${gitBadgeClass(letter)}` : 'tree-dir'
+  }
+  return letter ? `tree-file tree-file-changed ${gitBadgeClass(letter)}` : 'tree-file'
 }
 
 function onRowClick(node: TreeNode) {
@@ -172,7 +176,7 @@ function onRowClick(node: TreeNode) {
           <span class="tree-chevron">
             {{ node.type === 'dir' ? (expanded[node.path] ? '▾' : '▸') : '' }}
           </span>
-          <span class="tree-name" :class="dirNameClass(node)">
+          <span class="tree-name" :class="nameClass(node)">
             {{ node.name }}
           </span>
           <span

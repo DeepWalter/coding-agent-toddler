@@ -1454,40 +1454,47 @@ body {
   font-weight: 600;
 }
 
-/* A directory containing changed files — the ● dot and the name take
- * the directory's badge letter color (rules below; the name keeps its
- * weight from .tree-dir). */
+/* Changed tree names take their badge letter color — directories
+ * (.tree-dir-changed, keeping the weight from .tree-dir), changed files
+ * (.tree-file-changed, overriding the dim .tree-file), and the ● dot
+ * marking a dirty directory.  One letter-color group per rule. */
 .git-dot {
   flex: none;
   user-select: none;
 }
 
 .tree-dir-changed.mod,
+.tree-file-changed.mod,
 .git-dot.mod {
   color: var(--warning);
 }
 
 .tree-dir-changed.add,
+.tree-file-changed.add,
 .git-dot.add {
   color: var(--success);
 }
 
 .tree-dir-changed.del,
+.tree-file-changed.del,
 .git-dot.del {
   color: var(--error);
 }
 
 .tree-dir-changed.rename,
+.tree-file-changed.rename,
 .git-dot.rename {
   color: var(--accent);
 }
 
 .tree-dir-changed.untracked,
+.tree-file-changed.untracked,
 .git-dot.untracked {
   color: var(--accent-secondary);
 }
 
 .tree-dir-changed.conflict,
+.tree-file-changed.conflict,
 .git-dot.conflict {
   color: var(--error);
 }
