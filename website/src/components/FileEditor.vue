@@ -34,6 +34,7 @@ const emit = defineEmits<{
   'close-tab': [tab: TabEntry]
   'open-file': [path: string]
   'file-saved': [path: string]
+  'dirty-count': [count: number]
   'refresh-git': []
 }>()
 
@@ -121,6 +122,20 @@ const activeTab = computed(() =>
   props.active?.kind === 'file' ? (tabs.value[props.active.path] ?? null) : null,
 )
 const isDirty = (tab: EditorTab | null | undefined) => !!tab && tab.dirty
+
+/** Number of open file tabs with unsaved edits — reported upward for the
+ * explorer icon's activity badge.  Counted against props.files (not the
+ * raw record) so buffers orphaned by a session/cwd switch — their records
+ * outlive the open-tab list, which close-tabs alone prunes — can't
+ * inflate the badge. */
+const dirtyCount = computed(() => {
+  let n = 0
+  for (const tab of props.files) {
+    if (tab.kind === 'file' && tabs.value[tab.path]?.dirty) n++
+  }
+  return n
+})
+watch(dirtyCount, (count) => emit('dirty-count', count))
 
 /** Active file path — the header, explorer highlight, and save target. */
 const activeFilePath = computed(() =>

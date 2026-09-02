@@ -186,6 +186,10 @@ const scCount = computed(
     Object.keys(git.state.sections.unstaged).length,
 )
 
+/** Unsaved-editor-files count for the explorer icon badge; FileEditor
+ * reports it whenever a tab's dirty set changes. */
+const dirtyCount = ref(0)
+
 // Editor-pane tabs.  A tab is either a file (editable, persists in
 // localStorage) or a diff (read-only side-by-side view, ephemeral — never
 // persisted; a reload must restore only real files).  The file path list +
@@ -408,6 +412,7 @@ function onDividerUp(event: PointerEvent) {
             <path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
             <path d="M3 10h18" />
           </svg>
+          <span v-if="dirtyCount" class="activity-badge" title="unsaved files">{{ dirtyCount }}</span>
         </button>
         <button
           type="button"
@@ -462,6 +467,7 @@ function onDividerUp(event: PointerEvent) {
           @close-tab="closeTab"
           @open-file="openFile"
           @file-saved="git.scheduleRefresh"
+          @dirty-count="(n) => (dirtyCount = n)"
           @refresh-git="git.scheduleRefresh"
         />
       </section>
