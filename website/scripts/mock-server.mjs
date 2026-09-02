@@ -99,10 +99,18 @@ wss.on('connection', (ws) => {
       return
     }
     switch (msg.cmd) {
-      case 'turn':
+      case 'turn': {
+        // First turn gates on a Bash call; later turns stream and finish —
+        // the harness needs a plain send (no ask) to test the send-pin alone.
+        const gate = msg.input.startsWith('gate')
         send({ type: 'turn_started' })
         for (let i = 0; i < 26; i++) {
           send({ type: 'text_delta', text: `more streaming output chunk ${i}\n` })
+        }
+        if (!gate) {
+          send({ type: 'agent_finished', reason: 'completed', usage: null })
+          send({ type: 'state', busy: false })
+          break
         }
         send({
           type: 'tool_call_start',
@@ -112,10 +120,12 @@ wss.on('connection', (ws) => {
         })
         send({
           type: 'agent_paused',
+          tool_id: 't1',
           prompt: 'The agent wants to run Bash: ls -la — approve?',
           choices: null,
         })
         break
+      }
       case 'approve_tool':
       case 'deny_tool':
         send({ type: 'ack', cmd: msg.cmd, accepted: true })
@@ -128,6 +138,7 @@ wss.on('connection', (ws) => {
         })
         send({ type: 'text_delta', text: 'done.\n' })
         send({ type: 'agent_finished', reason: 'completed', usage: null })
+        send({ type: 'state', busy: false })
         break
       case 'cancel':
         send({ type: 'ack', cmd: 'cancel', accepted: true })

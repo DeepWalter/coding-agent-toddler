@@ -1,13 +1,17 @@
-// Headless repro: console scrolled to the middle → a tool gate pops → does
-// the console pin to the bottom?  Prints PASS/FAIL plus diagnostics.
+// Headless repro against the mock server:
+//  phase 1 — console scrolled to the middle → a tool gate pops → the
+//            console must pin to the bottom (the ask wins over atBottom)
+//  phase 2 — after the gate resolves, console scrolled to the middle again
+//            → sending a plain message must pin to the bottom too
+// Prints PASS/FAIL plus diagnostics; exits 1 on any failure.
 import { chromium } from 'playwright'
+
+const BASE = process.env.BASE_URL ?? 'http://127.0.0.1:5199/'
 
 const browser = await chromium.launch()
 const page = await browser.newPage({ viewport: { width: 1280, height: 700 } })
 page.on('pageerror', (e) => console.log('[pageerror]', e.message))
-page.on('console', (m) => console.log('[page]', m.text()))
 
-const BASE = process.env.BASE_URL ?? 'http://127.0.0.1:5199/'
 await page.goto(BASE)
 
 // Wait for the seeded console content to be tall enough to scroll.
@@ -17,104 +21,65 @@ await page.waitForFunction(() => {
 }, { timeout: 15000 })
 await page.waitForTimeout(400)
 
-// Log every scroll position from here on, so a wrong move is visible.
-await page.evaluate(() => {
-  const el = document.querySelector('.console-pane')
-  window.__scrollLog = []
-  el.addEventListener('scroll', () => window.__scrollLog.push(Math.round(el.scrollTop)))
-})
+const nearBottom = () =>
+  page.evaluate(() => {
+    const el = document.querySelector('.console-pane')
+    return el.scrollTop + el.clientHeight >= el.scrollHeight - 5
+  })
+const waitPinned = () =>
+  page.waitForFunction(() => {
+    const el = document.querySelector('.console-pane')
+    return el && el.scrollTop + el.clientHeight >= el.scrollHeight - 5
+  }, { timeout: 8000 })
+const scrollMid = async (label) => {
+  const at = await page.evaluate(() => {
+    const el = document.querySelector('.console-pane')
+    el.scrollTop = Math.round((el.scrollHeight - el.clientHeight) / 2)
+    return { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight, clientHeight: el.clientHeight }
+  })
+  await page.waitForTimeout(300)
+  console.log(`${label} scrolled to middle:`, JSON.stringify(at))
+  return at
+}
 
-const mid = await page.evaluate(() => {
-  const el = document.querySelector('.console-pane')
-  el.scrollTop = Math.round((el.scrollHeight - el.clientHeight) / 2)
-  return { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight, clientHeight: el.clientHeight }
-})
-console.log('scrolled to middle:', JSON.stringify(mid))
-await page.waitForTimeout(300)
+let fails = 0
 
-const before = await page.evaluate(() => {
-  const inst = (sel) => {
-    let n = document.querySelector(sel)
-    while (n) {
-      if (n.__vueParentComponent) return n.__vueParentComponent
-      n = n.parentElement
-    }
-    return null
-  }
-  const dock = inst('.console-dock')
-  const pane = inst('.console-pane')
-  const app = dock?.parent
-  const dockProps = dock?.props ?? {}
-  const readVal = (i, key) => {
-    try {
-      const v = i?.setupState?.[key]
-      return v === null || v === undefined || typeof v === 'object' && 'value' in v ? null : v
-    } catch {
-      return '?'
-    }
-  }
-  return {
-    scrollTop: document.querySelector('.console-pane').scrollTop,
-    appPaused: !!app?.setupState?.state?.paused,
-    askVisibleValue: app ? app.setupState.askVisible : 'no-app',
-    sameParentPaneDock: pane?.parent === app,
-    paneAwaitingPlanId: pane?.props?.awaitingPlanId,
-    dockPaused: dockProps.paused ?? null,
-    dockAwaitingPlan: dockProps.awaitingPlan ?? null,
-  }
-})
-console.log('pre-gate state:', JSON.stringify(before))
-
-await page.fill('textarea.input-bar-textarea', 'run a task')
+// --- Phase 1: tool gate pops while scrolled to the middle → pinned ---
+const m1 = await scrollMid('phase1')
+await page.fill('textarea.input-bar-textarea', 'gate: list files')
 await page.click('button:has-text("Send")')
 await page.waitForSelector('.pause-prompt', { timeout: 15000 })
-await page.waitForTimeout(800)
+await waitPinned()
+const ok1 = await nearBottom()
+console.log(`phase1 gate -> pinned to bottom ${ok1 ? 'PASS' : 'FAIL'}`)
+if (!ok1) fails++
 
-const result = await page.evaluate(() => {
-  const el = document.querySelector('.console-pane')
-  // Climb to the nearest Vue component instance for each key element.
-  const inst = (sel) => {
-    let n = document.querySelector(sel)
-    while (n) {
-      if (n.__vueParentComponent) return n.__vueParentComponent
-      n = n.parentElement
-    }
-    return null
-  }
-  const dockInst = inst('.console-dock')
-  const paneInst = inst('.console-pane')
-  const appInst = dockInst?.parent
-  return {
-    scrollTop: el.scrollTop,
-    scrollHeight: el.scrollHeight,
-    clientHeight: el.clientHeight,
-    gateVisible: !!document.querySelector('.pause-prompt'),
-    logTail: window.__scrollLog.slice(-15),
-    app: appInst
-      ? {
-          askVisible: appInst.setupState.askVisible?.value,
-          paused: !!appInst.setupState.state?.paused,
-          hasPaneWatch: !!appInst.subTree?.children?.some?.((c) => {
-            try {
-              return c.component?.type?.__name === 'ConsolePane'
-            } catch {
-              return false
-            }
-          }),
-        }
-      : null,
-    pane: paneInst
-      ? {
-          name: paneInst.type?.__name,
-          askVisibleProp: paneInst.props?.askVisible,
-          askVisibleInitial: paneInst.props?.askVisible,
-        }
-      : null,
-  }
-})
-console.log('after gate:', JSON.stringify(result, null, 1))
-const pinned = result.gateVisible && result.scrollTop + result.clientHeight >= result.scrollHeight - 5
-console.log(pinned ? 'PASS: pinned to bottom on gate' : 'FAIL: NOT pinned to bottom')
+// --- Phase 2: resolve the gate, then a plain send pins too ---
+await page.click('.pause-prompt button:has-text("Approve")')
+await page.waitForSelector('.pause-prompt', { state: 'detached', timeout: 8000 })
+await page.waitForSelector('button:has-text("Send")', { timeout: 8000 })
+await page.waitForTimeout(300)
+
+const m2 = await scrollMid('phase2')
+const stuck = await nearBottom()
+if (stuck) {
+  console.log('phase2 FAIL: console would not stay scrolled away from the bottom after the gate resolved')
+  fails++
+} else {
+  await page.fill('textarea.input-bar-textarea', 'plain message, no gate')
+  await page.click('button:has-text("Send")')
+  await waitPinned()
+  await page.waitForTimeout(500) // stream finishes; must not yank back up
+  const ok2 = await nearBottom()
+  const tail = await page.evaluate(() => {
+    const el = document.querySelector('.console-pane')
+    return { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight, clientHeight: el.clientHeight }
+  })
+  console.log(
+    `phase2 send (mid=${m2.scrollTop}) -> pinned to ${tail.scrollTop}/${tail.scrollHeight} ${ok2 ? 'PASS' : 'FAIL'}`,
+  )
+  if (!ok2) fails++
+}
 
 await browser.close()
-process.exit(pinned ? 0 : 1)
+process.exit(fails ? 1 : 0)
