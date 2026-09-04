@@ -874,6 +874,14 @@ body {
   border-left-color: var(--editor-border);
 }
 
+/* Fold lines — synthetic markers (turn cancelled, compacted) rendered as a
+   dimmed italic divider between turns.  Plain text only, never markdown. */
+.stream-line.fold {
+  color: var(--text-subtle);
+  font-style: italic;
+  border-left-color: transparent;
+}
+
 /* Markdown-rendered notices (/help, …): the renderer emits its own
    breaks, so pre-wrap would double every newline. */
 .stream-line.markdown {

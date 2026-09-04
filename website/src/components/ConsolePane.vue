@@ -174,6 +174,11 @@ onBeforeUnmount(() => {
       <div v-else-if="block.kind === 'error'" class="stream-line error">
         ⛔ {{ block.message }}
       </div>
+      <!-- Fold lines are synthetic markers — plain text, never markdown:
+           a leading ~~~ would open an unterminated code fence. -->
+      <div v-else-if="block.kind === 'fold'" class="stream-line fold">
+        ~~~{{ block.text }}~~~
+      </div>
       <!-- Notices are slash-command output — markdown by contract
            (the server sends it straight through). -->
       <div

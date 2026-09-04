@@ -6,7 +6,6 @@ import type {
   Frame,
   Mode,
   PlanDecision,
-  TokenUsage,
 } from '../types'
 
 /**
@@ -99,22 +98,20 @@ function closeOpenTools(s: ConsoleState): void {
   }
 }
 
-function fmtK(n: number): string {
-  return n >= 1000
-    ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k`
-    : String(n)
+/** Human labels for replayed synthetic markers (see ReplayMessage.fold).
+ *  Must stay byte-identical with the live pushes (turn_cancelled below) so
+ *  a reload renders the same fold line. */
+const FOLD_LABELS: Record<'cancelled' | 'compacted', string> = {
+  cancelled: 'The previous turn was cancelled by the user',
+  compacted: 'Compacted',
 }
 
-function usageSuffix(usage: TokenUsage | null): string {
-  if (!usage) return ''
-  const parts: string[] = []
-  const fmt = (n: number | null, label: string) => {
-    if (typeof n === 'number' && n > 0) parts.push(`${fmtK(n)} ${label}`)
-  }
-  fmt(usage.input_tokens, 'in')
-  fmt(usage.output_tokens, 'out')
-  fmt(usage.cache_read_tokens, 'cache')
-  return parts.length ? ` · ${parts.join(', ')}` : ''
+/** Fold text for a replayed marker.  Unknown fold values fall back to the
+ *  content (brackets trimmed) — a future server key must never degrade into
+ *  a boxed user message. */
+function foldText(fold: string, content: string): string {
+  if (fold === 'cancelled' || fold === 'compacted') return FOLD_LABELS[fold]
+  return content.trim().replace(/^\[/, '').replace(/\]$/, '')
 }
 
 function apply(s: ConsoleState, action: ConsoleAction): void {
@@ -144,7 +141,10 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
           continue
         }
         if (!msg.content) continue
-        if (msg.role === 'user') push(s, { kind: 'user', text: msg.content })
+        if (msg.role === 'user' && msg.fold) {
+          // Synthetic marker — fold line, not a user bubble.
+          push(s, { kind: 'fold', text: foldText(msg.fold, msg.content) })
+        } else if (msg.role === 'user') push(s, { kind: 'user', text: msg.content })
         else push(s, { kind: 'assistant', text: msg.content, closed: true })
       }
       // A plan proposed mid-turn is snapshotted server-side (proposal +
@@ -243,13 +243,11 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
       }
       break
     case 'agent_finished':
+      // A completed turn needs no marker — reloaded transcripts never had
+      // one, so pushing a notice here would break live/reload parity.
       closeAssistant(s)
       closeOpenTools(s)
       s.paused = null
-      push(s, {
-        kind: 'notice',
-        message: `— turn finished: ${action.reason}${usageSuffix(action.usage)}`,
-      })
       break
     case 'recoverable_error':
       push(s, { kind: 'notice', message: action.message })
@@ -273,10 +271,12 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
       push(s, { kind: 'error', message: action.message })
       break
     case 'turn_cancelled':
+      // Same fold line the server's persisted repair marker replays as, so
+      // live and reloaded transcripts agree.
       closeAssistant(s)
       closeOpenTools(s)
       s.paused = null
-      push(s, { kind: 'notice', message: '— turn cancelled' })
+      push(s, { kind: 'fold', text: FOLD_LABELS.cancelled })
       break
     case 'ack': {
       // A refused plan decision means the server had already decided (another

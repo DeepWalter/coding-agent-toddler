@@ -43,6 +43,12 @@ export interface ReplayMessage {
   role: string
   content: string
   /**
+   * Synthetic marker the server tagged at replay — set only on user entries
+   * whose text was never typed by a human (turn-cancelled repair, compacted
+   * summary).  The console renders a fold line instead of a user bubble.
+   */
+  fold?: 'cancelled' | 'compacted'
+  /**
    * Tool-call replay — present when role === 'tool'.  Mirrors the
    * tool_call_end payload so the reducer builds the same ToolCard block;
    * result is null for a use that never executed (cancelled turn).
@@ -195,6 +201,9 @@ export type Block =
     }
   | { id: number; kind: 'error'; message: string }
   | { id: number; kind: 'notice'; message: string }
+  /** A synthetic model-scaffolding marker, rendered as a muted fold line
+   *  (e.g. turn cancelled) — text is the human label. */
+  | { id: number; kind: 'fold'; text: string }
 
 /** A pending approval. tool_id is inferred from the open tool block. */
 export interface Paused {
