@@ -506,6 +506,10 @@ body {
      set by the console dock on .pane-console): pinned output always ends
      just above the floating card, whatever height it grew to. */
   padding: 14px 14px calc(28px + var(--bar-h, 0px));
+  /* One tier below the app base: user bubbles (--editor-bg, like the input
+     field) read as recessed wells inside the console instead of vanishing
+     into it. */
+  background: var(--editor-surface);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -524,27 +528,66 @@ body {
   max-width: 100%;
 }
 
-.message-role {
-  color: var(--text-subtle);
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
-.message.user .message-role {
-  color: var(--accent);
-}
-
+/* Assistant content is plain — the user box below is the only boxed text,
+   so turns are delimited by the boxes and need no role labels. */
 .message-content {
   white-space: pre-wrap;
   word-wrap: break-word;
   overflow-wrap: break-word;
-  border-left: 2px solid var(--editor-border);
-  padding-left: 10px;
 }
 
+/* User input — bordered box.  The accent border is what marks it as
+   something the human typed; the fill matches the input bar's field (both
+   are --editor-bg), so console messages and the compose box read as the
+   same surface.  Relative: the more/less toggle floats inside it. */
 .message.user .message-content {
-  border-left-color: var(--accent);
+  position: relative;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: var(--editor-bg);
+}
+
+/* Collapsed user input: one ellipsized line.  Specificity beats the base
+   pre-wrap rule; nowrap is required for text-overflow to engage. */
+.message.user .message-content.collapsed {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The floating toggle reserves the box's bottom-right corner (same width in
+   both states, so expanding never reflows the text), leaving the chip clear
+   of the content whether the box is one line or many. */
+.message.user .message-content.has-toggle {
+  padding-right: 56px;
+}
+
+.message-toggle {
+  position: absolute;
+  right: 6px;
+  bottom: 5px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--text-subtle) 12%, transparent);
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+/* A one-line collapsed box is as tall as its text — the chip centers on the
+   line there (reads as a trailing control) instead of hanging below it. */
+.message.user .message-content.collapsed .message-toggle {
+  bottom: auto;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.message-toggle:hover {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--text-subtle) 22%, transparent);
 }
 
 /* ------------------------------------------------------------------ */
