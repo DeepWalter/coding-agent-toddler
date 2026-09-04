@@ -5,6 +5,9 @@
 //            Enter resolves the gate keyboard-only
 //  phase 2 — after the gate resolves, console scrolled to the middle again
 //            → sending a plain message must pin to the bottom too
+//  phase 3 — console chrome: no "turn finished" line after a plain turn,
+//            a cancelled turn folds (and returns to idle), and the fold
+//            replays after reload
 // Prints PASS/FAIL plus diagnostics; exits 1 on any failure.
 import { chromium } from 'playwright'
 
@@ -105,6 +108,66 @@ if (stuck) {
     `phase2 send (mid=${m2.scrollTop}) -> pinned to ${tail.scrollTop}/${tail.scrollHeight} ${ok2 ? 'PASS' : 'FAIL'}`,
   )
   if (!ok2) fails++
+}
+
+// --- Phase 3: console chrome — no finished line, fold line on cancel ---
+const paneText = () =>
+  page.evaluate(() => document.querySelector('.console-pane')?.innerText ?? '')
+const FOLD = '~~~The previous turn was cancelled by the user~~~'
+
+// P3a: a completed turn leaves no "turn finished" line — that notice was
+// live-only, so reloaded transcripts never had it (parity drove its removal).
+{
+  const text = await paneText()
+  const ok = !text.includes('turn finished')
+  console.log(`phase3 no "turn finished" after plain turn ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+
+// P3b: cancelling a gated turn (the ask's ✕ — the input bar is swapped for
+// the ask while paused) shows the fold line and returns to idle.
+await page.fill('textarea.input-bar-textarea', 'gate: list files')
+await page.click('button:has-text("Send")')
+await page.waitForSelector('.pause-prompt', { timeout: 15000 })
+await page.click('.ask-close')
+await page.waitForFunction(
+  (fold) => document.querySelector('.console-pane')?.innerText.includes(fold),
+  FOLD,
+  { timeout: 8000 },
+)
+{
+  // The raw marker text must not surface — it renders as the fold, not as a
+  // boxed user message the human never typed.
+  const text = await paneText()
+  const ok = !text.includes('[The previous turn was cancelled by the user.]')
+  console.log(`phase3 cancel fold hides raw marker ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+  await page.waitForSelector('.pause-prompt', { state: 'detached', timeout: 8000 })
+  await page.fill('textarea.input-bar-textarea', 'x')
+  const sendable = await page.locator('button:has-text("Send")').isEnabled()
+  console.log(`phase3 cancel returns to idle ${sendable ? 'PASS' : 'FAIL'}`)
+  if (!sendable) fails++
+}
+
+// P3c: reload — the marker replays from the mock's store as one fold line,
+// still not a user box.
+await page.reload()
+await page.waitForFunction(
+  (fold) => document.querySelector('.console-pane')?.innerText.includes(fold),
+  FOLD,
+  { timeout: 15000 },
+)
+{
+  const info = await page.evaluate(() => {
+    const folds = [...document.querySelectorAll('.stream-line.fold')]
+    return {
+      count: folds.length,
+      boxed: folds.some((el) => !!el.closest('.message')),
+    }
+  })
+  const ok = info.count === 1 && !info.boxed
+  console.log(`phase3 reload replays one unboxed fold ${ok ? 'PASS' : `FAIL (${JSON.stringify(info)})`}`)
+  if (!ok) fails++
 }
 
 await browser.close()

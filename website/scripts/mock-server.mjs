@@ -77,6 +77,11 @@ function seedMessages() {
   return messages
 }
 
+// The real server persists a turn-cancelled repair marker and tags it at
+// replay — the mock stands in for that pipeline, so cancels accumulate here
+// (fold-tagged, like serialize_transcript emits) and every hello replays them.
+const cancelMarkers = []
+
 const wss = new WebSocketServer({ server, path: '/ws' })
 
 wss.on('connection', (ws) => {
@@ -88,7 +93,7 @@ wss.on('connection', (ws) => {
     busy: false,
     paused: null,
     plan: null,
-    messages: seedMessages(),
+    messages: [...seedMessages(), ...cancelMarkers],
   })
 
   ws.on('message', (raw) => {
@@ -143,6 +148,14 @@ wss.on('connection', (ws) => {
       case 'cancel':
         send({ type: 'ack', cmd: 'cancel', accepted: true })
         send({ type: 'turn_cancelled' })
+        // Mirrors the real contract: cancel_turn() persists the repair
+        // marker, then the runner's finally broadcasts busy:false.
+        cancelMarkers.push({
+          role: 'user',
+          content: '[The previous turn was cancelled by the user.]',
+          fold: 'cancelled',
+        })
+        send({ type: 'state', busy: false })
         break
       case 'ping':
         send({ type: 'pong' })
