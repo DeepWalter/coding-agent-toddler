@@ -1,6 +1,8 @@
 // Headless repro against the mock server:
 //  phase 1 — console scrolled to the middle → a tool gate pops → the
 //            console must pin to the bottom (the ask wins over atBottom)
+//  phase 1.5 — the gate's rows rove with ↑/↓ (wrapping both ways), and
+//            Enter resolves the gate keyboard-only
 //  phase 2 — after the gate resolves, console scrolled to the middle again
 //            → sending a plain message must pin to the bottom too
 // Prints PASS/FAIL plus diagnostics; exits 1 on any failure.
@@ -8,7 +10,9 @@ import { chromium } from 'playwright'
 
 const BASE = process.env.BASE_URL ?? 'http://127.0.0.1:5199/'
 
-const browser = await chromium.launch()
+// PW_CHANNEL (e.g. chrome) lets the harness drive a system browser where
+// the bundled Playwright build for this OS is unavailable.
+const browser = await chromium.launch(process.env.PW_CHANNEL ? { channel: process.env.PW_CHANNEL } : {})
 const page = await browser.newPage({ viewport: { width: 1280, height: 700 } })
 page.on('pageerror', (e) => console.log('[pageerror]', e.message))
 
@@ -54,8 +58,30 @@ const ok1 = await nearBottom()
 console.log(`phase1 gate -> pinned to bottom ${ok1 ? 'PASS' : 'FAIL'}`)
 if (!ok1) fails++
 
+// --- Phase 1.5: gate rows rove with ↑/↓ (wrap both ways) ---
+// Focus lands on Approve when the card mounts; every move is a real
+// keydown on the focused row, and Enter resolves the gate keyboard-only.
+const rowText = () => page.evaluate(() => document.activeElement?.textContent?.trim() ?? '')
+const step = async (key, want) => {
+  await page.keyboard.press(key)
+  const got = await rowText()
+  const ok = got === want
+  console.log(`phase1.5 ${key} on gate -> ${JSON.stringify(got)} ${ok ? 'PASS' : `FAIL (want ${JSON.stringify(want)})`}`)
+  if (!ok) fails++
+}
+{
+  const got = await rowText()
+  const ok = got === 'Approve'
+  console.log(`phase1.5 gate focus -> ${JSON.stringify(got)} ${ok ? 'PASS' : 'FAIL (want "Approve")'}`)
+  if (!ok) fails++
+  await step('ArrowDown', 'Deny')
+  await step('ArrowDown', 'Approve') // wraps at the end
+  await step('ArrowUp', 'Deny')
+  await step('ArrowUp', 'Approve') // wraps at the start
+  await page.keyboard.press('Enter')
+}
+
 // --- Phase 2: resolve the gate, then a plain send pins too ---
-await page.click('.pause-prompt button:has-text("Approve")')
 await page.waitForSelector('.pause-prompt', { state: 'detached', timeout: 8000 })
 await page.waitForSelector('button:has-text("Send")', { timeout: 8000 })
 await page.waitForTimeout(300)

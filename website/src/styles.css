@@ -1154,6 +1154,49 @@ body {
 }
 
 /* ------------------------------------------------------------------ */
+/* Ask-card action rows (tool gate, plan ask)                          */
+/* ------------------------------------------------------------------ */
+
+/* Choices inside the floating ask cards rest as plain text rows on the
+   card surface — a filled, boxed button per row would turn the card into a
+   stack of buttons.  All labels share the neutral text color (the .btn
+   variant colors — white on-accent text, accent/error fills — are dropped
+   here), and a row gains a fill only while hovered or keyboard-selected
+   (roving up/down — choiceNav): neutral on hover, an accent-tinted
+   highlight when selected.  Placed after the .btn variants so these
+   scoped overrides win the cascade. */
+.pause-prompt-actions .btn,
+.plan-ask-actions .btn {
+  background: none;
+  border-color: transparent;
+  color: var(--text);
+}
+
+.pause-prompt-actions .btn:hover:not(:disabled),
+.plan-ask-actions .btn:hover:not(:disabled) {
+  background: var(--editor-surface-3);
+}
+
+/* The destructive rows (.danger) keep their warning cue on hover — an
+   error tint replaces the neutral surface, so the row about to trigger
+   reads as destructive before the click.  The keyboard selection below
+   stays accent for every row: it marks roving position, not semantics. */
+.pause-prompt-actions .btn.danger:hover:not(:disabled),
+.plan-ask-actions .btn.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--error) 14%, transparent);
+}
+
+/* The roving (keyboard) selection reads as a highlight, not a box: an
+   accent-tinted fill, and no outline — the UA focus ring the buttons
+   otherwise draw looks like a plain black border over the card.  The tint
+   keeps the selected row visible to keyboard users (hover stays neutral). */
+.pause-prompt-actions .btn:focus-visible,
+.plan-ask-actions .btn:focus-visible {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  outline: none;
+}
+
+/* ------------------------------------------------------------------ */
 /* Status bar                                                          */
 /* ------------------------------------------------------------------ */
 

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { nextTick, ref } from 'vue'
 import type { Block } from '../types'
+import { onChoiceKeydown } from '../choiceNav'
 
 // Compact decision bar for a plan awaiting approval, shown in the console
 // dock.  Keyed by the plan block id where it's used, so every new or
@@ -41,7 +42,7 @@ function openFeedback() {
 </script>
 
 <template>
-  <div class="plan-ask">
+  <div class="plan-ask" @keydown="onChoiceKeydown">
     <div class="plan-ask-head">
       <span class="plan-ask-title">
         <span class="plan-ask-label">Plan — </span>{{ block.plan.title }}

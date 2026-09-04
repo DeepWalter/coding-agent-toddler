@@ -1,15 +1,12 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
 import type { Paused } from '../types'
+import { onChoiceKeydown } from '../choiceNav'
 
 const props = defineProps<{ paused: Paused; busy: boolean }>()
 const emit = defineEmits<{ approve: []; deny: []; cancel: [] }>()
 
 const pending = ref(false)
-
-watch(() => props.paused, () => {
-  pending.value = false
-})
 
 const showApprove = () => props.paused.choices == null || props.paused.choices.includes('approve')
 const showDeny = () => props.paused.choices == null || props.paused.choices.includes('deny')
@@ -21,17 +18,26 @@ function choose(action: 'approve' | 'deny') {
   else emit('deny')
 }
 
-// Keyboard focus follows the card swap: land on the first actionable button.
+// Keyboard focus follows the card: land on the first actionable row at
+// mount, and again when a new pause replaces the old one — its rows were
+// disabled (and blurred) while the previous tool ran.
 const approveEl = ref<HTMLButtonElement | null>(null)
 const denyEl = ref<HTMLButtonElement | null>(null)
-nextTick(() => {
+const focusChoice = () => {
   if (showApprove() && props.paused.tool_id) approveEl.value?.focus()
   else if (showDeny() && props.paused.tool_id) denyEl.value?.focus()
+}
+
+watch(() => props.paused, () => {
+  pending.value = false
+  nextTick(focusChoice)
 })
+
+nextTick(focusChoice)
 </script>
 
 <template>
-  <div class="pause-prompt">
+  <div class="pause-prompt" @keydown="onChoiceKeydown">
     <div class="pause-prompt-head">
       <span class="pause-prompt-icon" aria-hidden="true">⚠</span>
       <span class="pause-prompt-title">{{ paused.prompt }}</span>
