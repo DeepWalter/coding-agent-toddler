@@ -364,6 +364,10 @@ class TestCancel:
                 assert msgs[2]["content"] == (
                     "[The previous turn was cancelled by the user.]"
                 )
+                # The marker is tagged at replay so the frontend renders a
+                # fold line instead of a user bubble; real entries stay bare.
+                assert msgs[2]["fold"] == "cancelled"
+                assert "fold" not in msgs[0]
 
 
 # ============================================================================

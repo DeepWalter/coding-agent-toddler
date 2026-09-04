@@ -292,6 +292,34 @@ class TestSerializeTranscript:
             "assistant", "tool",
         ]
 
+    def test_cancel_marker_entry_gets_fold_key(self):
+        # The turn-cancelled repair message is model scaffolding — flagged so
+        # the frontend renders a fold line, content kept for consumers.
+        marker = "[The previous turn was cancelled by the user.]"
+        messages = [
+            Message.user("hi"),
+            Message.user(marker),
+        ]
+        assert serialize_transcript(messages) == [
+            {"role": "user", "content": "hi"},
+            {"role": "user", "content": marker, "fold": "cancelled"},
+        ]
+
+    def test_compacted_marker_entry_gets_fold_key(self):
+        marker = (
+            "[Compacted history — summary of the conversation so far]\n\n"
+            "user wanted x; agent did y."
+        )
+        entry = serialize_transcript([Message.user(marker)])[0]
+        assert entry["fold"] == "compacted"
+        assert entry["content"] == marker
+
+    def test_bracket_text_without_marker_stays_fold_free(self):
+        # Only the known repair prefixes fold — ordinary bracketed text the
+        # user actually typed must keep replaying as a user entry.
+        entry = serialize_transcript([Message.user("[Just a bracket note]")])[0]
+        assert entry == {"role": "user", "content": "[Just a bracket note]"}
+
 
 class TestSerializePayloads:
     """Explicit field maps for Plan, ToolResult, TokenUsage."""

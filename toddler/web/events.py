@@ -113,7 +113,16 @@ def serialize_transcript(messages: list[Message]) -> list[dict]:
             continue
         if msg.role == "user":
             if msg.text:
-                entries.append({"role": "user", "content": msg.text})
+                entry: dict = {"role": "user", "content": msg.text}
+                # Synthetic repair messages are aimed at the model, not the
+                # human — flag them so the frontend renders a fold line
+                # instead of a user bubble (content stays for consumers that
+                # want the raw text).
+                if msg.text.startswith("[The previous turn was cancelled by the user."):
+                    entry["fold"] = "cancelled"
+                elif msg.text.startswith("[Compacted"):
+                    entry["fold"] = "compacted"
+                entries.append(entry)
             continue
         # assistant — text first, then its tool uses, matching the live
         # ``text_delta`` → ``tool_call_start`` order.
