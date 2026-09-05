@@ -213,7 +213,11 @@ const tooltip = page.locator('.context-tooltip')
 {
   await pill.waitFor({ timeout: 15000 })
   const disabled = await pill.isDisabled()
-  const label = (await pill.innerText()).trim()
+  // textContent (not innerText): the ratio number sits absolutely centered
+  // over its ring gauge, and Chromium's innerText inserts a line break
+  // around out-of-flow text.  textContent holds the label's raw form —
+  // the template keeps it on one physical line — so normalize and compare.
+  const label = (await pill.textContent()).replace(/\s+/g, ' ').trim()
   const ok = disabled && label === 'context 12%'
   console.log(`phase4 low usage pill disabled (${JSON.stringify(label)}) ${ok ? 'PASS' : 'FAIL'}`)
   if (!ok) fails++
@@ -291,6 +295,35 @@ const tooltip = page.locator('.context-tooltip')
   const ok2 = tip === '46% of context remaining\nuntil auto-compact'
   console.log(`phase4 post-compact hover copy ${JSON.stringify(tip)} ${ok2 ? 'PASS' : 'FAIL'}`)
   if (!ok2) fails++
+}
+
+// P4d: the click must not pin the tooltip.  A compact that lands above the
+// 50% gate leaves the pill enabled and focused — its mouse-click focus used
+// to keep :focus-within true, so the tooltip stayed on the page after the
+// pointer left.  Mouse focus must not qualify; only hover does.
+{
+  await sendControl('set_context', { pct: 62, compact_to: 55 })
+  await page.waitForFunction(() => {
+    const el = document.querySelector('.input-bar-context')
+    return el && !el.disabled && el.textContent?.includes('context 62%')
+  }, { timeout: 8000 })
+  await pillWrap.hover()
+  await tooltip.waitFor({ state: 'visible', timeout: 5000 })
+  await pill.click()
+  await page.waitForFunction(() => {
+    const el = document.querySelector('.input-bar-context')
+    return el && !el.disabled && el.textContent?.includes('context 55%')
+  }, { timeout: 8000 })
+  await page.mouse.move(0, 0)
+  let stuck = true
+  try {
+    await tooltip.waitFor({ state: 'hidden', timeout: 1500 })
+    stuck = false
+  } catch {
+    // still visible — timeout is the failure signal
+  }
+  console.log(`phase4 click-then-leave hides tooltip ${stuck ? 'FAIL (tooltip still visible)' : 'PASS'}`)
+  if (stuck) fails++
 }
 
 await browser.close()

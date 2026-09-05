@@ -137,7 +137,10 @@ wss.on('connection', (ws) => {
         // by a notice — the contract the context pill relies on.
         if (msg.input.trim() === '/compact') {
           const before = session.context_usage_pct
-          session.context_usage_pct = COMPACT_TO_PCT
+          // compact_to_pct is the set_context backdoor's knob for landing a
+          // compact above the 50% gate (sticky-tooltip regression) — the
+          // default lands below it, which disables the pill.
+          session.context_usage_pct = session.compact_to_pct ?? COMPACT_TO_PCT
           broadcast(helloFrame())
           broadcast({
             type: 'notice',
@@ -205,11 +208,15 @@ wss.on('connection', (ws) => {
         break
       case 'set_context': {
         // Test-only backdoor: step context_usage_pct across the pill's 50%
-        // clickability gate.  The real server can't be told to lie, but it
-        // does broadcast session_info on every state change — same shape.
+        // clickability gate.  compact_to sets where the *next* /compact
+        // lands, letting a test click that leaves the pill enabled and
+        // focused.  The real server can't be told to lie, but it does
+        // broadcast session_info on every state change — same shape.
         const pct = Number(msg.pct)
-        if (!Number.isFinite(pct)) break
+        const land = msg.compact_to === undefined ? undefined : Number(msg.compact_to)
+        if (!Number.isFinite(pct) || (land !== undefined && !Number.isFinite(land))) break
         session.context_usage_pct = pct
+        if (land !== undefined) session.compact_to_pct = land
         send({ type: 'ack', cmd: 'set_context', accepted: true })
         broadcast({ type: 'session_info', session: { ...session }, conversation: { id: null, sequence_num: null, title: null } })
         break

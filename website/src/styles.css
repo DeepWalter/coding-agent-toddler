@@ -403,14 +403,26 @@ body {
   color: var(--text-muted);
 }
 
-/* Identity colors mirror the pill: manual = neutral, auto = accent,
-   plan = warning. */
+/* Identity colors mirror the pill: manual = primary accent, auto =
+   accent-secondary, plan = warning. */
+.mode-menu-item.manual .mode-menu-label {
+  color: var(--accent);
+}
+
 .mode-menu-item.auto .mode-menu-label {
   color: var(--accent-secondary);
 }
 
 .mode-menu-item.plan .mode-menu-label {
   color: var(--warning);
+}
+
+/* Each gating state gets its own color so the pill reads at a glance:
+   manual is the primary blue, auto the success green, plan the warning
+   amber — the icons follow via currentColor. */
+.mode-toggle.manual {
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 .mode-toggle.auto {
@@ -1105,9 +1117,10 @@ body {
 }
 
 /* The "context N%" pill: a muted label until usage passes half the window,
-   then a live /compact button (accent, pointer).  The wrap hosts the hover
-   text because a native title on a disabled button is not shown by
-   Chromium — and the disabled-state tooltip is the whole point. */
+   then a live /compact button (pointer; the hover hint says so — the text
+   keeps its quiet color).  The wrap hosts the hover text because a native
+   title on a disabled button is not shown by Chromium — and the
+   disabled-state tooltip is the whole point. */
 .input-bar-context-wrap {
   position: relative;
   display: inline-flex;
@@ -1123,20 +1136,76 @@ body {
 }
 
 .input-bar-context.enabled {
-  color: var(--accent);
-  text-decoration: underline dotted;
-  text-underline-offset: 2px;
   cursor: pointer;
-}
-
-.input-bar-context.enabled:hover {
-  color: var(--accent-hover);
 }
 
 .input-bar-context.enabled:focus-visible {
   border-radius: 3px;
   outline: 1px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* The ratio number sits in a ring gauge: a quiet full-circle track with the
+   usage arc drawn over it (inline dasharray in pathLength=100 units).  The
+   arc's stroke ramps from the theme's success green to the error red as the
+   usage approaches the auto-compact threshold — --gauge-t (0…1, set inline
+   from the usage) is the red fraction of that mix. */
+.context-gauge {
+  position: relative;
+  display: inline-block;
+  /* User-picked diameter: big enough that the whole "N%" — percent sign
+     included — fits inside the arc's hole (~16.6px at 21px), yet still
+     within the mode pill's 25px band next to it. */
+  width: 21px;
+  height: 21px;
+  /* The ring centers on its number; align the whole box so that center
+     lands on the cap-height center of the 11px label next to it. */
+  vertical-align: -0.6em;
+}
+
+.context-gauge-ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.context-gauge-track {
+  fill: none;
+  stroke: var(--editor-border);
+  stroke-width: 2;
+  opacity: 0.45;
+}
+
+.context-gauge-arc {
+  fill: none;
+  stroke-width: 2;
+  /* Fallback for engines without color-mix() in oklab */
+  stroke: var(--error);
+  stroke: color-mix(
+    in oklab,
+    var(--success),
+    var(--error) calc(var(--gauge-t, 0) * 100%)
+  );
+}
+
+/* The whole "N%" — digits and percent sign in one line — sits inside the
+   ring, centered on the arc's center.  Sized so the widest regular run
+   ("99%") keeps ≥1px of clearance from the stroke (monospace glyphs are
+   0.6em: 0.72em type leaves ~1.2px a side in the ~16.6px hole). */
+.context-gauge-pct {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 0.72em;
+  line-height: 1;
+}
+
+/* Usage ≥100% adds a fourth glyph to the run — shrink it instead of
+   letting it cross the arc. */
+.context-gauge-pct.wide {
+  font-size: 0.55em;
 }
 
 /* Same popup tokens as .mode-menu, one surface up so it lifts off the
@@ -1158,7 +1227,7 @@ body {
   color: var(--text);
   font-size: 11px;
   line-height: 1.45;
-  text-align: center;
+  text-align: left;
 }
 
 .context-tooltip .context-tip-copy,
@@ -1172,8 +1241,12 @@ body {
   font-size: 10px;
 }
 
+/* Hover shows the tip.  A click also focuses the pill, so bare :focus-within
+   would pin the tooltip to the page after the pointer leaves — a mouse click
+   must not qualify.  Only keyboard focus (:focus-visible, the heuristic the
+   pill's own outline uses) is a legit hover-free state. */
 .input-bar-context-wrap:hover .context-tooltip,
-.input-bar-context-wrap:focus-within .context-tooltip {
+.input-bar-context-wrap:has(.input-bar-context:focus-visible) .context-tooltip {
   display: block;
 }
 

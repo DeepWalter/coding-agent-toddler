@@ -104,6 +104,20 @@ const contextTip = computed(
   () => `${contextRemainingPct.value}% of context remaining\nuntil auto-compact`,
 )
 
+/** The gauge ring's arc spans the usage share of the window — full circle at
+ *  100% — starting at 12 o'clock (SVG dasharray in pathLength=100 units, so
+ *  the fraction is the dash directly). */
+const gaugeArc = computed(
+  () => `${Math.max(0, Math.min(100, props.contextPct))} 100`,
+)
+
+/** Proximity to the auto-compact threshold (0…1): the arc's color ramps
+ *  across it, from the theme's success green at 0% usage to the error red
+ *  by the 80% line, staying red past it. */
+const gaugeProximity = computed(() =>
+  Math.min(1, props.contextPct / AUTO_COMPACT_PCT),
+)
+
 /** The option matching what the pill shows — its icon renders in the pill. */
 const currentOption = computed(() =>
   MODE_OPTIONS.find((opt) => opt.value === displayMode.value),
@@ -277,15 +291,18 @@ onMounted(() => {
                button is not shown by Chromium — and the disabled-state
                tooltip is the whole point of this pill. -->
           <span class="input-bar-context-wrap">
+            <!-- The ratio number sits in a ring gauge whose arc shows the
+                 usage share and turns red approaching the auto-compact
+                 threshold.  The whole content is one physical line so the
+                 button reads exactly "context N%" (no whitespace-only text
+                 nodes) — the harness asserts on that text. -->
             <button
               type="button"
               class="input-bar-context"
               :class="{ enabled: compactClickable }"
               :disabled="!compactClickable"
               @click="emit('compact')"
-            >
-              context {{ contextPct }}%
-            </button>
+            >context <span class="context-gauge" :style="{ '--gauge-t': gaugeProximity }"><svg class="context-gauge-ring" viewBox="0 0 24 24" aria-hidden="true"><circle class="context-gauge-track" cx="12" cy="12" r="10.5"></circle><circle class="context-gauge-arc" cx="12" cy="12" r="10.5" pathLength="100" :stroke-dasharray="gaugeArc" transform="rotate(-90 12 12)"></circle></svg><span class="context-gauge-pct" :class="{ wide: contextPct >= 100 }">{{ contextPct }}%</span></span></button>
             <span class="context-tooltip">
               <span class="context-tip-copy">{{ contextTip }}</span>
               <span v-if="compactClickable" class="context-tip-hint">Click to compact now</span>

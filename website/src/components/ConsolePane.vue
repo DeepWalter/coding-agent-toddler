@@ -58,9 +58,12 @@ watch(() => props.blocks, async () => {
 // the proposed plan) ends up above the card — even if the user had scrolled
 // up.  The dock publishes its height as --bar-h on the pane only after
 // layout (ResizeObserver), and each change grows this scroller's bottom
-// padding — so keep re-pinning across a few frames until that settles.
-// Once pinned, the blocks watch keeps newer output glued to the bottom.
-// Cancelled when the ask resolves (a newer watch run owns the pin).
+// padding — so keep re-pinning until the bottom stops moving (two steady
+// frames), not a fixed count: a card taller than the bar it replaced can
+// resize the scroller a frame or two after the swap, and the pin must land
+// on the grown padding or the console ends a few pixels short of the
+// bottom.  Once pinned, the blocks watch keeps newer output glued to the
+// bottom.  Cancelled when the ask resolves (a newer watch run owns the pin).
 let askPin = 0
 watch(
   () => props.askVisible,
@@ -68,11 +71,22 @@ watch(
     askPin += 1
     if (!visible) return
     const pin = askPin
-    let frames = 3
+    let lastBottom = -1
+    let steady = 0
+    let budget = 30
     const force = () => {
-      if (pin !== askPin || frames-- <= 0) return
+      if (pin !== askPin || budget-- <= 0) return
       const el = scroller.value
-      if (el) el.scrollTop = el.scrollHeight // deliberate: ask wins over atBottom
+      if (el) {
+        el.scrollTop = el.scrollHeight // deliberate: ask wins over atBottom
+        const bottom = el.scrollHeight - el.clientHeight
+        if (bottom === lastBottom) {
+          if (++steady >= 2) return
+        } else {
+          steady = 0
+          lastBottom = bottom
+        }
+      }
       requestAnimationFrame(force)
     }
     force()
