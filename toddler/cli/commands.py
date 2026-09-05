@@ -7,6 +7,7 @@ Commands:
     ``/plan``                    — Flag the next message for plan mode.
     ``/mode [plan|manual|auto]`` — Show or switch workflow and gating mode.
     ``/clear [title]``           — Archive conversation and start fresh.
+    ``/compact``                 — Manually compact conversation history.
     ``/resume <conversation_id>``— Resume an archived conversation.
     ``/conversations``           — List conversations in the current session.
     ``/rollback <checkpoint_id>``— Rollback files + conversation to a
@@ -182,6 +183,45 @@ class SlashCommandDispatcher:
             message=(
                 "Started new conversation. "
                 "Your previous conversation was archived."
+            ),
+        )
+
+    async def _cmd_compact(self, _args: str) -> CommandResult:
+        """``/compact`` — manually compact the conversation context.
+
+        Summarises older history into a single ``[Compacted history...]``
+        message regardless of the auto-compaction token threshold, and
+        persists the result immediately.  A no-op (short conversation or
+        failed summarisation) leaves the context untouched.
+        """
+        if (
+            self._session_mgr is None
+            or self._session_mgr.session is None
+            or self._session_mgr.context is None
+            or self._session_mgr.conversation is None
+        ):
+            return CommandResult(
+                continue_repl=True,
+                message="No active session — nothing to compact.",
+            )
+        before = self._session_mgr.context_usage_pct
+        result = await self._session_mgr.compact_context()
+        if result is None:
+            return CommandResult(
+                continue_repl=True,
+                message=(
+                    "Nothing to compact — the conversation is still short, "
+                    "or summarisation failed (check the logs)."
+                ),
+            )
+        after = self._session_mgr.context_usage_pct
+        return CommandResult(
+            continue_repl=True,
+            changed=True,
+            message=(
+                f"Compacted context: {result.messages_before} → "
+                f"{result.messages_after} messages "
+                f"({before}% → {after}% of context window)."
             ),
         )
 
@@ -623,6 +663,7 @@ _COMMAND_TABLE: dict[str, _Handler] = {
     "/exit": SlashCommandDispatcher._cmd_quit,
     "/q": SlashCommandDispatcher._cmd_quit,
     "/clear": SlashCommandDispatcher._cmd_clear,
+    "/compact": SlashCommandDispatcher._cmd_compact,
     "/help": SlashCommandDispatcher._cmd_help,
     "/view": SlashCommandDispatcher._cmd_view,
     "/plan": SlashCommandDispatcher._cmd_plan,
@@ -648,6 +689,7 @@ HELP_TEXT = """\
 | `/mode [plan / manual / auto]` | Show or switch workflow mode and permission gating |
 | `/view <N>` | View full output from turn N in a pager |
 | `/clear [title]` | Archive current conversation and start a fresh one |
+| `/compact` | Compact conversation history into a summary to free context space |
 | `/resume <id>` | Resume a conversation by #N or UUID |
 | `/conversations` | List conversations in the current session |
 | `/rollback <id>` | Rollback to a checkpoint by #N or UUID |

@@ -29,7 +29,7 @@ from toddler.checkpoint.models import (
     RollbackResult,
 )
 from toddler.config.settings import Settings
-from toddler.context.manager import ContextManager
+from toddler.context.manager import CompactionResult, ContextManager
 from toddler.llm import BaseLLMProvider, Message, TokenUsage
 from toddler.session.models import Conversation, Session
 from toddler.session.storage import StorageManager
@@ -694,6 +694,29 @@ class SessionManager:
     # ==================================================================
     # Persistence
     # ==================================================================
+
+    async def compact_context(self) -> CompactionResult | None:
+        """Manually compact the active conversation context and persist it.
+
+        Backs the ``/compact`` slash command.  Runs the compaction
+        routine regardless of the auto-compaction token threshold; on
+        success the metadata (``compacted_summary`` /
+        ``compacted_at_seq``) is persisted immediately via
+        :meth:`save`, so a reload shows the summarised transcript
+        without waiting for the next turn.  Returns *None* when there
+        was nothing to summarise or the summarisation failed — the
+        context is then unchanged and nothing is written.
+        """
+        if self._ctx is None or self._conv is None:
+            return None
+        logger.warning(
+            f"Manual compaction requested — compacting "
+            f"{len(self._ctx.messages)} messages..."
+        )
+        result = await self._ctx.compact()
+        if result is not None:
+            await self.save()
+        return result
 
     async def save(self) -> None:
         """Persist new messages and conversation metadata to the database.

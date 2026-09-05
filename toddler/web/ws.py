@@ -120,12 +120,14 @@ async def _cmd_turn(websocket: WebSocket, state: WebAppState, raw: dict) -> None
 
 
 # Slash commands that change which transcript is displayed — new
-# conversation, resume, session switch, rollback.  They are rejected
-# while a turn runs (same gate as new_conversation / switch_session)
-# and broadcast a fresh hello afterwards so every tab re-renders the
-# (new) transcript.  The console wipe is intended here — the messages
-# in storage genuinely changed.
-_CONVERSATION_CHANGING_SLASH = {"/clear", "/resume", "/rollback", "/session"}
+# conversation, manual compaction, resume, session switch, rollback.
+# They are rejected while a turn runs (same gate as
+# new_conversation / switch_session) and broadcast a fresh hello
+# afterwards so every tab re-renders the (new) transcript.  The console
+# wipe is intended here — the messages in storage genuinely changed.
+_CONVERSATION_CHANGING_SLASH = {
+    "/clear", "/compact", "/resume", "/rollback", "/session",
+}
 
 # Slash commands that mutate session metadata but keep the transcript —
 # workflow / gating changes.  Also busy-gated, but they broadcast a

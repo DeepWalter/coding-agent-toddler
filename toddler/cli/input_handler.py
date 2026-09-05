@@ -21,6 +21,7 @@ _SLASH_COMMANDS: dict[str, str] = {
     "/mode": "Show or switch mode — /mode [plan|manual|auto]",
     "/view": "View full output from a turn — /view <turn_number>",
     "/clear": "Archive conversation and start fresh — /clear [title]",
+    "/compact": "Compact conversation history to free context space",
     "/resume": "Resume an archived conversation — /resume <conversation_id>",
     "/conversations": "List conversations in the current session",
     "/rollback": "Rollback to a checkpoint — /rollback <checkpoint_id>",

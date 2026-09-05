@@ -236,59 +236,15 @@ class ContextManager:
             f"Context: {self._window_mgr.status_line(self._messages)}"
         )
 
-        # --- compaction ---
+        result = None
         if self._window_mgr.should_compact(self._messages):
             logger.warning(
                 f"Compaction triggered. "
                 f"Compacting {len(self._messages)} messages..."
             )
-            try:
-                compacted = await self._compactor.compact(self._messages)
-                before = token_count
-                after = self._window_mgr.count_tokens(compacted)
-
-                # Extract summary text from the compacted list.
-                summary = self._extract_summary(compacted)
-
-                result = CompactionResult(
-                    summary=summary,
-                    messages_before=len(self._messages),
-                    messages_after=len(compacted),
-                    token_count_before=before,
-                    token_count_after=after,
-                )
-
-                # Apply compaction in-place.
-                self._messages.clear()
-                self._messages.extend(compacted)
-
-                # Rebuild system prompt with compact variant,
-                # preserving the current mode's instructions.
-                compact_sys = self._prompt_builder.build_compact(
-                    mode=self._mode,
-                    prior_conversation_summaries=self._prior_titles,
-                )
-                self._replace_system_messages(compact_sys)
-
-                # Reset baseline — the compacted list is now the canonical
-                # buffer, and new_messages / new_message_count should only
-                # reflect additions made after this point.
-                self._baseline_count = len(self._messages)
-                self._window_mgr.reset_baseline()
-
-                self._has_compacted = True
-                self._last_compaction = result
-                logger.warning(
-                    f"Compaction complete: {before:,} → {after:,} tokens "
-                    f"({len(compacted)} messages)."
-                )
-                return result
-
-            except Exception:
-                logger.exception(
-                    "Compaction failed — continuing with original messages."
-                )
-                return None
+            result = await self.compact()
+        if result is not None:
+            return result
 
         # --- truncation (emergency brake) ---
         if self._window_mgr.should_truncate(self._messages):
@@ -304,6 +260,85 @@ class ContextManager:
             )
 
         return None
+
+    async def compact(self) -> CompactionResult | None:
+        """Summarise older messages and fold the buffer when a summary is
+        produced.
+
+        Runs the compaction routine directly, without regard to the
+        auto-compaction token threshold — callers decide when it is
+        warranted (the auto path gates on usage in
+        :meth:`_auto_compact`; manual compaction arrives through the
+        session layer's ``compact_context``).  Summarises everything
+        older than the compactor's keep-recent window and, when a
+        summary was actually produced, replaces the buffer in place
+        (new compact system prompt, baseline reset) and records a
+        :class:`CompactionResult`.
+
+        Returns *None* — leaving the buffer untouched — when the
+        conversation was too short to summarise or the summarisation
+        failed / produced empty output.  The compactor never mutates
+        its input and returns the identical list object on every skip
+        path, so the identity check below reliably detects a no-op.
+        """
+        try:
+            compacted = await self._compactor.compact(self._messages)
+
+            # Nothing was summarised (short conversation or LLM failure /
+            # empty output) — do not record an empty compaction or swap
+            # in the compact system prompt for nothing.
+            if compacted is self._messages:
+                return None
+            summary = self._extract_summary(compacted)
+            if not summary:
+                return None
+
+            # Everything fallible happens before the buffer swap below,
+            # so an exception (or interrupt) here leaves the original
+            # messages untouched and the except clause can honour its
+            # "continuing with original messages" promise.
+            before = self._window_mgr.count_tokens(self._messages)
+            after = self._window_mgr.count_tokens(compacted)
+
+            # Rebuild system prompt with compact variant,
+            # preserving the current mode's instructions.
+            compact_sys = self._prompt_builder.build_compact(
+                mode=self._mode,
+                prior_conversation_summaries=self._prior_titles,
+            )
+
+            result = CompactionResult(
+                summary=summary,
+                messages_before=len(self._messages),
+                messages_after=len(compacted),
+                token_count_before=before,
+                token_count_after=after,
+            )
+
+            # Apply compaction in-place.
+            self._messages.clear()
+            self._messages.extend(compacted)
+            self._replace_system_messages(compact_sys)
+
+            # Reset baseline — the compacted list is now the canonical
+            # buffer, and new_messages / new_message_count should only
+            # reflect additions made after this point.
+            self._baseline_count = len(self._messages)
+            self._window_mgr.reset_baseline()
+
+            self._has_compacted = True
+            self._last_compaction = result
+            logger.warning(
+                f"Compaction complete: {before:,} → {after:,} tokens "
+                f"({len(compacted)} messages)."
+            )
+            return result
+
+        except Exception:
+            logger.exception(
+                "Compaction failed — continuing with original messages."
+            )
+            return None
 
     # ------------------------------------------------------------------
     # Compaction metadata
