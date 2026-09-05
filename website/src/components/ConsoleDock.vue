@@ -25,6 +25,7 @@ const emit = defineEmits<{
   send: [text: string]
   cancel: []
   'set-mode': [mode: Mode]
+  compact: []
   'approve-tool': []
   'deny-tool': []
   'approve-plan': [planId: string, mode: 'manual' | 'auto']
@@ -86,6 +87,7 @@ onBeforeUnmount(() => dockObserver?.disconnect())
       @send="(text) => emit('send', text)"
       @cancel="emit('cancel')"
       @set-mode="(m) => emit('set-mode', m)"
+      @compact="emit('compact')"
     />
   </div>
 </template>

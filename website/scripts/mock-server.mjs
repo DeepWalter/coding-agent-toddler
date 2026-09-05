@@ -11,6 +11,12 @@ import { WebSocketServer } from 'ws'
 const DIST = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist')
 const PORT = 8100
 
+// Context usage % the mock reports.  MOCK_CONTEXT_PCT lets a run start past
+// the context pill's clickability gate; set_context and /compact move the
+// number mid-run (the real server broadcasts session_info on every state
+// change, and a fresh hello after a conversation-changing slash command).
+const COMPACT_TO_PCT = Number(process.env.MOCK_COMPACT_TO_PCT ?? 34)
+
 const TYPES = {
   '.html': 'text/html',
   '.js': 'text/javascript',
@@ -61,7 +67,7 @@ const session = {
   mode_label: 'manual',
   permission_mode: 'manual',
   gating_editable: true,
-  context_usage_pct: 12,
+  context_usage_pct: Number(process.env.MOCK_CONTEXT_PCT ?? 12),
   model: 'mock-model',
   cwd: '/tmp',
 }
@@ -82,11 +88,14 @@ function seedMessages() {
 // (fold-tagged, like serialize_transcript emits) and every hello replays them.
 const cancelMarkers = []
 
-const wss = new WebSocketServer({ server, path: '/ws' })
+// The real server broadcasts session_info, notices and post-slash hello
+// replays to every subscribed client (only the connect-time hello is
+// per-client) — the mock mirrors that so a second connection can script
+// state (set_context) into the page under test.
+const clients = new Set()
 
-wss.on('connection', (ws) => {
-  const send = (frame) => ws.send(JSON.stringify(frame))
-  send({
+function helloFrame() {
+  return {
     type: 'hello',
     session,
     conversation: { id: null, sequence_num: null, title: null },
@@ -94,7 +103,24 @@ wss.on('connection', (ws) => {
     paused: null,
     plan: null,
     messages: [...seedMessages(), ...cancelMarkers],
-  })
+  }
+}
+
+const wss = new WebSocketServer({ server, path: '/ws' })
+
+wss.on('connection', (ws) => {
+  clients.add(ws)
+  ws.on('close', () => clients.delete(ws))
+  // Direct replies (acks, this connection's hello) go only to this socket;
+  // state that every tab must see goes through broadcast().
+  const send = (frame) => ws.send(JSON.stringify(frame))
+  const broadcast = (frame) => {
+    const body = JSON.stringify(frame)
+    for (const client of clients) {
+      if (client.readyState === 1) client.send(body)
+    }
+  }
+  send(helloFrame())
 
   ws.on('message', (raw) => {
     let msg
@@ -105,6 +131,20 @@ wss.on('connection', (ws) => {
     }
     switch (msg.cmd) {
       case 'turn': {
+        // A slash-command turn never reaches the LLM: the real server
+        // diverts /compact to the slash dispatcher, which answers with a
+        // broadcast hello replay (folded transcript, fresh usage) followed
+        // by a notice — the contract the context pill relies on.
+        if (msg.input.trim() === '/compact') {
+          const before = session.context_usage_pct
+          session.context_usage_pct = COMPACT_TO_PCT
+          broadcast(helloFrame())
+          broadcast({
+            type: 'notice',
+            message: `Compacted context: 14 → 2 messages (${before}% → ${session.context_usage_pct}% of context window).`,
+          })
+          break
+        }
         // First turn gates on a Bash call; later turns stream and finish —
         // the harness needs a plain send (no ask) to test the send-pin alone.
         const gate = msg.input.startsWith('gate')
@@ -161,8 +201,19 @@ wss.on('connection', (ws) => {
         send({ type: 'pong' })
         break
       case 'set_mode':
-        send({ type: 'session_info', session: { ...session, permission_mode: msg.mode }, conversation: { id: null, sequence_num: null, title: null } })
+        broadcast({ type: 'session_info', session: { ...session, permission_mode: msg.mode }, conversation: { id: null, sequence_num: null, title: null } })
         break
+      case 'set_context': {
+        // Test-only backdoor: step context_usage_pct across the pill's 50%
+        // clickability gate.  The real server can't be told to lie, but it
+        // does broadcast session_info on every state change — same shape.
+        const pct = Number(msg.pct)
+        if (!Number.isFinite(pct)) break
+        session.context_usage_pct = pct
+        send({ type: 'ack', cmd: 'set_context', accepted: true })
+        broadcast({ type: 'session_info', session: { ...session }, conversation: { id: null, sequence_num: null, title: null } })
+        break
+      }
       default:
         break
     }

@@ -347,6 +347,16 @@ export function useConsole(send: (cmd: Command) => void) {
     send({ cmd: 'turn', input: text })
   }
 
+  /** Manual early compaction — the context pill's click.  Unlike sendTurn
+   *  there is no optimistic user bubble: the server diverts /compact to the
+   *  slash dispatcher, which answers with a fresh hello replay (folded
+   *  transcript + new usage %) followed by a notice — that replay is the
+   *  transcript the compacted conversation should show. */
+  function sendCompact() {
+    if (state.busy) return
+    send({ cmd: 'turn', input: '/compact' })
+  }
+
   function cancelTurn() {
     send({ cmd: 'cancel' })
   }
@@ -412,6 +422,7 @@ export function useConsole(send: (cmd: Command) => void) {
     state,
     applyFrame,
     sendTurn,
+    sendCompact,
     cancelTurn,
     approveTool,
     denyTool,

@@ -22,6 +22,7 @@ const {
   state,
   applyFrame,
   sendTurn,
+  sendCompact,
   cancelTurn,
   approveTool,
   denyTool,
@@ -530,6 +531,7 @@ function onDividerUp(event: PointerEvent) {
           @send="sendTurn"
           @cancel="cancelTurn"
           @set-mode="setMode"
+          @compact="sendCompact"
           @approve-tool="approveTool"
           @deny-tool="denyTool"
           @approve-plan="approvePlan"

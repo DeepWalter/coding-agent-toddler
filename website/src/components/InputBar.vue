@@ -21,6 +21,7 @@ const emit = defineEmits<{
   send: [text: string]
   cancel: []
   'set-mode': [mode: Mode]
+  compact: []
 }>()
 
 /** The three /mode values plus the copy shown under each name in the popup.
@@ -68,6 +69,39 @@ const displayMode = computed<Mode>(() => (props.inPlan ? 'plan' : props.mode))
  *  manual/auto entries edit in that state. */
 const selectedMode = computed<Mode>(() =>
   props.inPlan && !props.busy ? 'plan' : props.mode,
+)
+
+// The "context N%" pill.  Its hover text states how much headroom is left
+// before auto-compaction and — once usage passes half the window — offers a
+// manual /compact, which the server diverts from the LLM and answers with a
+// fresh hello replay + notice.
+/** Auto-compaction threshold as % of the context window — mirrors the 0.8
+ *  compaction_threshold ContextWindowManager runs on
+ *  (toddler/context/window.py); it is not on the wire, so it lives here. */
+const AUTO_COMPACT_PCT = 80
+/** The pill only becomes a clickable /compact once usage is past half the
+ *  window — below that auto-compaction is comfortably far away. */
+const CLICKABLE_ABOVE_PCT = 50
+
+/** Headroom left until auto-compaction kicks in, clamped at 0 — usage can
+ *  overshoot the window. */
+const contextRemainingPct = computed(() =>
+  Math.max(0, AUTO_COMPACT_PCT - props.contextPct),
+)
+
+/** Enabled = idle and past half the window.  The server busy-gates the
+ *  slash command anyway; this keeps the affordance honest and lets the
+ *  disabled hover text explain the state. */
+const compactClickable = computed(
+  () => !props.busy && props.contextPct > CLICKABLE_ABOVE_PCT,
+)
+
+/** The headroom state, broken over two short lines ("68% of context
+ *  remaining" / "until auto-compact").  The "Click to compact now" hint is
+ *  a separate smaller line in the tooltip, shown only while the pill is
+ *  live. */
+const contextTip = computed(
+  () => `${contextRemainingPct.value}% of context remaining\nuntil auto-compact`,
 )
 
 /** The option matching what the pill shows — its icon renders in the pill. */
@@ -239,7 +273,24 @@ onMounted(() => {
           <span class="input-bar-meta-sep">·</span>
           <span class="input-bar-model">{{ model }}</span>
           <span class="input-bar-meta-sep">·</span>
-          <span class="input-bar-context">context {{ contextPct }}%</span>
+          <!-- The wrap owns the hover text: a native title on a disabled
+               button is not shown by Chromium — and the disabled-state
+               tooltip is the whole point of this pill. -->
+          <span class="input-bar-context-wrap">
+            <button
+              type="button"
+              class="input-bar-context"
+              :class="{ enabled: compactClickable }"
+              :disabled="!compactClickable"
+              @click="emit('compact')"
+            >
+              context {{ contextPct }}%
+            </button>
+            <span class="context-tooltip">
+              <span class="context-tip-copy">{{ contextTip }}</span>
+              <span v-if="compactClickable" class="context-tip-hint">Click to compact now</span>
+            </span>
+          </span>
         </template>
       </div>
       <button

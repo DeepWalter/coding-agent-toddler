@@ -8,10 +8,16 @@
 //  phase 3 — console chrome: no "turn finished" line after a plain turn,
 //            a cancelled turn folds (and returns to idle), and the fold
 //            replays after reload
+//  phase 4 — context pill: disabled hover text explains headroom below 50%
+//            usage; past 50% the pill turns into a live /compact button
+//            (two-line hover copy) whose click lands the server's hello
+//            replay + notice
 // Prints PASS/FAIL plus diagnostics; exits 1 on any failure.
 import { chromium } from 'playwright'
+import WebSocket from 'ws'
 
 const BASE = process.env.BASE_URL ?? 'http://127.0.0.1:5199/'
+const WS_BASE = `${BASE.replace(/^http/, 'ws')}ws`
 
 // PW_CHANNEL (e.g. chrome) lets the harness drive a system browser where
 // the bundled Playwright build for this OS is unavailable.
@@ -38,6 +44,32 @@ const waitPinned = () =>
     const el = document.querySelector('.console-pane')
     return el && el.scrollTop + el.clientHeight >= el.scrollHeight - 5
   }, { timeout: 8000 })
+// A second mock connection scripts session state into the page: the mock
+// broadcasts session_info (and acks the control socket), so the harness can
+// step context_usage_pct across the pill's clickability gate.
+function sendControl(cmd, payload = {}) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(WS_BASE)
+    const timer = setTimeout(() => {
+      ws.close()
+      reject(new Error(`no ack for ${cmd} within 8s`))
+    }, 8000)
+    ws.on('error', (e) => {
+      clearTimeout(timer)
+      reject(e)
+    })
+    ws.on('message', (raw) => {
+      const frame = JSON.parse(String(raw))
+      if (frame.type === 'ack' && frame.cmd === cmd) {
+        clearTimeout(timer)
+        ws.close()
+        resolve()
+      }
+    })
+    ws.on('open', () => ws.send(JSON.stringify({ cmd, ...payload })))
+  })
+}
+
 const scrollMid = async (label) => {
   const at = await page.evaluate(() => {
     const el = document.querySelector('.console-pane')
@@ -168,6 +200,97 @@ await page.waitForFunction(
   const ok = info.count === 1 && !info.boxed
   console.log(`phase3 reload replays one unboxed fold ${ok ? 'PASS' : `FAIL (${JSON.stringify(info)})`}`)
   if (!ok) fails++
+}
+
+// --- Phase 4: context pill — hover copy + clickable /compact ---
+const pill = page.locator('.input-bar-context')
+const pillWrap = page.locator('.input-bar-context-wrap')
+const tooltip = page.locator('.context-tooltip')
+
+// P4a: low usage (12%) → pill disabled, but hover still explains the
+// headroom — a native title on a disabled button would not show in
+// Chromium; the custom tooltip must.
+{
+  await pill.waitFor({ timeout: 15000 })
+  const disabled = await pill.isDisabled()
+  const label = (await pill.innerText()).trim()
+  const ok = disabled && label === 'context 12%'
+  console.log(`phase4 low usage pill disabled (${JSON.stringify(label)}) ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+  await pillWrap.hover()
+  await tooltip.waitFor({ state: 'visible', timeout: 5000 })
+  const tip = (await tooltip.innerText()).trim()
+  const ok2 = tip === '68% of context remaining\nuntil auto-compact'
+  console.log(`phase4 low usage hover copy ${JSON.stringify(tip)} ${ok2 ? 'PASS' : 'FAIL'}`)
+  if (!ok2) fails++
+  await page.mouse.move(0, 0)
+}
+
+// P4b: usage past half the window → the pill turns into a live button and
+// the hover copy gains the second-line click hint.
+{
+  await sendControl('set_context', { pct: 62 })
+  await page.waitForFunction(() => {
+    const el = document.querySelector('.input-bar-context')
+    return el && !el.disabled && el.textContent?.includes('context 62%')
+  }, { timeout: 8000 })
+  const enabled = await pill.isEnabled()
+  console.log(`phase4 past-half pill clickable ${enabled ? 'PASS' : 'FAIL'}`)
+  if (!enabled) fails++
+  await pillWrap.hover()
+  await tooltip.waitFor({ state: 'visible', timeout: 5000 })
+  const lines = (await tooltip.innerText())
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean)
+  const ok =
+    lines.length === 3 &&
+    lines[0] === '18% of context remaining' &&
+    lines[1] === 'until auto-compact' &&
+    lines[2] === 'Click to compact now'
+  console.log(`phase4 past-half hover copy ${JSON.stringify(lines)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+  const sizes = await page.evaluate(() => {
+    const hint = document.querySelector('.context-tip-hint')
+    const copy = document.querySelector('.context-tip-copy')
+    if (!hint || !copy) return null
+    return {
+      hint: parseFloat(getComputedStyle(hint).fontSize),
+      copy: parseFloat(getComputedStyle(copy).fontSize),
+    }
+  })
+  const okSize = sizes !== null && sizes.hint < sizes.copy
+  console.log(`phase4 hint smaller than headroom ${JSON.stringify(sizes)} ${okSize ? 'PASS' : 'FAIL'}`)
+  if (!okSize) fails++
+  await page.mouse.move(0, 0)
+}
+
+// P4c: clicking the pill sends /compact → the mock answers with the real
+// server's slash contract: a hello replay at the new usage + a notice.
+// The pill lands back below the gate and its copy drops the click hint.
+{
+  await pill.click()
+  await page.waitForFunction(() => {
+    const el = document.querySelector('.input-bar-context')
+    const pane = document.querySelector('.console-pane')
+    return (
+      el?.textContent?.includes('context 34%') &&
+      pane?.innerText.includes('Compacted context: 14 → 2 messages (62% → 34% of context window).')
+    )
+  }, { timeout: 8000 })
+  const state = await page.evaluate(() => ({
+    label: document.querySelector('.input-bar-context')?.textContent?.trim(),
+    disabled: document.querySelector('.input-bar-context')?.disabled,
+  }))
+  const ok = state.label === 'context 34%' && state.disabled === true
+  console.log(`phase4 compact click → ${JSON.stringify(state)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+  await pillWrap.hover()
+  await tooltip.waitFor({ state: 'visible', timeout: 5000 })
+  const tip = (await tooltip.innerText()).trim()
+  const ok2 = tip === '46% of context remaining\nuntil auto-compact'
+  console.log(`phase4 post-compact hover copy ${JSON.stringify(tip)} ${ok2 ? 'PASS' : 'FAIL'}`)
+  if (!ok2) fails++
 }
 
 await browser.close()
