@@ -230,7 +230,7 @@ class ConversationSummary:
 class StoredMessage:
     """A single message row as stored in the ``messages`` table.
 
-    The ``content_json`` field holds the serialised list[:class:`~toddler.llm.ContentBlock`] - use
+    The ``content_json`` field holds the serialised list[:class:`~toddler.llm.MessageBlock`] - use
     :meth:`~toddler.session.storage._serialize_content` / :meth:`~toddler.session.storage._deserialize_content`
     to go between Python objects and the database representation.
     """  # noqa: E501

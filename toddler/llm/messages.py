@@ -1,4 +1,4 @@
-"""LLM provider input models — ContentBlock and Message."""
+"""LLM provider input models — MessageBlock and Message."""
 
 from __future__ import annotations
 
@@ -6,29 +6,31 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Literal, Self
 
-__all__ = ["ContentBlock", "Message"]
+__all__ = ["Message", "MessageBlock"]
 
 
 # ---------------------------------------------------------------------------
-# ContentBlock — the building block of messages
+# MessageBlock — the building block of messages
 # ---------------------------------------------------------------------------
 
 
 @dataclass
-class ContentBlock:
+class MessageBlock:
     """A single block within a Message.
 
     Exactly one of the type-specific payload fields should be set,
     determined by ``type``:
 
-    - ``text`` → ``text``
+    - ``content`` → ``text``
+    - ``reasoning`` → ``text`` — the ``content`` and ``reasoning`` kinds
+      share the ``text`` payload slot
     - ``tool_use`` → ``tool_id``, ``tool_name``, ``tool_input``
     - ``tool_result`` → ``tool_id``, ``tool_result_content``, ``is_error``
     """
 
-    type: Literal["text", "tool_use", "tool_result"]
+    type: Literal["content", "reasoning", "tool_use", "tool_result"]
 
-    # text payload
+    # prose payload — shared by the content and reasoning kinds
     text: str | None = None
 
     # shared tool payload
@@ -47,8 +49,12 @@ class ContentBlock:
     # ------------------------------------------------------------------
 
     @classmethod
-    def text_block(cls, text: str) -> Self:
-        return cls(type="text", text=text)
+    def content_block(cls, text: str) -> Self:
+        return cls(type="content", text=text)
+
+    @classmethod
+    def reasoning_block(cls, text: str) -> Self:
+        return cls(type="reasoning", text=text)
 
     @classmethod
     def tool_use_block(
@@ -82,7 +88,7 @@ class ContentBlock:
 class Message:
     """An entry in the LLM conversation history.
 
-    Each message pairs a ``role`` with a list of :class:`ContentBlock`
+    Each message pairs a ``role`` with a list of :class:`MessageBlock`
     items and a :class:`~datetime.datetime` timestamp.
 
     Roles follow the OpenAI Chat Completions convention:
@@ -97,28 +103,37 @@ class Message:
     """
 
     role: Literal["system", "user", "assistant", "tool"]
-    content: list[ContentBlock]
+    blocks: list[MessageBlock]
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     @classmethod
     def system(cls, text: str) -> Self:
-        return cls(role="system", content=[ContentBlock.text_block(text)])
+        return cls(role="system", blocks=[MessageBlock.content_block(text)])
 
     @classmethod
     def user(cls, text: str) -> Self:
-        return cls(role="user", content=[ContentBlock.text_block(text)])
+        return cls(role="user", blocks=[MessageBlock.content_block(text)])
 
     @classmethod
-    def assistant(cls, blocks: list[ContentBlock] | None = None) -> Self:
-        return cls(role="assistant", content=blocks or [])
+    def assistant(cls, blocks: list[MessageBlock] | None = None) -> Self:
+        return cls(role="assistant", blocks=blocks or [])
 
     @classmethod
-    def tool(cls, blocks: list[ContentBlock]) -> Self:
-        return cls(role="tool", content=blocks)
+    def tool(cls, blocks: list[MessageBlock]) -> Self:
+        return cls(role="tool", blocks=blocks)
 
     @property
-    def text(self) -> str:
-        """Concatenated text from all text blocks (convenience)."""
+    def content(self) -> str:
+        """Concatenated answer text from the ``content`` blocks."""
         return "".join(
-            b.text for b in self.content if b.type == "text" and b.text
+            b.text for b in self.blocks if b.type == "content" and b.text
+        )
+
+    @property
+    def reasoning(self) -> str:
+        """Concatenated reasoning text from the ``reasoning`` blocks."""
+        return "".join(
+            b.text
+            for b in self.blocks
+            if b.type == "reasoning" and b.text
         )

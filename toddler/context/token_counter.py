@@ -77,7 +77,7 @@ class TokenCounter:
         total = 0
         for msg in messages:
             total += _MESSAGE_OVERHEAD
-            for block in msg.content:
+            for block in msg.blocks:
                 total += self._count_block(block)
         total += _REPLY_PRIMING
         return total
@@ -98,8 +98,8 @@ class TokenCounter:
         return _DEFAULT_ENCODING
 
     def _count_block(self, block) -> int:
-        """Count tokens for a single :class:`ContentBlock`."""
-        if block.type == "text" and block.text:
+        """Count tokens for a single :class:`MessageBlock`."""
+        if block.type == "content" and block.text:
             return self.count_tokens(block.text)
         if block.type == "tool_use":
             n = self.count_tokens(block.tool_name or "")

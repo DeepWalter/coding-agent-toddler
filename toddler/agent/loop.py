@@ -29,7 +29,7 @@ from toddler.agent.events import (
 )
 from toddler.agent.handler import create_handler
 from toddler.agent.stop_conditions import StopConditionChecker
-from toddler.llm import ContentBlock, Message, TokenUsage
+from toddler.llm import Message, MessageBlock, TokenUsage
 from toddler.tools.base import (
     PermissionManager,
     ToolCall,
@@ -55,7 +55,7 @@ logger = logging.getLogger(__name__)
 def _extract_tool_calls(msg: Message) -> list[ToolCall]:
     """Pull every ``tool_use`` block out of *msg* as :class:`ToolCall`."""
     calls: list[ToolCall] = []
-    for block in msg.content:
+    for block in msg.blocks:
         if block.type == "tool_use":
             calls.append(
                 ToolCall(
@@ -228,7 +228,7 @@ class AgentLoop:
             # (the session manager no longer reconstructs this from events).
             # Skip empty messages — they can occur on streaming errors where
             # the handler assembled no text and no tool calls.
-            if assistant_msg.content:
+            if assistant_msg.blocks:
                 self._ctx.append(assistant_msg)
 
             # Feed API-reported token counts back into the context so
@@ -257,7 +257,7 @@ class AgentLoop:
                     )
                     return
 
-                tool_result_blocks: list[ContentBlock] = []
+                tool_result_blocks: list[MessageBlock] = []
                 async for event in self._execute_tool_calls(
                     tool_calls, tool_result_blocks,
                 ):
@@ -344,13 +344,13 @@ class AgentLoop:
 
     async def _execute_tool_calls(
         self, tool_calls: list[ToolCall],
-        tool_result_blocks: list[ContentBlock],
+        tool_result_blocks: list[MessageBlock],
     ) -> AsyncIterator[AgentEvent]:
         """Execute *tool_calls* with permission gating, yielding events.
 
         Yields :class:`ToolCallStart`, :class:`AgentPaused` (when
         confirmation is needed), and :class:`ToolCallEnd` for each call.
-        Appends a :class:`ContentBlock` to *tool_result_blocks* for each
+        Appends a :class:`MessageBlock` to *tool_result_blocks* for each
         completed call — the caller then feeds them back to the LLM.
         """
         tool_result_blocks.clear()
@@ -399,7 +399,7 @@ class AgentLoop:
                 else result.error or "Unknown error"
             )
             tool_result_blocks.append(
-                ContentBlock.tool_result_block(
+                MessageBlock.tool_result_block(
                     call.tool_id,
                     output_text,
                     is_error=not result.success,

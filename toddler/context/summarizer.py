@@ -196,11 +196,11 @@ class ConversationCompactor:
 
         # The summary is already in the second message (after system).
         for msg in compacted:
-            if msg.role == "system" and msg.content:
+            if msg.role == "system" and msg.blocks:
                 # Skip original system messages.
                 continue
-            if msg.role == "user" and msg.content:
-                text = msg.text
+            if msg.role == "user" and msg.blocks:
+                text = msg.content
                 if text.startswith("[Compacted"):
                     return compacted, text
                 break
@@ -218,8 +218,8 @@ class ConversationCompactor:
         lines: list[str] = []
         for msg in messages:
             role = msg.role
-            for block in msg.content:
-                if block.type == "text" and block.text:
+            for block in msg.blocks:
+                if block.type == "content" and block.text:
                     lines.append(f"[{role}]: {block.text}")
                 elif block.type == "tool_use":
                     tool_name = block.tool_name or "unknown"

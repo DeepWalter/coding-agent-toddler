@@ -574,7 +574,7 @@ class TestPlanFlow:
 
             call = llm.messages_history[-1]
             assert any(
-                m.text == "[The previous turn was cancelled by the user.]"
+                m.content == "[The previous turn was cancelled by the user.]"
                 for m in call
             )
             # The cancelled turn's own messages are still there — the
@@ -609,17 +609,17 @@ class TestPlanFlow:
                 b.type == "tool_result"
                 and b.is_error is True
                 and "cancelled" in b.tool_result_content
-                for b in tool_msgs[0].content
+                for b in tool_msgs[0].blocks
             )
             # The assistant message with the tool_use survives intact,
             # immediately before the answering tool message.
             idx = call.index(tool_msgs[0])
             assert call[idx - 1].role == "assistant"
-            assert any(b.type == "tool_use" for b in call[idx - 1].content)
+            assert any(b.type == "tool_use" for b in call[idx - 1].blocks)
             # The marker is still there so the model knows the turn was
             # cut short, not finished.
             assert any(
-                m.text == "[The previous turn was cancelled by the user.]"
+                m.content == "[The previous turn was cancelled by the user.]"
                 for m in call
             )
 
@@ -643,13 +643,13 @@ class TestPlanFlow:
             call = llm.messages_history[-1]
             assistant_msgs = [m for m in call if m.role == "assistant"]
             # The partial output survived the cancel…
-            assert any("Partial" in m.text for m in assistant_msgs)
+            assert any("Partial" in m.content for m in assistant_msgs)
             # …but the stream was cut off before the end.
-            assert all("never finishes" not in m.text for m in assistant_msgs)
+            assert all("never finishes" not in m.content for m in assistant_msgs)
             # And the marker is there so the model knows the turn was
             # cut short, not finished.
             assert any(
-                m.text == "[The previous turn was cancelled by the user.]"
+                m.content == "[The previous turn was cancelled by the user.]"
                 for m in call
             )
 

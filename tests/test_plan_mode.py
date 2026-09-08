@@ -29,7 +29,7 @@ from toddler.agent.state_machine import (
     classify_complexity,
 )
 from toddler.cli.renderer import ConfirmResult
-from toddler.llm import ContentBlock, LLMResponse, Message, TokenUsage
+from toddler.llm import LLMResponse, Message, MessageBlock, TokenUsage
 from toddler.llm.base import BaseLLMProvider
 from toddler.tools.base import Permission, PermissionMode
 from toddler.tools.plan import PlanState, PlanUpdateTool
@@ -103,7 +103,7 @@ class _SilentPlanner:
 def _end_turn_response(text: str = "Research complete.") -> LLMResponse:
     """Build a plain end-turn LLMResponse."""
     return LLMResponse(
-        messages=[Message.assistant([ContentBlock.text_block(text)])],
+        messages=[Message.assistant([MessageBlock.content_block(text)])],
         stop_reason="end_turn",
         usage=TokenUsage(input_tokens=10, output_tokens=5),
     )
@@ -115,7 +115,7 @@ def _tool_use_response(
     """Build a single tool_use LLMResponse."""
     return LLMResponse(
         messages=[Message.assistant([
-            ContentBlock.tool_use_block(tool_id, tool_name, tool_input),
+            MessageBlock.tool_use_block(tool_id, tool_name, tool_input),
         ])],
         stop_reason="tool_use",
         usage=TokenUsage(input_tokens=10, output_tokens=5),
@@ -711,7 +711,7 @@ class MockPlanLLMProvider(BaseLLMProvider):
         if not tools:
             return LLMResponse(
                 messages=[Message.assistant([
-                    ContentBlock.text_block(json.dumps(self._plan_json)),
+                    MessageBlock.content_block(json.dumps(self._plan_json)),
                 ])],
                 stop_reason="end_turn",
                 usage=TokenUsage(input_tokens=50, output_tokens=50),
@@ -726,7 +726,7 @@ class MockPlanLLMProvider(BaseLLMProvider):
         # Standard agent call → simple end-turn.
         return LLMResponse(
             messages=[Message.assistant([
-                ContentBlock.text_block("Research complete."),
+                MessageBlock.content_block("Research complete."),
             ])],
             stop_reason="end_turn",
             usage=TokenUsage(input_tokens=20, output_tokens=10),
@@ -849,7 +849,7 @@ class TestSessionManagerPlanWorkflow:
         # Execution used the plan prompt, not the raw user request.
         # (The stored list is mutated by the loop afterwards, so scan
         # every message in the last call rather than just the tail.)
-        last_msgs = "\n".join(m.text for m in llm.messages_history[-1])
+        last_msgs = "\n".join(m.content for m in llm.messages_history[-1])
         assert "I have reviewed and approved" in last_msgs
         finished = [e for e in remaining if isinstance(e, AgentFinished)]
         assert len(finished) == 1
@@ -906,7 +906,7 @@ class TestSessionManagerPlanWorkflow:
         assert llm.call_count == 4
         # The re-exploration used the FIRST feedback — the stale second
         # rejection never touched the state.
-        texts = "\n".join(m.text for m in session_mgr.context.messages)
+        texts = "\n".join(m.content for m in session_mgr.context.messages)
         assert "avoid sqlite" in texts
         assert "stale feedback" not in texts
 
@@ -949,7 +949,7 @@ class TestSessionManagerPlanWorkflow:
         assert second_plan.plan.title == "Mock Plan"
         assert llm.call_count == 4
         # The feedback still drove the re-exploration.
-        texts = "\n".join(m.text for m in session_mgr.context.messages)
+        texts = "\n".join(m.content for m in session_mgr.context.messages)
         assert "avoid sqlite" in texts
         # An accepted approval for the CURRENT plan flips gating as usual.
         assert (
@@ -1481,7 +1481,7 @@ class TestPlanner:
         # Verify feedback was injected into context.
         feedback_msgs = [
             m for m in ctx._appended
-            if "Add more steps" in (m.text or "")
+            if "Add more steps" in (m.content or "")
         ]
         assert len(feedback_msgs) == 1
 
@@ -1575,12 +1575,12 @@ class TestPlanner:
         # Only the FIRST feedback reached the context.
         feedback_msgs = [
             m for m in ctx._appended
-            if "avoid sqlite" in (m.text or "")
+            if "avoid sqlite" in (m.content or "")
         ]
         assert len(feedback_msgs) == 1
         stale_msgs = [
             m for m in ctx._appended
-            if "stale feedback" in (m.text or "")
+            if "stale feedback" in (m.content or "")
         ]
         assert len(stale_msgs) == 0
 

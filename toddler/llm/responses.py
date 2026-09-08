@@ -22,18 +22,24 @@ class StreamEvent:
 
     Event types and their expected ``data`` keys:
 
-    ===================  =========================================
-    ``text_delta``       ``{"text": "..."}``
-    ``tool_use_start``   ``{"tool_id": ..., "tool_name": ...}``
-    ``tool_use_delta``   ``{"tool_id": ..., "input_delta": {...}}``
-    ``message_start``    ``{}``
-    ``message_stop``     ``{"stop_reason": ..., "usage": TokenUsage}``
-    ``error``            ``{"message": ..., "status_code": ...}``
-    ===================  =========================================
+    ====================  =========================================
+    ``content_delta``     ``{"text_delta": "..."}``
+    ``reasoning_delta``   ``{"text_delta": "..."}``
+    ``tool_use_start``    ``{"tool_id": ..., "tool_name": ...}``
+    ``tool_use_delta``    ``{"tool_id": ..., "input_delta": {...}}``
+    ``message_start``     ``{}``
+    ``message_stop``      ``{"stop_reason": ..., "usage": TokenUsage}``
+    ``error``             ``{"message": ..., "status_code": ...}``
+    ====================  =========================================
+
+    ``content_delta`` and ``reasoning_delta`` both feed the shared
+    ``text`` payload slot of their block kind, so their increments share
+    the slot-derived key ``text_delta``.
     """
 
     type: Literal[
-        "text_delta",
+        "content_delta",
+        "reasoning_delta",
         "tool_use_start",
         "tool_use_delta",
         "message_start",
@@ -57,6 +63,11 @@ class TokenUsage:
     cache_read_tokens: int = 0
     cache_creation_tokens: int = 0
 
+    # DeepSeek thinking-mode reasoning tokens — a subset of output_tokens,
+    # itemized separately by the API.  `total` deliberately excludes the
+    # breakdown (reasoning is already inside output_tokens).
+    reasoning_tokens: int = 0
+
     @property
     def total(self) -> int:
         return self.input_tokens + self.output_tokens
@@ -67,6 +78,7 @@ class TokenUsage:
             output_tokens=self.output_tokens + other.output_tokens,
             cache_read_tokens=self.cache_read_tokens + other.cache_read_tokens,
             cache_creation_tokens=self.cache_creation_tokens + other.cache_creation_tokens,  # noqa: E501
+            reasoning_tokens=self.reasoning_tokens + other.reasoning_tokens,
         )
 
 

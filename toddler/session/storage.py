@@ -2,7 +2,7 @@
 
 Sits between the CLI / agent loop and
 :class:`~toddler.session.database.SQLiteDatabase`.
-Handles ContentBlock serialization, token accumulation, and all
+Handles MessageBlock serialization, token accumulation, and all
 business logic that shouldn't live in the raw data layer.
 """  # noqa: E501
 
@@ -15,7 +15,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from toddler.llm import ContentBlock, Message, TokenUsage
+from toddler.llm import Message, MessageBlock, TokenUsage
 from toddler.session.database import SQLiteDatabase
 from toddler.session.models import (
     Conversation,
@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 class StorageManager:
     """High-level manager for session persistence.
 
-    Wraps :class:`SQLiteDatabase` with ContentBlock serialization
+    Wraps :class:`SQLiteDatabase` with MessageBlock serialization
     and token-usage bookkeeping.
 
     Parameters
@@ -196,7 +196,7 @@ class StorageManager:
             conversation_id=conversation_id,
             sequence_num=next_seq,
             role=message.role,
-            content_json=_serialize_content(message.content),
+            content_json=_serialize_content(message.blocks),
             token_count=token_count,
             created_at=message.timestamp,
         )
@@ -449,10 +449,10 @@ def print_sessions(mgr: StorageManager) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _serialize_content(blocks: list[ContentBlock]) -> str:
-    """Convert a list of ContentBlock objects to a JSON string."""
+def _serialize_content(blocks: list[MessageBlock]) -> str:
+    """Convert a list of MessageBlock objects to a JSON string."""
 
-    def _block_to_dict(b: ContentBlock) -> dict[str, Any]:
+    def _block_to_dict(b: MessageBlock) -> dict[str, Any]:
         d: dict[str, Any] = {"type": b.type}
         if b.text is not None:
             d["text"] = b.text
@@ -473,12 +473,19 @@ def _serialize_content(blocks: list[ContentBlock]) -> str:
     )
 
 
-def _deserialize_content(json_str: str) -> list[ContentBlock]:
-    """Parse a JSON string back into ContentBlock objects."""
+def _deserialize_content(json_str: str) -> list[MessageBlock]:
+    """Parse a JSON string back into MessageBlock objects."""
 
-    def _dict_to_block(d: dict[str, Any]) -> ContentBlock:
-        return ContentBlock(
-            type=d["type"],
+    # Kind rename baseline: rows written before ``"text"`` became
+    # ``"content"`` store the legacy kind value — read it back as
+    # ``content``.  The payload key never renamed (both kinds share the
+    # ``text`` slot), so this type-only alias is the whole story.
+    def _map_type(stored: str) -> str:
+        return "content" if stored == "text" else stored
+
+    def _dict_to_block(d: dict[str, Any]) -> MessageBlock:
+        return MessageBlock(
+            type=_map_type(d["type"]),
             text=d.get("text"),
             tool_id=d.get("tool_id"),
             tool_name=d.get("tool_name"),
@@ -501,7 +508,7 @@ def _message_to_stored(
         session_id=session_id,
         sequence_num=seq,
         role=msg.role,
-        content_json=_serialize_content(msg.content),
+        content_json=_serialize_content(msg.blocks),
         token_count=0,
         created_at=msg.timestamp,
     )
@@ -511,6 +518,6 @@ def _stored_to_message(stored: StoredMessage) -> Message:
     """Convert a :class:`StoredMessage` back to a :class:`Message`."""
     return Message(
         role=stored.role,  # type: ignore[arg-type]
-        content=_deserialize_content(stored.content_json),
+        blocks=_deserialize_content(stored.content_json),
         timestamp=stored.created_at,
     )

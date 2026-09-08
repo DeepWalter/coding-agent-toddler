@@ -565,7 +565,9 @@ class SQLiteDatabase:
             return None
         blocks = _json_loads(row["content_json"])
         for block in blocks:
-            if block.get("type") == "text":
+            # Kind rename baseline: new rows store "content", legacy rows
+            # store "text" — both mean the same prose kind here.
+            if block.get("type") in ("content", "text"):
                 text = block.get("text")
                 return text if text else None
         return None

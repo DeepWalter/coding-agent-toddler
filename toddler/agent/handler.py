@@ -25,7 +25,7 @@ from toddler.agent.events import (
     ToolCallDelta,
     ToolCallStart,
 )
-from toddler.llm import ContentBlock, Message, TokenUsage
+from toddler.llm import Message, MessageBlock, TokenUsage
 
 if TYPE_CHECKING:
     from toddler.llm.responses import LLMResponse, StreamEvent
@@ -72,7 +72,7 @@ class BaseHandler(ABC):
         ...
 
     @abstractmethod
-    def get_partial_content(self) -> list[ContentBlock]:
+    def get_partial_content(self) -> list[MessageBlock]:
         """Return the content the model produced so far, mid-processing.
 
         The agent loop appends this to the conversation when a turn is
@@ -260,23 +260,23 @@ class StreamHandler(BaseHandler):
     # Assembled output
     # ------------------------------------------------------------------
 
-    def _content_blocks(self) -> list[ContentBlock]:
+    def _content_blocks(self) -> list[MessageBlock]:
         """Build content blocks from the accumulated text and tool calls.
 
         Shared by the completed-message assembly and the partial-content
         extraction on cancel — both expose the same content, just at
         different points in the stream.
         """
-        blocks: list[ContentBlock] = []
+        blocks: list[MessageBlock] = []
 
         if self._text_buf:
-            blocks.append(ContentBlock.text_block(self._text_buf))
+            blocks.append(MessageBlock.content_block(self._text_buf))
 
         for tool_id in self._tool_order:
             pt = self._tools[tool_id]
             parsed = pt.parser.finalize()
             blocks.append(
-                ContentBlock.tool_use_block(
+                MessageBlock.tool_use_block(
                     tool_id=pt.tool_id,
                     tool_name=pt.tool_name,
                     tool_input=parsed,
@@ -293,7 +293,7 @@ class StreamHandler(BaseHandler):
         """  # noqa: E501
         return Message.assistant(self._content_blocks())
 
-    def get_partial_content(self) -> list[ContentBlock]:
+    def get_partial_content(self) -> list[MessageBlock]:
         """Return the content the model produced so far, mid-stream.
 
         Text accumulated so far plus any tool calls started (with
@@ -425,11 +425,11 @@ class NonStreamHandler(BaseHandler):
         )
         self._stop_reason = response.stop_reason
         self._usage = response.usage
-        text = self._assistant_msg.text
+        text = self._assistant_msg.content
         if text:
             yield TextDelta(text=text)
 
-    def get_partial_content(self) -> list[ContentBlock]:
+    def get_partial_content(self) -> list[MessageBlock]:
         """Return the response content.
 
         The complete response is available as soon as :meth:`process`
@@ -437,7 +437,7 @@ class NonStreamHandler(BaseHandler):
         """
         if self._assistant_msg is None:
             return []
-        return list(self._assistant_msg.content)
+        return list(self._assistant_msg.blocks)
 
     def get_final_result(self) -> dict[str, Message | None | str | TokenUsage]:
         """Return the assembled result dict."""

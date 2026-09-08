@@ -238,20 +238,13 @@ class CheckpointManager:
 
                 # Insert a rollback marker so the user/LLM can see what
                 # happened.
-                from toddler.llm import ContentBlock, Message
+                from toddler.llm import Message
 
                 marker = Message.user(
-                    [
-                        ContentBlock(
-                            type="text",
-                            text=(
-                                f"⚡ **Rolled back to checkpoint "
-                                f"#{checkpoint.sequence_num}**\n\n"
-                                f"Description: {checkpoint.description}\n"
-                                f"Restored {len(restored_files)} file(s)."
-                            ),
-                        )
-                    ]
+                    f"⚡ **Rolled back to checkpoint "
+                    f"#{checkpoint.sequence_num}**\n\n"
+                    f"Description: {checkpoint.description}\n"
+                    f"Restored {len(restored_files)} file(s)."
                 )
                 self._storage_mgr.append_message(
                     self._session_id,

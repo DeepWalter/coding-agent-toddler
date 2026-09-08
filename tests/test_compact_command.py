@@ -12,7 +12,7 @@ import pytest
 
 from toddler.cli.commands import SlashCommandDispatcher
 from toddler.context.manager import ContextManager
-from toddler.llm import ContentBlock, Message
+from toddler.llm import Message, MessageBlock
 from toddler.llm.base import BaseLLMProvider
 from toddler.session.manager import SessionManager
 
@@ -49,13 +49,13 @@ def _conversation(body_pairs: int) -> list[Message]:
     msgs = [Message.system("You are a helpful assistant.")]
     for i in range(body_pairs):
         msgs.append(Message.user(f"Question {i}"))
-        msgs.append(Message.assistant([ContentBlock.text_block(f"Reply {i}")]))
+        msgs.append(Message.assistant([MessageBlock.content_block(f"Reply {i}")]))
     return msgs
 
 
 def _has_summary_marker(messages: list[Message]) -> bool:
     return any(
-        (m.text or "").startswith("[Compacted history") for m in messages
+        (m.content or "").startswith("[Compacted history") for m in messages
     )
 
 
@@ -95,9 +95,9 @@ class TestCompact:
         assert len(ctx.messages) == 1 + 1 + _KEEP_RECENT
         assert ctx.messages[0].role == "system"
         assert ctx.messages[1].role == "user"
-        assert ctx.messages[1].text.startswith("[Compacted history")
-        tail = [m.text for m in ctx.messages[2:]]
-        assert tail == [m.text for m in original[-_KEEP_RECENT:]]
+        assert ctx.messages[1].content.startswith("[Compacted history")
+        tail = [m.content for m in ctx.messages[2:]]
+        assert tail == [m.content for m in original[-_KEEP_RECENT:]]
 
         # Compaction metadata recorded; baseline reset (nothing new to save).
         assert ctx.last_compaction is result
@@ -194,7 +194,7 @@ class TestCompactContextPersistence:
         for t in range(turns):
             await ctx.prepare_turn(f"User question {t}")
             ctx.append(Message.assistant(
-                [ContentBlock.text_block(f"Assistant reply {t}")]
+                [MessageBlock.content_block(f"Assistant reply {t}")]
             ))
             await mgr.save()
 
@@ -231,7 +231,7 @@ class TestCompactContextPersistence:
         await mgr2.resolve(session_id=mgr.session.id)
         reloaded = mgr2.context.messages
         assert reloaded and reloaded[0].role == "user"
-        assert reloaded[0].text.startswith("[Compacted history")
+        assert reloaded[0].content.startswith("[Compacted history")
         assert mgr2.conversation.compacted_summary == conv.compacted_summary
 
     @pytest.mark.asyncio

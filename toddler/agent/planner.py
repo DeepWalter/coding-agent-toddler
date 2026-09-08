@@ -636,7 +636,7 @@ class Planner:
         assistant_texts = []
         for msg in self._ctx.messages:
             if msg.role == "assistant":
-                text = msg.text.strip()
+                text = msg.content.strip()
                 if text:
                     assistant_texts.append(text)
         research_context = "\n\n".join(assistant_texts[-5:])
@@ -661,7 +661,7 @@ class Planner:
             # Non-streaming response.
             if isinstance(response, LLMResponse):
                 text = (
-                    response.messages[0].text
+                    response.messages[0].content
                     if response.messages else ""
                 )
             else:

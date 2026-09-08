@@ -17,7 +17,7 @@ from toddler.agent.events import (
 )
 from toddler.agent.planner import Plan, PlanStep
 from toddler.llm import TokenUsage
-from toddler.llm.messages import ContentBlock, Message
+from toddler.llm.messages import Message, MessageBlock
 from toddler.tools.base import ToolResult
 from toddler.tools.plan import PlanStepStatus
 from toddler.web.events import (
@@ -207,12 +207,12 @@ class TestSerializeTranscript:
         followed by a tool message with its result."""
         return [
             Message.assistant([
-                ContentBlock.tool_use_block(
+                MessageBlock.tool_use_block(
                     tool_id, name, tool_input or {"path": "a.py"},
                 ),
             ]),
             Message.tool([
-                ContentBlock.tool_result_block(
+                MessageBlock.tool_result_block(
                     tool_id, result or "", is_error=is_error,
                 ),
             ]),
@@ -222,7 +222,7 @@ class TestSerializeTranscript:
         messages = [
             Message.system("You are helpful."),
             Message.user("hi"),
-            Message.assistant([ContentBlock.text_block("hello")]),
+            Message.assistant([MessageBlock.content_block("hello")]),
         ]
         assert serialize_transcript(messages) == [
             {"role": "user", "content": "hi"},
@@ -233,7 +233,7 @@ class TestSerializeTranscript:
         messages = [
             Message.user("read it"),
             *self._tool_pair("t1"),
-            Message.assistant([ContentBlock.text_block("done")]),
+            Message.assistant([MessageBlock.content_block("done")]),
         ]
         assert serialize_transcript(messages) == [
             {"role": "user", "content": "read it"},
@@ -270,7 +270,7 @@ class TestSerializeTranscript:
     def test_use_without_result_replays_as_cancelled(self):
         # A turn cancelled mid-execution persists the use but no result.
         messages = [Message.assistant([
-            ContentBlock.tool_use_block("t1", "write_file", {}),
+            MessageBlock.tool_use_block("t1", "write_file", {}),
         ])]
         entry = serialize_transcript(messages)[0]
         assert entry["tool_id"] == "t1"
@@ -279,14 +279,14 @@ class TestSerializeTranscript:
     def test_tool_message_not_emitted_on_its_own(self):
         # The tool role carries only results; they attach to the use site.
         messages = [Message.tool([
-            ContentBlock.tool_result_block("t1", "content"),
+            MessageBlock.tool_result_block("t1", "content"),
         ])]
         assert serialize_transcript(messages) == []
 
     def test_assistant_text_and_use_keep_live_order(self):
         messages = [Message.assistant([
-            ContentBlock.text_block("checking…"),
-            ContentBlock.tool_use_block("t1", "read_file", {"path": "a.py"}),
+            MessageBlock.content_block("checking…"),
+            MessageBlock.tool_use_block("t1", "read_file", {"path": "a.py"}),
         ])]
         assert [e["role"] for e in serialize_transcript(messages)] == [
             "assistant", "tool",

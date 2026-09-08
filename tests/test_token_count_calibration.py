@@ -10,7 +10,7 @@ import pytest
 
 from toddler.context.manager import ContextManager
 from toddler.context.window import ContextWindowManager
-from toddler.llm import ContentBlock, LLMResponse, Message, TokenUsage
+from toddler.llm import LLMResponse, Message, MessageBlock, TokenUsage
 from toddler.llm.base import BaseLLMProvider
 
 # ---------------------------------------------------------------------------
@@ -25,9 +25,9 @@ def _make_msg(role: str, text: str) -> Message:
     if role == "user":
         return Message.user(text)
     if role == "assistant":
-        return Message.assistant([ContentBlock.text_block(text)])
+        return Message.assistant([MessageBlock.content_block(text)])
     if role == "tool":
-        return Message.tool([ContentBlock.tool_result_block("id1", text)])
+        return Message.tool([MessageBlock.tool_result_block("id1", text)])
     raise ValueError(f"Unknown role: {role}")
 
 
@@ -264,7 +264,7 @@ class TestAgentLoopRecordUsageIntegration:
                                temperature=0.0, stream=True):
                 return LLMResponse(
                     messages=[Message.assistant([
-                        ContentBlock.text_block("Hello!"),
+                        MessageBlock.content_block("Hello!"),
                     ])],
                     stop_reason="end_turn",
                     usage=TokenUsage(input_tokens=100, output_tokens=10),
@@ -319,7 +319,7 @@ class TestAgentLoopRecordUsageIntegration:
                 if self._call == 1:
                     return LLMResponse(
                         messages=[Message.assistant([
-                            ContentBlock.tool_use_block(
+                            MessageBlock.tool_use_block(
                                 "c1", "echo", {"message": "test"},
                             ),
                         ])],
@@ -328,7 +328,7 @@ class TestAgentLoopRecordUsageIntegration:
                     )
                 return LLMResponse(
                     messages=[Message.assistant([
-                        ContentBlock.text_block("Done."),
+                        MessageBlock.content_block("Done."),
                     ])],
                     stop_reason="end_turn",
                     usage=TokenUsage(input_tokens=300, output_tokens=5),

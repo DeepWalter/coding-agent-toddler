@@ -16,9 +16,9 @@ from collections.abc import AsyncIterator
 
 from toddler.agent.planner import Plan
 from toddler.llm import (
-    ContentBlock,
     LLMResponse,
     Message,
+    MessageBlock,
     StreamEvent,
     TokenUsage,
 )
@@ -73,9 +73,9 @@ class MockLLMProvider(BaseLLMProvider):
 
     async def _stream(self, resp: LLMResponse) -> AsyncIterator[StreamEvent]:
         """Replay a canned response as a :class:`StreamEvent` stream."""
-        blocks = resp.messages[0].content if resp.messages else []
+        blocks = resp.messages[0].blocks if resp.messages else []
         for block in blocks:
-            if block.type == "text":
+            if block.type == "content":
                 yield StreamEvent(
                     type="text_delta", data={"text": block.text},
                 )
@@ -122,7 +122,7 @@ class SlowStreamLLM(MockLLMProvider):
         self._delay = delay
 
     async def _stream(self, resp: LLMResponse) -> AsyncIterator[StreamEvent]:
-        text = resp.messages[0].text
+        text = resp.messages[0].content
         for i in range(0, len(text), self._chunk_size):
             await asyncio.sleep(self._delay)
             yield StreamEvent(
@@ -153,7 +153,7 @@ def text_response(
     output_tokens: int = 5,
 ) -> LLMResponse:
     """A plain-text end-turn response with minimal boilerplate."""
-    blocks = [ContentBlock.text_block(text)] if text else []
+    blocks = [MessageBlock.content_block(text)] if text else []
     return LLMResponse(
         messages=[Message.assistant(blocks)],
         stop_reason=stop_reason,
@@ -173,7 +173,7 @@ def tool_use_response(
     return LLMResponse(
         messages=[
             Message.assistant([
-                ContentBlock.tool_use_block(tool_id, tool_name, tool_input),
+                MessageBlock.tool_use_block(tool_id, tool_name, tool_input),
             ]),
         ],
         stop_reason="tool_use",

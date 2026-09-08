@@ -22,7 +22,7 @@ from openai import NOT_GIVEN, NotGiven
 
 from toddler.llm._async_openai import AsyncOpenAI
 from toddler.llm.base import BaseLLMProvider
-from toddler.llm.messages import ContentBlock, Message
+from toddler.llm.messages import Message, MessageBlock
 from toddler.llm.responses import LLMResponse, StreamEvent, TokenUsage
 
 if TYPE_CHECKING:
@@ -234,7 +234,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         usage = self._extract_usage(response)
 
         return LLMResponse(
-            messages=[internal_msg] if internal_msg.content else [],
+            messages=[internal_msg] if internal_msg.blocks else [],
             stop_reason=_map_finish_reason(choice.finish_reason),
             usage=usage,
         )
@@ -253,7 +253,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
             if msg.role == "tool":
                 # One internal "tool" message may carry multiple
                 # tool_result blocks — OpenAI wants one message per result.
-                for block in msg.content:
+                for block in msg.blocks:
                     if block.type == "tool_result":
                         openai_msgs.append(
                             {
@@ -265,11 +265,11 @@ class OpenAICompatibleProvider(BaseLLMProvider):
             else:
                 text = "".join(
                     b.text
-                    for b in msg.content
-                    if b.type == "text" and b.text
+                    for b in msg.blocks
+                    if b.type == "content" and b.text
                 )
                 tool_calls = []
-                for b in msg.content:
+                for b in msg.blocks:
                     if b.type == "tool_use":
                         tool_calls.append(
                             {
@@ -305,11 +305,11 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         """Convert a single OpenAI response message into our internal
         :class:`Message`."""
 
-        blocks: list[ContentBlock] = []
+        blocks: list[MessageBlock] = []
 
         # Text content
         if oa_msg.content:
-            blocks.append(ContentBlock.text_block(oa_msg.content))
+            blocks.append(MessageBlock.content_block(oa_msg.content))
 
         # Tool calls
         if oa_msg.tool_calls:
@@ -318,7 +318,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
                 if tc.function and tc.function.arguments:
                     tool_input = json.loads(tc.function.arguments)
                 blocks.append(
-                    ContentBlock.tool_use_block(
+                    MessageBlock.tool_use_block(
                         tool_id=tc.id,
                         tool_name=tc.function.name if tc.function else "",
                         tool_input=tool_input,

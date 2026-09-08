@@ -13,7 +13,7 @@ import sqlite3
 import pytest
 
 from toddler.context.manager import ContextManager
-from toddler.llm import ContentBlock, Message, TokenUsage
+from toddler.llm import Message, MessageBlock, TokenUsage
 from toddler.llm.base import BaseLLMProvider
 from toddler.session.models import Conversation
 
@@ -28,9 +28,9 @@ def _make_msg(role: str, text: str) -> Message:
     if role == "user":
         return Message.user(text)
     if role == "assistant":
-        return Message.assistant([ContentBlock.text_block(text)])
+        return Message.assistant([MessageBlock.content_block(text)])
     if role == "tool":
-        return Message.tool([ContentBlock.tool_result_block("id1", text)])
+        return Message.tool([MessageBlock.tool_result_block("id1", text)])
     raise ValueError(f"Unknown role: {role}")
 
 

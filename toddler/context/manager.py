@@ -21,7 +21,7 @@ from toddler.config.settings import Settings
 from toddler.context.builder import SystemPromptBuilder
 from toddler.context.summarizer import ConversationCompactor
 from toddler.context.window import ContextWindowManager
-from toddler.llm import BaseLLMProvider, ContentBlock, Message, TokenUsage
+from toddler.llm import BaseLLMProvider, Message, MessageBlock, TokenUsage
 
 logger = logging.getLogger(__name__)
 
@@ -437,12 +437,12 @@ class ContextManager:
         """
         if self._messages and self._messages[-1].role == "assistant":
             tool_uses = [
-                b for b in self._messages[-1].content
+                b for b in self._messages[-1].blocks
                 if b.type == "tool_use" and b.tool_id
             ]
             if tool_uses:
                 self._messages.append(Message.tool([
-                    ContentBlock.tool_result_block(
+                    MessageBlock.tool_result_block(
                         b.tool_id,
                         "The tool call was cancelled by the user before "
                         "it could run.",
@@ -462,8 +462,8 @@ class ContextManager:
     def _extract_summary(compacted: list[Message]) -> str:
         """Pull the compaction summary text out of the compacted list."""
         for msg in compacted:
-            if msg.role == "user" and msg.content:
-                text = msg.text
+            if msg.role == "user" and msg.blocks:
+                text = msg.content
                 if text.startswith("[Compacted"):
                     return text
         return ""

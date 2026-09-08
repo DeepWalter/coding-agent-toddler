@@ -80,7 +80,7 @@ def _tool_results(messages: list[Message]) -> dict[str, dict]:
     for msg in messages:
         if msg.role != "tool":
             continue
-        for block in msg.content:
+        for block in msg.blocks:
             if block.type != "tool_result" or not block.tool_id:
                 continue
             is_error = block.is_error or False
@@ -112,23 +112,23 @@ def serialize_transcript(messages: list[Message]) -> list[dict]:
         if msg.role in ("system", "tool"):
             continue
         if msg.role == "user":
-            if msg.text:
-                entry: dict = {"role": "user", "content": msg.text}
+            if msg.content:
+                entry: dict = {"role": "user", "content": msg.content}
                 # Synthetic repair messages are aimed at the model, not the
                 # human — flag them so the frontend renders a fold line
                 # instead of a user bubble (content stays for consumers that
                 # want the raw text).
-                if msg.text.startswith("[The previous turn was cancelled by the user."):
+                if msg.content.startswith("[The previous turn was cancelled by the user."):
                     entry["fold"] = "cancelled"
-                elif msg.text.startswith("[Compacted"):
+                elif msg.content.startswith("[Compacted"):
                     entry["fold"] = "compacted"
                 entries.append(entry)
             continue
         # assistant — text first, then its tool uses, matching the live
-        # ``text_delta`` → ``tool_call_start`` order.
-        if msg.text:
-            entries.append({"role": "assistant", "content": msg.text})
-        for block in msg.content:
+        # ``content_delta`` → ``tool_call_start`` order.
+        if msg.content:
+            entries.append({"role": "assistant", "content": msg.content})
+        for block in msg.blocks:
             if block.type == "tool_use" and block.tool_id:
                 entries.append({
                     "role": "tool",

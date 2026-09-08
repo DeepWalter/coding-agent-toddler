@@ -28,9 +28,9 @@ from toddler.agent.loop import AgentLoop
 from toddler.config.settings import Settings
 from toddler.context.manager import ContextManager
 from toddler.llm import (
-    ContentBlock,
     LLMResponse,
     Message,
+    MessageBlock,
     StreamEvent,
     TokenUsage,
 )
@@ -83,7 +83,7 @@ class MockLLMProvider(BaseLLMProvider):
         # Default: plain text end-turn.
         self.call_count += 1
         return LLMResponse(
-            messages=[Message.assistant([ContentBlock.text_block("Done.")])],
+            messages=[Message.assistant([MessageBlock.content_block("Done.")])],
             stop_reason="end_turn",
             usage=TokenUsage(input_tokens=10, output_tokens=5),
         )
@@ -103,15 +103,15 @@ class MockLLMProvider(BaseLLMProvider):
 
 def _make_llm_response(
     text: str = "",
-    tool_blocks: list[ContentBlock] | None = None,
+    tool_blocks: list[MessageBlock] | None = None,
     stop_reason: str = "end_turn",
     input_tokens: int = 10,
     output_tokens: int = 5,
 ) -> LLMResponse:
     """Build an :class:`LLMResponse` with minimal boilerplate."""
-    blocks: list[ContentBlock] = []
+    blocks: list[MessageBlock] = []
     if text:
-        blocks.append(ContentBlock.text_block(text))
+        blocks.append(MessageBlock.content_block(text))
     if tool_blocks:
         blocks.extend(tool_blocks)
     return LLMResponse(
@@ -123,9 +123,9 @@ def _make_llm_response(
 
 def _make_tool_use_block(
     tool_id: str, tool_name: str, tool_input: dict | None = None
-) -> ContentBlock:
+) -> MessageBlock:
     """Shortcut for creating a tool_use content block."""
-    return ContentBlock.tool_use_block(tool_id, tool_name, tool_input or {})
+    return MessageBlock.tool_use_block(tool_id, tool_name, tool_input or {})
 
 
 # ============================================================================
@@ -453,7 +453,7 @@ class TestErrorRecovery:
         second_call_msgs = llm.messages_history[1]
         tool_msgs = [m for m in second_call_msgs if m.role == "tool"]
         assert len(tool_msgs) == 1
-        tool_block = tool_msgs[0].content[0]
+        tool_block = tool_msgs[0].blocks[0]
         assert tool_block.is_error is True
         assert "Simulated failure" in tool_block.tool_result_content
 
@@ -826,9 +826,9 @@ class TestContextManager:
         assistant message intact) and appends a marker."""
         await conv_ctx.prepare_turn("refactor thing")
         conv_ctx.append(Message.assistant([
-            ContentBlock.text_block("I'll check the files."),
-            ContentBlock.tool_use_block("t1", "read_file", {"path": "x.py"}),
-            ContentBlock.tool_use_block("t2", "grep", {"pattern": "foo"}),
+            MessageBlock.content_block("I'll check the files."),
+            MessageBlock.tool_use_block("t1", "read_file", {"path": "x.py"}),
+            MessageBlock.tool_use_block("t2", "grep", {"pattern": "foo"}),
         ]))
 
         conv_ctx.mark_turn_cancelled()
@@ -838,30 +838,30 @@ class TestContextManager:
             "system", "user", "assistant", "tool", "user",
         ]
         # The assistant message is untouched — text and tool_use survive.
-        assert [b.type for b in msgs[2].content] == [
-            "text", "tool_use", "tool_use",
+        assert [b.type for b in msgs[2].blocks] == [
+            "content", "tool_use", "tool_use",
         ]
         # One tool_result per dangling call, paired by tool_id, marked
         # as an error so the model knows the call never ran.
-        assert [b.type for b in msgs[3].content] == ["tool_result", "tool_result"]
-        assert [b.tool_id for b in msgs[3].content] == ["t1", "t2"]
-        assert all(b.is_error for b in msgs[3].content)
-        assert all("cancelled" in b.tool_result_content for b in msgs[3].content)
-        assert msgs[-1].text == "[The previous turn was cancelled by the user.]"
+        assert [b.type for b in msgs[3].blocks] == ["tool_result", "tool_result"]
+        assert [b.tool_id for b in msgs[3].blocks] == ["t1", "t2"]
+        assert all(b.is_error for b in msgs[3].blocks)
+        assert all("cancelled" in b.tool_result_content for b in msgs[3].blocks)
+        assert msgs[-1].content == "[The previous turn was cancelled by the user.]"
 
     async def test_mark_turn_cancelled_keeps_complete_messages(self, conv_ctx):
         """A cancel mid-stream keeps the partial history — the next turn
         continues from it; only the marker is added."""
         await conv_ctx.prepare_turn("write a test")
         conv_ctx.append(Message.assistant([
-            ContentBlock.text_block("Sure — I'll start by looking at"),
+            MessageBlock.content_block("Sure — I'll start by looking at"),
         ]))
 
         conv_ctx.mark_turn_cancelled()
 
         msgs = conv_ctx.messages
         assert [m.role for m in msgs] == ["system", "user", "assistant", "user"]
-        assert msgs[-1].text == "[The previous turn was cancelled by the user.]"
+        assert msgs[-1].content == "[The previous turn was cancelled by the user.]"
 
     async def test_system_prompt_is_built_by_context(self, registry, executor, settings, conv_ctx):  # noqa: E501
         """The system prompt is assembled by ContextManager.prepare_turn()."""
@@ -877,7 +877,7 @@ class TestContextManager:
         sys_msg = first_msgs[0]
         assert sys_msg.role == "system"
         # Should contain base persona (not empty).
-        assert "Toddler" in sys_msg.text
+        assert "Toddler" in sys_msg.content
 
 
 # ============================================================================
@@ -901,7 +901,7 @@ class TestHandlerPartialContent:
         assert isinstance(await gen.__anext__(), TextDelta)
 
         partial = handler.get_partial_content()
-        assert [b.type for b in partial] == ["text"]
+        assert [b.type for b in partial] == ["content"]
         assert partial[0].text == "Hello "
 
     async def test_stream_handler_partial_includes_started_tool_call(self):
@@ -929,7 +929,7 @@ class TestHandlerPartialContent:
         await gen.__anext__()  # tool_use_delta feeds the parser
 
         partial = handler.get_partial_content()
-        assert [b.type for b in partial] == ["text", "tool_use"]
+        assert [b.type for b in partial] == ["content", "tool_use"]
         assert partial[1].tool_id == "t1"
         assert partial[1].tool_name == "read_file"
         assert partial[1].tool_input == {"path": "x.py"}
@@ -942,7 +942,7 @@ class TestHandlerPartialContent:
         assert isinstance(await gen.__anext__(), TextDelta)
 
         partial = handler.get_partial_content()
-        assert [b.type for b in partial] == ["text"]
+        assert [b.type for b in partial] == ["content"]
         assert partial[0].text == "Complete answer"
 
     async def test_partial_content_empty_before_stream(self):
@@ -988,15 +988,15 @@ class TestCancelMidStream:
             m for m in conv_ctx.messages if m.role == "assistant"
         ]
         assert len(assistant_msgs) == 1
-        assert "Partial" in assistant_msgs[0].text
-        assert "never finishes" not in assistant_msgs[0].text
+        assert "Partial" in assistant_msgs[0].content
+        assert "never finishes" not in assistant_msgs[0].content
 
         # The usual cancel repair follows the partial text with the marker.
         conv_ctx.mark_turn_cancelled()
         msgs = conv_ctx.messages
         assert msgs[-2].role == "assistant"
         assert msgs[-1].role == "user"
-        assert msgs[-1].text == "[The previous turn was cancelled by the user.]"
+        assert msgs[-1].content == "[The previous turn was cancelled by the user.]"
 
 
 # ============================================================================
