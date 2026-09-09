@@ -20,6 +20,12 @@ export DEEPSEEK_MODEL="deepseek-v4-pro"
 
 OpenAI-compatible providers work too — use the `OPENAI_*` env prefix as a fallback.
 
+**Troubleshooting:** DeepSeek thinking mode consumes the `max_tokens` budget
+(`TODDLER_MAX_TOKENS`, default 8192).  A thinking-heavy turn can exhaust it,
+ending with `finish_reason="length"` and empty output — raise
+`TODDLER_MAX_TOKENS`.  `reasoning_tokens` in the recorded usage shows the
+reasoning/output split.
+
 ## Usage
 
 ```bash

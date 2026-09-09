@@ -8,6 +8,13 @@ Works with any OpenAI-compatible endpoint:
 - DeepSeek (``https://api.deepseek.com``)
 - OpenAI (``https://api.openai.com``)
 - vLLM / ollama / LiteLLM (``http://localhost:8000/v1``)
+
+Note on ``max_tokens`` and thinking mode — DeepSeek v4 runs in thinking
+mode by default; its reasoning tokens (``reasoning_content``) consume the
+``max_tokens`` budget.  A thinking-heavy run can exhaust it, ending with
+``finish_reason="length"`` and empty ``content`` — raise ``TODDLER_MAX_TOKENS``
+(default 8192).  ``TokenUsage.reasoning_tokens`` shows the reasoning/output
+split.
 """
 
 from __future__ import annotations
@@ -165,37 +172,72 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         # first chunk for each tool call).
         seen_ids: dict[int, str] = {}
 
+        # Usage arrives on the trailing chunk of the SSE stream.  OpenAI and
+        # DeepSeek send it on an empty-``choices`` chunk *after* the finish
+        # chunk (that trailer used to be skipped, dropping per-call usage
+        # entirely); local servers (vLLM / ollama) attach it to the finish
+        # chunk itself.  Track the last non-zero usage seen — it feeds the
+        # post-loop fallback below, so the trailer's counts reach the stop
+        # event — and emit the stop exactly once.
+        last_usage = TokenUsage()
+        stop_emitted = False
+        stop_reason = "end_turn"
+
         try:
             async for chunk in stream:
+                # Read usage from every chunk — before the empty-``choices``
+                # skip below, so the usage-only trailer is never lost.  The
+                # local also feeds the finish check below, so each chunk is
+                # extracted exactly once.
+                usage = self._extract_usage(chunk)
+                if usage != TokenUsage():
+                    last_usage = usage
+
                 if not chunk.choices:
                     continue
 
                 delta = chunk.choices[0].delta
                 finish_reason = chunk.choices[0].finish_reason
 
-                # -- text deltas ----------------------------------------------
-                if delta is not None and delta.content:
-                    yield StreamEvent(
-                        type="text_delta", data={"text": delta.content}
-                    )
-
-                # -- tool-call deltas -----------------------------------------
-                if delta is not None and delta.tool_calls:
-                    for evt in self._process_tool_call_deltas(
-                        delta.tool_calls, seen_ids
-                    ):
-                        yield evt
+                for evt in self._chunk_events(delta, seen_ids):
+                    yield evt
 
                 # -- finish ---------------------------------------------------
                 if finish_reason is not None:
-                    usage = self._extract_usage(chunk)
-                    yield StreamEvent(
-                        type="message_stop",
-                        data={
-                            "stop_reason": _map_finish_reason(finish_reason),
-                            "usage": usage,
-                        },
-                    )
+                    stop_reason = _map_finish_reason(finish_reason)
+                    if usage != TokenUsage():
+                        # The finish chunk itself carried the usage (vLLM /
+                        # ollama) — the stream is complete; emit now.  Keyed
+                        # on this chunk's usage, not the accumulated
+                        # last_usage: OpenAI / DeepSeek send usage only on
+                        # the post-finish trailer, so deferring here is what
+                        # lets the fallback below carry its numbers — and a
+                        # gateway that stamps usage mid-stream must not
+                        # trigger an early stop.  A finish chunk is
+                        # single-shot in the SSE protocol, so no duplicate
+                        # guard is needed (the post-loop emission below is
+                        # guarded instead).
+                        stop_emitted = True
+                        yield StreamEvent(
+                            type="message_stop",
+                            data={
+                                "stop_reason": stop_reason,
+                                "usage": last_usage,
+                            },
+                        )
+
+            # Stream exhausted — the exact-once fallback. Fires when the
+            # finish chunk carried no usage (OpenAI / DeepSeek send it on
+            # the post-finish trailer consumed above) or when the stream
+            # ended without a finish chunk at all.
+            if not stop_emitted:
+                yield StreamEvent(
+                    type="message_stop",
+                    data={
+                        "stop_reason": stop_reason,
+                        "usage": last_usage,
+                    },
+                )
         except Exception as exc:
             logger.exception("Error during streaming")
             yield StreamEvent(
@@ -263,11 +305,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
                             }
                         )
             else:
-                text = "".join(
-                    b.text
-                    for b in msg.blocks
-                    if b.type == "content" and b.text
-                )
+                content = msg.content
                 tool_calls = []
                 for b in msg.blocks:
                     if b.type == "tool_use":
@@ -287,10 +325,23 @@ class OpenAICompatibleProvider(BaseLLMProvider):
 
                 openai_msg: dict = {"role": msg.role}
                 if tool_calls:
-                    openai_msg["content"] = text or None
+                    openai_msg["content"] = content or None
                     openai_msg["tool_calls"] = tool_calls
                 else:
-                    openai_msg["content"] = text or ""
+                    openai_msg["content"] = content or ""
+
+                # DeepSeek echo-back requirement: in thinking mode the
+                # tool-round assistant messages' reasoning_content must be
+                # passed back on every subsequent request, or the API
+                # returns HTTP 400 mid-turn.  Self-scoping — only history
+                # produced by a reasoning endpoint carries a reasoning
+                # block, so only such traffic ever receives the key; the
+                # plain dict rides through the OpenAI SDK unvalidated.
+                # Residual risk: a strict third-party validator could
+                # reject the unknown key (accepted).
+                reasoning = msg.reasoning
+                if reasoning:
+                    openai_msg["reasoning_content"] = reasoning
 
                 openai_msgs.append(openai_msg)
 
@@ -306,6 +357,12 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         :class:`Message`."""
 
         blocks: list[MessageBlock] = []
+
+        # DeepSeek thinking mode streams reasoning before the answer —
+        # build blocks in that same order.
+        reasoning = getattr(oa_msg, "reasoning_content", None)
+        if reasoning:
+            blocks.append(MessageBlock.reasoning_block(reasoning))
 
         # Text content
         if oa_msg.content:
@@ -328,52 +385,73 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         return Message.assistant(blocks)
 
     # ==================================================================
-    # Tool-call delta processing (streaming)
+    # Streaming chunk helpers
     # ==================================================================
 
-    @staticmethod
-    def _process_tool_call_deltas(
-        tc_deltas: list, seen_ids: dict[int, str]
+    def _chunk_events(
+        self, delta, seen_ids: dict[int, str]
     ) -> list[StreamEvent]:
-        """Forward tool-call deltas from one streaming chunk as events.
+        """Build the prose and tool-call events carried by one chunk.
 
-        Updates *seen_ids* in place (mapping OpenAI's chunk index → tool_id)
-        so argument deltas can be tagged with the correct tool_id even when
-        the id is only present in the first chunk.
+        Prose first: reasoning (DeepSeek thinking mode) streams before the
+        answer text, and a transition chunk may carry the tail of one and
+        the head of the other.  Both kinds feed the shared ``text`` payload
+        slot, so both build the slot-derived ``text_delta`` key.  Tool-call
+        deltas follow, tagged with the owning ``tool_id`` via *seen_ids*
+        (the id only appears in the first chunk of each call, so it is
+        memoized by chunk index).
         """
+        if delta is None:
+            return []
         events: list[StreamEvent] = []
 
-        for tc in tc_deltas:
-            idx: int = tc.index
+        reasoning = getattr(delta, "reasoning_content", None)
+        if reasoning:
+            events.append(
+                StreamEvent(
+                    type="reasoning_delta", data={"text_delta": reasoning}
+                )
+            )
+        if delta.content:
+            events.append(
+                StreamEvent(
+                    type="content_delta", data={"text_delta": delta.content}
+                )
+            )
 
-            # Capture tool_id from the first chunk where it appears.
+        for tc in delta.tool_calls or []:
+            # Memoize the tool_id from the first chunk where it appears.
             if tc.id:
-                seen_ids[idx] = tc.id
-            tool_id = seen_ids.get(idx, "")
+                seen_ids[tc.index] = tc.id
+            tool_id = seen_ids.get(tc.index, "")
 
-            if tc.function:
-                if tc.function.name and tool_id:
-                    events.append(
-                        StreamEvent(
-                            type="tool_use_start",
-                            data={
-                                "tool_id": tool_id,
-                                "tool_name": tc.function.name,
-                            },
-                        )
+            # Events need both a function and an attributable tool_id —
+            # anything else would only be dropped by the handler.
+            if not tc.function or not tool_id:
+                continue
+
+            if tc.function.name:
+                events.append(
+                    StreamEvent(
+                        type="tool_use_start",
+                        data={
+                            "tool_id": tool_id,
+                            "tool_name": tc.function.name,
+                        },
                     )
-                if tc.function.arguments:
-                    events.append(
-                        StreamEvent(
-                            type="tool_use_delta",
-                            data={
-                                "tool_id": tool_id,
-                                "input_delta": {
-                                    "arguments_fragment": tc.function.arguments
-                                },
+                )
+            if tc.function.arguments:
+                events.append(
+                    StreamEvent(
+                        type="tool_use_delta",
+                        data={
+                            "tool_id": tool_id,
+                            "input_delta": {
+                                "arguments_fragment": tc.function.arguments
                             },
-                        )
+                        },
                     )
+                )
 
         return events
 
@@ -396,9 +474,19 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         usage = getattr(chunk_or_response, "usage", None)
         if usage is None:
             return TokenUsage()
+
+        # DeepSeek thinking mode itemizes reasoning tokens separately
+        # (completion_tokens_details.reasoning_tokens); absent on other
+        # providers and the Dummy's chunks — read defensively.
+        details = getattr(usage, "completion_tokens_details", None)
+        reasoning_tokens = 0
+        if details is not None:
+            reasoning_tokens = getattr(details, "reasoning_tokens", 0) or 0
+
         return TokenUsage(
             input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
             output_tokens=getattr(usage, "completion_tokens", 0) or 0,
+            reasoning_tokens=reasoning_tokens,
         )
 
     @staticmethod
