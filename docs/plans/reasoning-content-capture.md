@@ -129,7 +129,7 @@ Factories follow the kinds and take the payload slot's name: `content_block(text
 tokens are already inside `output_tokens`).  Screen labels (`💭 Thought`, "Thinking…")
 are UI strings, not vocabulary.
 
-## Phase 1 — Data model (rename baseline + reasoning)
+## Phase 1 — Data model (rename baseline + reasoning) ✅
 
 - `toddler/llm/messages.py` — **rename baseline first**: class `ContentBlock` →
   `MessageBlock`; field `Message.content` → `Message.blocks`; kind `"text"` →
@@ -151,7 +151,7 @@ are UI strings, not vocabulary.
   key gains the delta suffix);
   `TokenUsage.reasoning_tokens: int = 0` (+ `__add__`).
 
-## Phase 2 — Provider (`toddler/llm/provider.py`)
+## Phase 2 — Provider (`toddler/llm/provider.py`) ✅
 
 - **`_generate_streaming` — reasoning deltas + usage-trailer fix.**  Restructure the
   chunk loop: read `usage` from *every* chunk (keep the last non-zero as `last_usage`);
