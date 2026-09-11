@@ -214,7 +214,7 @@ are UI strings, not vocabulary.
   alias of design decision 4.  The payload key never renamed, so legacy rows need no
   second alias.  No schema change.
 
-## Phase 5 — Web backend (`toddler/web/events.py`)
+## Phase 5 — Web backend (`toddler/web/events.py`) ✅
 
 - `serialize_event`: rename the `TextDelta` arm → `ContentDelta` →
   `{"type": "content_delta", "text_delta": ...}`; map `ReasoningDelta` →
