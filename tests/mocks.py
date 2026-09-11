@@ -30,9 +30,14 @@ __all__ = [
     "make_mock_llm",
     "pause_on_write",
     "plan_proposal_response",
+    "reasoning_response",
     "text_response",
     "tool_use_response",
 ]
+
+# Reasoning fragments per chunk in MockLLMProvider._stream — small enough
+# that a short canned reasoning string still arrives as several deltas.
+_REASONING_CHUNK_CHARS = 8
 
 
 class MockLLMProvider(BaseLLMProvider):
@@ -79,6 +84,18 @@ class MockLLMProvider(BaseLLMProvider):
                 yield StreamEvent(
                     type="content_delta", data={"text_delta": block.text},
                 )
+            elif block.type == "reasoning":
+                # Split into several fragments, as a real provider streams
+                # thinking: the accumulation path (handler buffers →
+                # persisted block → replay) is exercised end to end.  Same
+                # ``text_delta`` payload key as content — both kinds feed
+                # their block's shared ``text`` slot.
+                text = block.text or ""
+                for i in range(0, len(text), _REASONING_CHUNK_CHARS):
+                    yield StreamEvent(
+                        type="reasoning_delta",
+                        data={"text_delta": text[i:i + _REASONING_CHUNK_CHARS]},
+                    )
             elif block.type == "tool_use":
                 yield StreamEvent(
                     type="tool_use_start",
@@ -159,6 +176,36 @@ def text_response(
         stop_reason=stop_reason,
         usage=TokenUsage(
             input_tokens=input_tokens, output_tokens=output_tokens,
+        ),
+    )
+
+
+def reasoning_response(
+    reasoning: str,
+    content: str,
+    *,
+    stop_reason: str = "end_turn",
+    input_tokens: int = 10,
+    output_tokens: int = 60,
+    reasoning_tokens: int = 40,
+) -> LLMResponse:
+    """A thinking-mode response: reasoning first, then the answer.
+
+    Usage itemizes the reasoning tokens the way the API reports them — a
+    subset of ``output_tokens``, never an addition to it.
+    """
+    return LLMResponse(
+        messages=[
+            Message.assistant([
+                MessageBlock.reasoning_block(reasoning),
+                MessageBlock.content_block(content),
+            ]),
+        ],
+        stop_reason=stop_reason,
+        usage=TokenUsage(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            reasoning_tokens=reasoning_tokens,
         ),
     )
 
