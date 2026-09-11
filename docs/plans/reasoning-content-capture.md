@@ -299,7 +299,7 @@ are UI strings, not vocabulary.
 reasoning_tokens=40)` producing `[reasoning_block, content_block]` with usage carrying
 `reasoning_tokens`.
 
-## Phase 9 — Tests
+## Phase 9 — Tests ✅
 
 - New `tests/test_reasoning.py` (mirror `TestHandlerPartialContent`):
   reasoning_delta chunks → yields ReasoningDelta; mid-stream `get_partial_content`
