@@ -127,6 +127,8 @@ if _TEST == "cli":
 
             if role == "tool":
                 return self._chunks_for_tool_result(last_msg)
+            elif content == "reason":
+                return self._chunks_for_reasoning()
             elif content == "text":
                 return self._chunks_for_text()
             elif content == "read":
@@ -160,6 +162,28 @@ if _TEST == "cli":
             blocks.append(("text", "```\n"))
             blocks.append(("finish", "stop"))
             return _DummyStream._materialize(blocks)
+
+        @staticmethod
+        def _chunks_for_reasoning():
+            """Stream a short chain of thought, then the answer text.
+
+            Thinking-mode demo: the reasoning arrives as several
+            ``reasoning_content`` fragments before any ``content``, and the
+            finish chunk itemizes the reasoning tokens in usage.
+            """
+            blocks: list[tuple[str, str | None]] = [
+                ("reasoning", "The user typed 'reason', which asks for a "),
+                ("reasoning", "thinking-mode reply: streams the reasoning "),
+                ("reasoning", "first, then the answer.\n"),
+                (
+                    "text",
+                    "That was my reasoning, streamed before this answer.\n",
+                ),
+                ("finish", "stop"),
+            ]
+            return _DummyStream._materialize(
+                blocks, completion_tokens=260, reasoning_tokens=60,
+            )
 
         @staticmethod
         def _chunks_for_read():
@@ -243,18 +267,20 @@ if _TEST == "cli":
             *,
             prompt_tokens: int = 100,
             completion_tokens: int = 200,
+            reasoning_tokens: int = 0,
         ) -> list[SimpleNamespace]:
             """Convert *blocks* into a list of chunk ``SimpleNamespace``
             objects.
 
             Each block is a ``(kind, payload)`` pair:
 
-            ==============  ================================================
-            ``"text"``      text content to stream
-            ``"tool_name"`` name of the tool being called
-            ``"tool_args"`` JSON fragment of the tool arguments
-            ``"finish"``    finish reason string (e.g. ``"stop"``)
-            ==============  ================================================
+            ===================  ===========================================
+            ``"text"``           text content to stream
+            ``"reasoning"``      reasoning content to stream (thinking mode)
+            ``"tool_name"``      name of the tool being called
+            ``"tool_args"``      JSON fragment of the tool arguments
+            ``"finish"``         finish reason string (e.g. ``"stop"``)
+            ===================  ===========================================
             """
             chunks: list[SimpleNamespace] = []
             tool_id: str | None = None
@@ -263,6 +289,15 @@ if _TEST == "cli":
             for kind, payload in blocks:
                 if kind == "text":
                     delta = SimpleNamespace(content=payload, tool_calls=None)
+                    choice = SimpleNamespace(delta=delta, finish_reason=None)
+                    chunks.append(SimpleNamespace(choices=[choice], usage=None))
+
+                elif kind == "reasoning":
+                    delta = SimpleNamespace(
+                        content=None,
+                        tool_calls=None,
+                        reasoning_content=payload,
+                    )
                     choice = SimpleNamespace(delta=delta, finish_reason=None)
                     chunks.append(SimpleNamespace(choices=[choice], usage=None))
 
@@ -282,9 +317,14 @@ if _TEST == "cli":
                     chunks.append(SimpleNamespace(choices=[choice], usage=None))
 
                 elif kind == "finish":
+                    # The details object always ships, as DeepSeek does —
+                    # reasoning tokens are a subset of the completion count.
                     usage = SimpleNamespace(
                         prompt_tokens=prompt_tokens,
                         completion_tokens=completion_tokens,
+                        completion_tokens_details=SimpleNamespace(
+                            reasoning_tokens=reasoning_tokens,
+                        ),
                     )
                     delta = SimpleNamespace(content=None, tool_calls=None)
                     choice = SimpleNamespace(delta=delta, finish_reason=payload)

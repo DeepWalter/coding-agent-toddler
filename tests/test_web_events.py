@@ -10,6 +10,7 @@ from toddler.agent.events import (
     FatalAgentError,
     PlanProposed,
     PlanStepUpdate,
+    ReasoningDelta,
     RecoverableAgentError,
     ToolCallDelta,
     ToolCallEnd,
@@ -55,6 +56,14 @@ class TestSerializeEvent:
         assert serialize_event(ContentDelta(text_delta="hi")) == {
             "type": "content_delta",
             "text_delta": "hi",
+        }
+
+    def test_reasoning_delta(self):
+        # Same payload key as content_delta — the frame type carries the
+        # kind, the key is named after the shared ``text`` slot it feeds.
+        assert serialize_event(ReasoningDelta(text_delta="hmm")) == {
+            "type": "reasoning_delta",
+            "text_delta": "hmm",
         }
 
     def test_tool_call_start(self):
@@ -293,6 +302,59 @@ class TestSerializeTranscript:
             "assistant", "tool",
         ]
 
+    def test_assistant_reasoning_attached_verbatim(self):
+        messages = [Message.assistant([
+            MessageBlock.reasoning_block("step 1: "),
+            MessageBlock.reasoning_block("step 2"),
+            MessageBlock.content_block("the answer"),
+        ])]
+        assert serialize_transcript(messages) == [{
+            "role": "assistant",
+            "content": "the answer",
+            "reasoning": "step 1: step 2",
+        }]
+
+    def test_reasoning_key_absent_without_reasoning(self):
+        entry = serialize_transcript([
+            Message.assistant([MessageBlock.content_block("plain")]),
+        ])[0]
+        assert entry == {"role": "assistant", "content": "plain"}
+        assert "reasoning" not in entry
+
+    def test_thought_only_entry_replays_with_its_tool(self):
+        """A message that reasoned and went straight to a tool call has no
+        content — the entry must still replay, or the card is lost."""
+        messages = [
+            Message.user("read it"),
+            Message.assistant([
+                MessageBlock.reasoning_block("I need the file first."),
+                MessageBlock.tool_use_block(
+                    "t1", "read_file", {"path": "a.py"},
+                ),
+            ]),
+            Message.tool([
+                MessageBlock.tool_result_block("t1", "content"),
+            ]),
+        ]
+        entries = serialize_transcript(messages)
+        assert [e["role"] for e in entries] == ["user", "assistant", "tool"]
+        assert entries[1] == {
+            "role": "assistant",
+            "content": "",
+            "reasoning": "I need the file first.",
+        }
+
+    def test_reasoning_entry_ordered_before_its_tool_entries(self):
+        messages = [Message.assistant([
+            MessageBlock.reasoning_block("cot"),
+            MessageBlock.content_block("done"),
+            MessageBlock.tool_use_block("t1", "read_file", {"path": "a.py"}),
+        ])]
+        entries = serialize_transcript(messages)
+        assert entries[0]["reasoning"] == "cot"
+        assert entries[0]["content"] == "done"
+        assert entries[1]["role"] == "tool"
+
     def test_cancel_marker_entry_gets_fold_key(self):
         # The turn-cancelled repair message is model scaffolding — flagged so
         # the frontend renders a fold line, content kept for consumers.
@@ -355,3 +417,16 @@ class TestSerializePayloads:
 
     def test_serialize_token_usage_none(self):
         assert serialize_token_usage(None) is None
+
+    def test_serialize_token_usage_maps_reasoning_tokens(self):
+        usage = TokenUsage(
+            input_tokens=10, output_tokens=60, cache_read_tokens=3,
+            cache_creation_tokens=2, reasoning_tokens=40,
+        )
+        assert serialize_token_usage(usage) == {
+            "input_tokens": 10,
+            "output_tokens": 60,
+            "cache_read_tokens": 3,
+            "cache_creation_tokens": 2,
+            "reasoning_tokens": 40,
+        }

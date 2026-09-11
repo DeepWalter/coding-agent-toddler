@@ -1,16 +1,21 @@
-"""Renderer tests — plan step status display."""
+"""Renderer tests — plan step status display and the reasoning view."""
 
 from __future__ import annotations
 
 import io
 
-from rich.console import Console
+from rich.console import Console, Group
+from rich.markdown import Markdown
+from rich.panel import Panel
+from rich.text import Text
 
 from toddler.agent.events import (
     AgentFinished,
+    ContentDelta,
     FatalAgentError,
     PlanProposed,
     PlanStepUpdate,
+    ReasoningDelta,
     ToolCallStart,
 )
 from toddler.agent.planner import Plan, PlanStep
@@ -302,3 +307,155 @@ class TestDynamicPanelHeightBudget:
         output_height = renderer._compute_dynamic_panel_height()
         assert renderer._max_plan_visible == 0
         assert output_height == 9
+
+
+# ============================================================================
+# Reasoning (thinking mode)
+# ============================================================================
+
+
+class TestStreamingReasoning:
+    """The thinking accumulator, its collapsed line, and the dismiss view."""
+
+    @staticmethod
+    def _renderer() -> StreamingRenderer:
+        return StreamingRenderer(console=Console(file=io.StringIO()))
+
+    @staticmethod
+    def _texts(renderable: Group) -> list[str]:
+        return [el.plain for el in renderable.renderables if isinstance(el, Text)]
+
+    @staticmethod
+    def _titles(renderable: Group) -> list[str]:
+        return [
+            el.title for el in renderable.renderables if isinstance(el, Panel)
+        ]
+
+    def test_content_delta_accumulates(self):
+        renderer = self._renderer()
+        renderer.on_content_delta(ContentDelta(text_delta="Hel"))
+        renderer.on_content_delta(ContentDelta(text_delta="lo"))
+        assert renderer._text == "Hello"
+
+    def test_reasoning_delta_accumulates_verbatim(self):
+        renderer = self._renderer()
+        renderer.on_reasoning_delta(ReasoningDelta(text_delta="step 1. "))
+        renderer.on_reasoning_delta(ReasoningDelta(text_delta="step 2."))
+        assert renderer._thinking == "step 1. step 2."
+
+    def test_collapsed_line_while_streaming(self):
+        renderer = self._renderer()
+        renderer.on_reasoning_delta(ReasoningDelta(text_delta="cot"))
+
+        renderable = renderer._build_renderable()
+        assert "💭 Thinking…" in self._texts(renderable)
+        assert self._titles(renderable) == ["Output"]
+
+    def test_no_thinking_line_without_reasoning(self):
+        renderer = self._renderer()
+        renderer.on_content_delta(ContentDelta(text_delta="plain"))
+
+        renderable = renderer._build_renderable()
+        assert not any("💭" in text for text in self._texts(renderable))
+
+    def test_dismiss_line_offers_the_toggle(self):
+        renderer = self._renderer()
+        renderer._thinking = "cot"
+        renderer._dismiss_prompt = True
+
+        renderable = renderer._build_renderable()
+        assert "💭 Thought — press t to review" in self._texts(renderable)
+        assert any("t to view thinking" in text for text in self._texts(renderable))
+        assert self._titles(renderable) == ["Output"]
+
+    def test_dismiss_view_shows_the_thinking_panel(self):
+        renderer = self._renderer()
+        renderer.on_reasoning_delta(ReasoningDelta(text_delta="weigh options"))
+        renderer.on_content_delta(ContentDelta(text_delta="the answer"))
+        renderer._dismiss_prompt = True
+        renderer._dismiss_view = "thinking"
+
+        renderable = renderer._build_renderable()
+        assert self._titles(renderable) == ["Thinking"]
+        # The toggle hint flips, and the collapsed line gives way to the
+        # panel.
+        assert any("t to view output" in text for text in self._texts(renderable))
+        assert not any("💭" in text for text in self._texts(renderable))
+
+    def test_dismiss_hint_unchanged_without_reasoning(self):
+        renderer = self._renderer()
+        renderer._dismiss_prompt = True
+
+        renderable = renderer._build_renderable()
+        assert "\nPress Enter to continue…" in self._texts(renderable)
+
+    def test_dismiss_view_resets_on_stop(self):
+        renderer = self._renderer()
+        renderer._thinking = "cot"
+        renderer._dismiss_view = "thinking"
+        # _wait_for_dismiss() is a no-op on this piped stdin, so stop()
+        # runs its whole dismissal path.
+        renderer.start()
+        renderer.stop()
+        assert renderer._dismiss_view == "output"
+
+    def test_dismiss_skips_the_tty_path_on_piped_stdin(self, monkeypatch):
+        """The termios ioctls fail on a pipe — the guard must return before
+        touching them (``fileno`` asserts if the raw path is entered)."""
+
+        class _PipedStdin:
+            def isatty(self) -> bool:
+                return False
+
+            def fileno(self):
+                raise AssertionError("termios path taken on piped stdin")
+
+        monkeypatch.setattr("sys.stdin", _PipedStdin())
+        renderer = self._renderer()
+        renderer._thinking = "cot"
+        renderer._wait_for_dismiss()
+
+    def test_flush_summarises_the_thinking(self):
+        buf = io.StringIO()
+        renderer = StreamingRenderer(console=Console(file=buf))
+        # The real app sequence: start the turn, then stop() (which the
+        # piped stdin dismisses at once) before flushing to scrollback.
+        renderer.start(turn_number=1)
+        renderer.on_reasoning_delta(ReasoningDelta(text_delta="weigh options"))
+        renderer.on_content_delta(ContentDelta(text_delta="the answer"))
+        renderer.stop()
+        renderer.flush_to_console()
+
+        output = buf.getvalue()
+        assert "💭 Thought — 13 chars" in output
+        assert "the answer" in output
+        # The live collapsed line does not leak into the scrollback.
+        assert "💭 Thinking…" not in output
+
+
+class TestNonStreamingReasoning:
+    """Plain scrollback cannot collapse — the thought prints in full."""
+
+    @staticmethod
+    def _capturing_renderer() -> tuple[NonStreamingRenderer, list]:
+        printed: list = []
+        renderer = NonStreamingRenderer(console=Console(file=io.StringIO()))
+        renderer._console.print = lambda *args, **kwargs: printed.append(args[0])
+        return renderer, printed
+
+    def test_reasoning_prints_dim_and_verbatim(self):
+        renderer, printed = self._capturing_renderer()
+        renderer.on_reasoning_delta(ReasoningDelta(text_delta="weigh options"))
+
+        assert [item.plain for item in printed] == [
+            "💭 Thought:", "weigh options",
+        ]
+        assert printed[0].style == "dim"
+        assert printed[1].style == "dim italic"
+
+    def test_content_delta_still_renders_markdown(self):
+        renderer, printed = self._capturing_renderer()
+        renderer.on_content_delta(ContentDelta(text_delta="**bold**"))
+
+        assert len(printed) == 1
+        assert isinstance(printed[0], Markdown)

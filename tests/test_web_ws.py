@@ -18,6 +18,7 @@ from tests.mocks import (
     make_mock_llm,
     pause_on_write,
     plan_proposal_response,
+    reasoning_response,
     text_response,
     tool_use_response,
 )
@@ -25,6 +26,7 @@ from toddler.agent.planner import Plan, PlanStep
 from toddler.agent.state_machine import AgentMode
 from toddler.cli.commands import CommandResult
 from toddler.config.settings import Settings
+from toddler.llm import LLMResponse, Message, MessageBlock, TokenUsage
 from toddler.web.app import create_app
 
 # ============================================================================
@@ -1429,3 +1431,107 @@ class TestSimpleCommands:
             ws.send_json({"cmd": "turn"})
             error = ws.receive_json()
             assert error["code"] == "invalid_input"
+
+
+# ============================================================================
+# Reasoning (thinking mode)
+# ============================================================================
+
+
+class TestReasoningTurn:
+    """A thinking-mode turn drives the real pipeline: chunked reasoning
+    frames, the usage split, the replayed card, and the echo the API
+    demands between tool rounds."""
+
+    def test_reasoning_frames_stream_before_the_answer(self, tmp_path):
+        llm = make_mock_llm(
+            reasoning_response("weigh options carefully", "the answer"),
+        )
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "turn", "input": "think it through"})
+
+            fragments: list[str] = []
+            content = ""
+            finished: dict = {}
+            while not finished:
+                frame = ws.receive_json()
+                if frame["type"] == "reasoning_delta":
+                    fragments.append(frame["text_delta"])
+                elif frame["type"] == "content_delta":
+                    # Reasoning always precedes its answer.
+                    assert fragments, "content arrived before any reasoning"
+                    content += frame["text_delta"]
+                elif frame["type"] == "agent_finished":
+                    finished = frame
+
+            # The mock chunks the reasoning, so more than one frame arrives
+            # and the fragments accumulate to the whole thought.
+            assert len(fragments) > 1
+            assert "".join(fragments) == "weigh options carefully"
+            assert content == "the answer"
+            assert finished["usage"]["reasoning_tokens"] == 40
+
+    def test_hello_replays_the_thinking_card(self, tmp_path):
+        llm = make_mock_llm(
+            reasoning_response("weigh options", "the answer"),
+        )
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client:
+            with client.websocket_connect("/ws") as ws:
+                ws.receive_json()  # hello
+                ws.send_json({"cmd": "turn", "input": "hi"})
+                _wait_for(ws, "agent_finished")
+
+            # Reconnect — the assistant entry carries the reasoning so the
+            # card replays above the bubble, as it streamed.
+            with client.websocket_connect("/ws") as ws:
+                hello = ws.receive_json()
+                assert hello["messages"] == [
+                    {"role": "user", "content": "hi"},
+                    {
+                        "role": "assistant",
+                        "content": "the answer",
+                        "reasoning": "weigh options",
+                    },
+                ]
+
+    def test_tool_round_echoes_reasoning_into_the_next_call(self, tmp_path):
+        """DeepSeek rejects a tool-round request whose assistant message
+        dropped its reasoning — the second call's history must still carry
+        the block."""
+        target = tmp_path / "note.txt"
+        target.write_text("hello\n", encoding="utf-8")
+        llm = make_mock_llm(
+            LLMResponse(
+                messages=[Message.assistant([
+                    MessageBlock.reasoning_block("I need the file first."),
+                    MessageBlock.tool_use_block(
+                        "call_read", "read_file",
+                        {"file_path": str(target)},
+                    ),
+                ])],
+                stop_reason="tool_use",
+                usage=TokenUsage(
+                    input_tokens=10, output_tokens=20, reasoning_tokens=12,
+                ),
+            ),
+            text_response("read it"),
+        )
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "turn", "input": "read the file"})
+            _wait_for(ws, "agent_finished")
+
+        assert len(llm.messages_history) == 2
+        second_call = llm.messages_history[1]
+        assistants = [m for m in second_call if m.role == "assistant"]
+        assert any(
+            m.reasoning == "I need the file first." for m in assistants
+        )
+        assert any(
+            b.type == "tool_use" and b.tool_id == "call_read"
+            for m in assistants for b in m.blocks
+        )
