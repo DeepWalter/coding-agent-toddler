@@ -18,6 +18,7 @@ from toddler.agent.events import (
     FatalAgentError,
     PlanProposed,
     PlanStepUpdate,
+    ReasoningDelta,
     RecoverableAgentError,
     ToolCallDelta,
     ToolCallEnd,
@@ -195,7 +196,10 @@ class CLIApp:
         async for event in gen:
             match event:
                 case ContentDelta():
-                    self._renderer.on_text_delta(event)
+                    self._renderer.on_content_delta(event)
+
+                case ReasoningDelta():
+                    self._renderer.on_reasoning_delta(event)
 
                 case ToolCallStart():
                     self._renderer.on_tool_call_start(event)

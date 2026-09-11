@@ -42,6 +42,7 @@ from toddler.agent.events import (
     FatalAgentError,
     PlanProposed,
     PlanStepUpdate,
+    ReasoningDelta,
     RecoverableAgentError,
     ToolCallDelta,
     ToolCallEnd,
@@ -445,8 +446,12 @@ class Renderer(ABC):
     # ------------------------------------------------------------------
 
     @abstractmethod
-    def on_text_delta(self, event: ContentDelta) -> None:
+    def on_content_delta(self, event: ContentDelta) -> None:
         """Render a streaming content delta."""
+
+    @abstractmethod
+    def on_reasoning_delta(self, event: ReasoningDelta) -> None:
+        """Render a streaming reasoning delta."""
 
     @abstractmethod
     def on_tool_call_start(self, event: ToolCallStart) -> None:
@@ -516,6 +521,10 @@ class StreamingRenderer(Renderer):
         # -- per-turn mutable state (reset in start()) --------------------
         # Accumulated markdown text for the current turn.
         self._text: str = ""
+        # Accumulated reasoning text for the current turn, verbatim.
+        # Shown collapsed while streaming; reviewable at the dismiss
+        # screen and summarised in scrollback by flush_to_console().
+        self._thinking: str = ""
         # Tool rows keyed by tool call ID.
         self._tools: dict[str, _ToolRow] = {}
         # Tool call IDs in arrival order (for stable table ordering).
@@ -535,6 +544,10 @@ class StreamingRenderer(Renderer):
         self._stopped: bool = False
         # Whether the dismiss prompt is currently active.
         self._dismiss_prompt: bool = False
+        # Which panel the dismiss screen shows: the answer or the
+        # reasoning.  Toggled by ``t`` at the dismiss screen; reset by
+        # stop() so the scrollback flush always prints the answer.
+        self._dismiss_view: Literal["output", "thinking"] = "output"
         # Error messages accumulated during the turn.
         self._errors: list[str] = []
         # Caps for tools/errors panels, recomputed each refresh by
@@ -589,6 +602,7 @@ class StreamingRenderer(Renderer):
             Path to write full output to when truncation fires.
         """
         self._text = ""
+        self._thinking = ""
         self._tools.clear()
         self._tool_order.clear()
         self._scroll_offset = 0
@@ -598,6 +612,7 @@ class StreamingRenderer(Renderer):
         self._output_path = output_path
         self._stopped = False
         self._dismiss_prompt = False
+        self._dismiss_view = "output"
         self._errors.clear()
         self._max_tools_visible = 0
         self._max_errors_visible = 0
@@ -623,6 +638,9 @@ class StreamingRenderer(Renderer):
         self._refresh(force=True)
         self._wait_for_dismiss()
         self._dismiss_prompt = False
+        # Back to the answer view: flush_to_console() rebuilds the
+        # renderable, and the scrollback wants the output panel.
+        self._dismiss_view = "output"
 
         self._stopped = True
         self._live.stop()
@@ -680,10 +698,20 @@ class StreamingRenderer(Renderer):
         only the first N lines are printed to scrollback, and a clickable
         truncation notice is appended.
 
+        Reasoning cannot collapse after the alternate screen is gone, so
+        it leaves a single dim summary line — the session DB keeps the
+        verbatim text.
+
         Call after :meth:`stop` has exited the alternate screen so the
         output lands in the terminal scrollback rather than on the
         alternate screen.
         """
+        if self._thinking:
+            self._console.print(Text(
+                f"💭 Thought — {len(self._thinking)} chars",
+                style="dim",
+            ))
+
         lines = self._text.splitlines()
         should_truncate = (
             self._max_lines > 0
@@ -924,9 +952,20 @@ class StreamingRenderer(Renderer):
     # Streaming event handlers
     # ------------------------------------------------------------------
 
-    def on_text_delta(self, event: ContentDelta) -> None:
+    def on_content_delta(self, event: ContentDelta) -> None:
         """Accumulate text and throttle-refresh the Live display."""
         self._text += event.text_delta
+        self._refresh()
+
+    def on_reasoning_delta(self, event: ReasoningDelta) -> None:
+        """Accumulate reasoning and throttle-refresh the Live display.
+
+        The fragment is kept verbatim — it is echoed back to the API on
+        the next request of the round — and the Thinking panel renders
+        the accumulated text through the markdown renderer, like the
+        answer panel does for content.
+        """
+        self._thinking += event.text_delta
         self._refresh()
 
     def on_tool_call_start(self, event: ToolCallStart) -> None:
@@ -1256,8 +1295,26 @@ class StreamingRenderer(Renderer):
     # Build renderable
     # ------------------------------------------------------------------
 
+    def _thinking_view_active(self) -> bool:
+        """True when the dismiss screen shows the reasoning panel.
+
+        Only the dismiss screen can flip views — the ``t`` key does not
+        exist while streaming, and the scrollback flush wants the answer.
+        """
+        return (
+            self._dismiss_prompt
+            and self._dismiss_view == "thinking"
+            and bool(self._thinking)
+        )
+
     def _build_renderable(self) -> Group:
-        """Build the stacked panels: Output (markdown) + Tools + Errors."""
+        """Build the stacked panels: Output (markdown) + Tools + Errors.
+
+        At the dismiss screen ``t`` swaps the answer panel for the
+        reasoning panel — same clip/scroll machinery, one view at a time.
+        Elsewhere the reasoning collapses to a dim one-line marker above
+        the output panel.
+        """
         # Recompute the output budget each refresh so tools appearing,
         # errors accumulating, and confirm toggling are all tracked.
         # Skipped after stop() so flush_to_console() prints unclipped
@@ -1265,20 +1322,29 @@ class StreamingRenderer(Renderer):
         if not self._stopped:
             self._max_panel_height = self._compute_dynamic_panel_height()
 
-        md = (
-            Markdown(self._text)
-            if self._text
-            else Markdown("*Waiting for response…*")
+        showing_thinking = self._thinking_view_active()
+        md = Markdown(
+            self._thinking if showing_thinking
+            else self._text or "*Waiting for response…*"
         )
-        clipped = self._clip_output_panel(md)
-        output_panel = Panel(
-            clipped,
-            title="Output",
+        main_panel = Panel(
+            self._clip_output_panel(md),
+            title="Thinking" if showing_thinking else "Output",
             title_align="left",
-            border_style="blue",
+            border_style="magenta" if showing_thinking else "blue",
         )
 
-        elements: list = [output_panel]
+        elements: list = []
+        # Collapsed marker line — live view only.  The scrollback print
+        # (flush_to_console) carries its own one-line summary instead.
+        if self._thinking and not showing_thinking and not self._stopped:
+            elements.append(Text(
+                "💭 Thought — press t to review"
+                if self._dismiss_prompt
+                else "💭 Thinking…",
+                style="dim",
+            ))
+        elements.append(main_panel)
 
         plan_panel = self._build_plan_panel()
         if plan_panel is not None:
@@ -1321,10 +1387,19 @@ class StreamingRenderer(Renderer):
             elements.append(self._build_confirm_table())
 
         if self._dismiss_prompt:
+            keys: list[str] = []
             if self._total_content_height > self._max_panel_height > 0:
-                hint = "\n↑↓ to scroll • Enter to continue…"
-            else:
-                hint = "\nPress Enter to continue…"
+                keys.append("↑↓ to scroll")
+            if self._thinking:
+                keys.append(
+                    "t to view output" if showing_thinking
+                    else "t to view thinking"
+                )
+            hint = (
+                "\n" + " • ".join([*keys, "Enter to continue…"])
+                if keys
+                else "\nPress Enter to continue…"
+            )
             elements.append(Text(hint, style="dim italic"))
 
         return Group(*elements)
@@ -1346,6 +1421,14 @@ class StreamingRenderer(Renderer):
         """Scroll the output panel view downward (show newer content)."""
         self._scroll_offset = max(self._scroll_offset - lines, 0)
 
+    @staticmethod
+    def _stdin_is_tty() -> bool:
+        """Whether stdin is a real terminal (closed or odd streams: no)."""
+        try:
+            return sys.stdin.isatty()
+        except (ValueError, OSError):
+            return False
+
     def _wait_for_dismiss(self) -> None:
         """Block until Enter, allowing ``↑``/``↓`` to scroll the output.
 
@@ -1355,24 +1438,35 @@ class StreamingRenderer(Renderer):
         so arrow-key sequences can be read byte-by-byte.  Output processing
         flags (notably ``OPOST``) are left untouched so that Rich's
         :class:`~rich.live.Live` display continues to render correctly.
+
+        The key loop also carries the ``t`` view toggle, so it is entered
+        for reasoning turns even when nothing scrolls.
+
+        Piped stdin dismisses immediately: there are no keys to press, the
+        termios ioctls fail on a pipe, and a ``readline`` here would eat
+        the next queued line — which belongs to the REPL, not the prompt.
         """
+        if not self._stdin_is_tty():
+            return
+
         scrollable = (
             self._max_panel_height > 0
             and self._total_content_height > self._max_panel_height
         )
+        interactive = scrollable or bool(self._thinking)
 
         fd = sys.stdin.fileno()
         old = termios.tcgetattr(fd)
         try:
             new = termios.tcgetattr(fd)
             new[3] &= ~termios.ECHO  # lflag: never echo typed characters
-            if scrollable:
+            if interactive:
                 new[3] &= ~termios.ICANON  # disable line buffering
                 new[6][termios.VMIN] = 1   # cc: read blocks for ≥1 byte
                 new[6][termios.VTIME] = 0  # cc: no inter-byte timeout
             termios.tcsetattr(fd, termios.TCSANOW, new)
 
-            if scrollable:
+            if interactive:
                 self._wait_for_dismiss_scrollable(fd)
             else:
                 sys.stdin.readline()
@@ -1380,7 +1474,8 @@ class StreamingRenderer(Renderer):
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
     def _wait_for_dismiss_scrollable(self, fd: int) -> None:
-        """Read loop that handles arrow-key scrolling until dismiss."""
+        """Read loop: arrows scroll the current panel, ``t`` swaps it,
+        Enter (or ``q``/Ctrl+C) dismisses."""
         while True:
             self._refresh(force=True)
             r, _, _ = select.select([sys.stdin], [], [], 0.1)
@@ -1400,6 +1495,15 @@ class StreamingRenderer(Renderer):
                         self._scroll_up(lines=5)
                     elif seq == b"[6":        # Page Down
                         self._scroll_down(lines=5)
+            elif ch in (b"t", b"T"):
+                # Swap the dismiss view between answer and reasoning —
+                # a no-op on a turn that produced no reasoning.
+                if self._thinking:
+                    self._dismiss_view = (
+                        "output" if self._dismiss_view == "thinking"
+                        else "thinking"
+                    )
+                    self._refresh(force=True)
             elif ch in (b"\r", b"\n", b"q", b"Q", b"\x03"):
                 break
 
@@ -1448,9 +1552,19 @@ class NonStreamingRenderer(Renderer):
     # Streaming event handlers (one-shot)
     # ------------------------------------------------------------------
 
-    def on_text_delta(self, event: ContentDelta) -> None:
-        """Print the text delta as markdown immediately."""
+    def on_content_delta(self, event: ContentDelta) -> None:
+        """Print the content delta as markdown immediately."""
         self.markdown(event.text_delta)
+
+    def on_reasoning_delta(self, event: ReasoningDelta) -> None:
+        """Print the reasoning dim and verbatim, above the answer.
+
+        Scrollback cannot collapse, so there is no summary line here —
+        the handler yields one joined delta per message, printed in full
+        rather than truncated.
+        """
+        self._console.print(Text("💭 Thought:", style="dim"))
+        self._console.print(Text(event.text_delta, style="dim italic"))
 
     def on_tool_call_start(self, event: ToolCallStart) -> None:
         """Announce the tool call with a one-line print."""
