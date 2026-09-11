@@ -51,10 +51,10 @@ def _plan() -> Plan:
 class TestSerializeEvent:
     """Frame type + payload for every event class."""
 
-    def test_text_delta(self):
+    def test_content_delta(self):
         assert serialize_event(ContentDelta(text_delta="hi")) == {
-            "type": "text_delta",
-            "text": "hi",
+            "type": "content_delta",
+            "text_delta": "hi",
         }
 
     def test_tool_call_start(self):
@@ -166,6 +166,7 @@ class TestSerializeEvent:
                 "output_tokens": 5,
                 "cache_read_tokens": 3,
                 "cache_creation_tokens": 2,
+                "reasoning_tokens": 0,
             },
         }
 

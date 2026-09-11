@@ -105,19 +105,23 @@ class TestTurnStream:
                 "turn_started",
                 "state",
                 "session_info",
-                "text_delta",
+                "content_delta",
                 "agent_finished",
                 "session_info",
                 "state",
             ]
             assert frames[1] == {"type": "state", "busy": True}
-            assert frames[3] == {"type": "text_delta", "text": "Hello from the agent."}
+            assert frames[3] == {
+                "type": "content_delta",
+                "text_delta": "Hello from the agent.",
+            }
             assert frames[4]["reason"] == "LLM finished its turn."
             assert frames[4]["usage"] == {
                 "input_tokens": 10,
                 "output_tokens": 5,
                 "cache_read_tokens": 0,
                 "cache_creation_tokens": 0,
+                "reasoning_tokens": 0,
             }
             assert frames[6] == {"type": "state", "busy": False}
 
@@ -341,7 +345,7 @@ class TestCancel:
             with client.websocket_connect("/ws") as ws:
                 ws.receive_json()  # hello
                 ws.send_json({"cmd": "turn", "input": "explain"})
-                _wait_for(ws, "text_delta")
+                _wait_for(ws, "content_delta")
                 ws.send_json({"cmd": "cancel"})
                 _wait_for(ws, "ack")
                 _wait_for(ws, "turn_cancelled")
@@ -570,7 +574,7 @@ class TestPlanFlow:
 
             # The next turn's first LLM call sees the marker.
             ws.send_json({"cmd": "turn", "input": "continue anyway"})
-            _wait_for(ws, "text_delta")
+            _wait_for(ws, "content_delta")
 
             call = llm.messages_history[-1]
             assert any(
@@ -600,7 +604,7 @@ class TestPlanFlow:
             _wait_for(ws, "turn_cancelled")
 
             ws.send_json({"cmd": "turn", "input": "continue anyway"})
-            _wait_for(ws, "text_delta")
+            _wait_for(ws, "content_delta")
 
             call = llm.messages_history[-1]
             tool_msgs = [m for m in call if m.role == "tool"]
@@ -631,14 +635,14 @@ class TestPlanFlow:
         with TestClient(app) as client, client.websocket_connect("/ws") as ws:
             ws.receive_json()  # hello
             ws.send_json({"cmd": "turn", "input": "explain"})
-            _wait_for(ws, "text_delta")
+            _wait_for(ws, "content_delta")
 
             ws.send_json({"cmd": "cancel"})
             _wait_for(ws, "ack")
             _wait_for(ws, "turn_cancelled")
 
             ws.send_json({"cmd": "turn", "input": "continue"})
-            _wait_for(ws, "text_delta")
+            _wait_for(ws, "content_delta")
 
             call = llm.messages_history[-1]
             assistant_msgs = [m for m in call if m.role == "assistant"]

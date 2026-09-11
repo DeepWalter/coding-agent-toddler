@@ -20,6 +20,7 @@ from toddler.agent.events import (
     FatalAgentError,
     PlanProposed,
     PlanStepUpdate,
+    ReasoningDelta,
     RecoverableAgentError,
     ToolCallDelta,
     ToolCallEnd,
@@ -94,7 +95,7 @@ def _tool_results(messages: list[Message]) -> dict[str, dict]:
     return results
 
 
-def serialize_transcript(messages: list[Message]) -> list[dict]:
+def serialize_transcript(messages: list[Message]) -> list[dict]:  # noqa: C901
     """Flatten stored messages into transcript replay entries.
 
     Called for ``hello`` (WS reconnect) and ``/api/sessions/.../messages``.
@@ -118,16 +119,23 @@ def serialize_transcript(messages: list[Message]) -> list[dict]:
                 # human — flag them so the frontend renders a fold line
                 # instead of a user bubble (content stays for consumers that
                 # want the raw text).
-                if msg.content.startswith("[The previous turn was cancelled by the user."):
+                if msg.content.startswith("[The previous turn was cancelled by the user."):  # noqa: E501
                     entry["fold"] = "cancelled"
                 elif msg.content.startswith("[Compacted"):
                     entry["fold"] = "compacted"
                 entries.append(entry)
             continue
-        # assistant — text first, then its tool uses, matching the live
-        # ``content_delta`` → ``tool_call_start`` order.
-        if msg.content:
-            entries.append({"role": "assistant", "content": msg.content})
+        # assistant — thinking first, then text, then its tool uses,
+        # matching the live ``reasoning_delta`` → ``content_delta`` →
+        # ``tool_call_start`` order.  A thought-only message (reasoning
+        # then straight to a tool call) still emits its entry, so the
+        # thinking card replays; ``reasoning`` stays absent when there is
+        # none, keeping plain entries byte-identical to before.
+        if msg.content or msg.reasoning:
+            entry = {"role": "assistant", "content": msg.content}
+            if msg.reasoning:
+                entry["reasoning"] = msg.reasoning
+            entries.append(entry)
         for block in msg.blocks:
             if block.type == "tool_use" and block.tool_id:
                 entries.append({
@@ -152,6 +160,7 @@ def serialize_token_usage(usage: TokenUsage | None) -> dict | None:
         "output_tokens": usage.output_tokens,
         "cache_read_tokens": usage.cache_read_tokens,
         "cache_creation_tokens": usage.cache_creation_tokens,
+        "reasoning_tokens": usage.reasoning_tokens,
     }
 
 
@@ -164,10 +173,13 @@ def serialize_event(event: AgentEvent) -> dict | None:  # noqa: C901
     """
     match event:
         case ContentDelta(text_delta=text_delta):
-            # Frame type and payload key still carry the pre-rename
-            # names here; they swap with the frontend, which is a
-            # separate step of docs/plans/reasoning-content-capture.md.
-            return {"type": "text_delta", "text": text_delta}
+            return {"type": "content_delta", "text_delta": text_delta}
+
+        case ReasoningDelta(text_delta=text_delta):
+            # Same payload key as content_delta — both prose kinds feed
+            # their block's shared ``text`` slot; the frame type carries
+            # the kind.
+            return {"type": "reasoning_delta", "text_delta": text_delta}
 
         case ToolCallStart(
             tool_id=tool_id,
