@@ -176,7 +176,7 @@ are UI strings, not vocabulary.
   empty `content` → raise `TODDLER_MAX_TOKENS`; `reasoning_tokens` in usage shows the
   split).
 
-## Phase 3 — Events and handlers
+## Phase 3 — Events and handlers ✅
 
 - `toddler/agent/events.py`: rename `TextDelta(text)` → `ContentDelta(text_delta)`; add
   `ReasoningDelta(text_delta: str)` beside it — the field is named after the shared
