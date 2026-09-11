@@ -258,7 +258,7 @@ are UI strings, not vocabulary.
   `💭 Thought:` then dim-italic text, once per message (NonStreamHandler yields one
   ReasoningDelta).
 
-## Phase 7 — Web frontend (`website/src`)
+## Phase 7 — Web frontend (`website/src`) ✅
 
 - `types.ts`: `TokenUsage.reasoning_tokens`; `ReplayMessage.reasoning?: string`;
   Frame members `{ type: 'content_delta'; text_delta: string }` (renamed from
