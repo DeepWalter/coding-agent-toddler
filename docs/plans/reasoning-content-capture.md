@@ -200,7 +200,7 @@ are UI strings, not vocabulary.
   existing dispatch (Phases 5-6 update the case arms); compaction and the cancel-repair
   path need nothing (see design decision 5).
 
-## Phase 4 — Token counting and storage
+## Phase 4 — Token counting and storage ✅
 
 - `toddler/context/token_counter.py` `_count_block`: kind `content` (renamed from
   `text`); because both prose kinds share the `text` payload, one branch counts them
