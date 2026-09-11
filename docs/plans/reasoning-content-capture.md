@@ -228,7 +228,7 @@ are UI strings, not vocabulary.
   matching the live stream.  No changes needed in `ws.py` or `api.py` (both call this).
 - `serialize_token_usage`: add `reasoning_tokens`.
 
-## Phase 6 — Terminal TUI (live view)
+## Phase 6 — Terminal TUI (live view) ✅
 
 - `toddler/cli/app.py` `_run_agent_turn` dispatch: rename the `ContentDelta` case →
   `self._renderer.on_content_delta(event)`; add `case ReasoningDelta():` →
