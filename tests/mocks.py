@@ -77,7 +77,7 @@ class MockLLMProvider(BaseLLMProvider):
         for block in blocks:
             if block.type == "content":
                 yield StreamEvent(
-                    type="text_delta", data={"text": block.text},
+                    type="content_delta", data={"text_delta": block.text},
                 )
             elif block.type == "tool_use":
                 yield StreamEvent(
@@ -126,8 +126,8 @@ class SlowStreamLLM(MockLLMProvider):
         for i in range(0, len(text), self._chunk_size):
             await asyncio.sleep(self._delay)
             yield StreamEvent(
-                type="text_delta",
-                data={"text": text[i:i + self._chunk_size]},
+                type="content_delta",
+                data={"text_delta": text[i:i + self._chunk_size]},
             )
         yield StreamEvent(
             type="message_stop",

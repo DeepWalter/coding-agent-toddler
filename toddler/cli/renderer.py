@@ -38,11 +38,11 @@ from toddler.agent.events import (
     AgentError,
     AgentFinished,
     AgentPaused,
+    ContentDelta,
     FatalAgentError,
     PlanProposed,
     PlanStepUpdate,
     RecoverableAgentError,
-    TextDelta,
     ToolCallDelta,
     ToolCallEnd,
     ToolCallStart,
@@ -445,8 +445,8 @@ class Renderer(ABC):
     # ------------------------------------------------------------------
 
     @abstractmethod
-    def on_text_delta(self, event: TextDelta) -> None:
-        """Render a streaming text delta."""
+    def on_text_delta(self, event: ContentDelta) -> None:
+        """Render a streaming content delta."""
 
     @abstractmethod
     def on_tool_call_start(self, event: ToolCallStart) -> None:
@@ -924,9 +924,9 @@ class StreamingRenderer(Renderer):
     # Streaming event handlers
     # ------------------------------------------------------------------
 
-    def on_text_delta(self, event: TextDelta) -> None:
+    def on_text_delta(self, event: ContentDelta) -> None:
         """Accumulate text and throttle-refresh the Live display."""
-        self._text += event.text
+        self._text += event.text_delta
         self._refresh()
 
     def on_tool_call_start(self, event: ToolCallStart) -> None:
@@ -1448,9 +1448,9 @@ class NonStreamingRenderer(Renderer):
     # Streaming event handlers (one-shot)
     # ------------------------------------------------------------------
 
-    def on_text_delta(self, event: TextDelta) -> None:
+    def on_text_delta(self, event: ContentDelta) -> None:
         """Print the text delta as markdown immediately."""
-        self.markdown(event.text)
+        self.markdown(event.text_delta)
 
     def on_tool_call_start(self, event: ToolCallStart) -> None:
         """Announce the tool call with a one-line print."""

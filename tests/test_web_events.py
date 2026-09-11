@@ -6,11 +6,11 @@ from toddler.agent.events import (
     AgentEvent,
     AgentFinished,
     AgentPaused,
+    ContentDelta,
     FatalAgentError,
     PlanProposed,
     PlanStepUpdate,
     RecoverableAgentError,
-    TextDelta,
     ToolCallDelta,
     ToolCallEnd,
     ToolCallStart,
@@ -52,7 +52,7 @@ class TestSerializeEvent:
     """Frame type + payload for every event class."""
 
     def test_text_delta(self):
-        assert serialize_event(TextDelta(text="hi")) == {
+        assert serialize_event(ContentDelta(text_delta="hi")) == {
             "type": "text_delta",
             "text": "hi",
         }

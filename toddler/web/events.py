@@ -16,11 +16,11 @@ from toddler.agent.events import (
     AgentEvent,
     AgentFinished,
     AgentPaused,
+    ContentDelta,
     FatalAgentError,
     PlanProposed,
     PlanStepUpdate,
     RecoverableAgentError,
-    TextDelta,
     ToolCallDelta,
     ToolCallEnd,
     ToolCallStart,
@@ -163,8 +163,11 @@ def serialize_event(event: AgentEvent) -> dict | None:  # noqa: C901
     dropping the whole turn.
     """
     match event:
-        case TextDelta(text=text):
-            return {"type": "text_delta", "text": text}
+        case ContentDelta(text_delta=text_delta):
+            # Frame type and payload key still carry the pre-rename
+            # names here; they swap with the frontend, which is a
+            # separate step of docs/plans/reasoning-content-capture.md.
+            return {"type": "text_delta", "text": text_delta}
 
         case ToolCallStart(
             tool_id=tool_id,

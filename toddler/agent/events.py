@@ -28,10 +28,26 @@ class AgentEvent:
 
 
 @dataclass
-class TextDelta(AgentEvent):
-    """A single token (or small chunk) of streaming text."""
+class ContentDelta(AgentEvent):
+    """A single chunk of streaming answer text.
 
-    text: str
+    The field is named after the shared ``text`` payload slot the fragment
+    feeds — the kind lives in the class name, mirroring
+    :class:`ToolCallDelta`'s ``input_delta`` for the ``tool_input`` slot.
+    """
+
+    text_delta: str
+
+
+@dataclass
+class ReasoningDelta(AgentEvent):
+    """A single chunk of streaming reasoning text.
+
+    Symmetric sibling of :class:`ContentDelta`; both feed the ``text``
+    payload slot of their own block kind.
+    """
+
+    text_delta: str
 
 
 @dataclass

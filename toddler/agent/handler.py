@@ -20,8 +20,9 @@ from typing import TYPE_CHECKING, Any
 
 from toddler.agent.events import (
     AgentEvent,
+    ContentDelta,
+    ReasoningDelta,
     RecoverableAgentError,
-    TextDelta,
     ToolCallDelta,
     ToolCallStart,
 )
@@ -177,8 +178,9 @@ class StreamHandler(BaseHandler):
     """Consumes :class:`StreamEvent` items from the LLM provider and yields
     :class:`~toddler.agent.events.AgentEvent` objects for the agent loop.
 
-    Maintains internal accumulators for text and tool calls, using
-    :class:`IncrementalJSONParser` for streaming tool-call arguments.
+    Maintains internal accumulators for answer text, reasoning text, and
+    tool calls, using :class:`IncrementalJSONParser` for streaming
+    tool-call arguments.
 
     Usage::
 
@@ -191,7 +193,8 @@ class StreamHandler(BaseHandler):
     """
 
     def __init__(self) -> None:
-        self._text_buf = ""
+        self._content_buf = ""
+        self._reasoning_buf = ""
         self._tools: dict[str, _PartialTool] = {}  # tool_id → state
         self._tool_order: list[str] = []  # insertion order of tool_ids
 
@@ -205,7 +208,8 @@ class StreamHandler(BaseHandler):
 
     def clear(self) -> None:
         """Reset all internal state so the handler can be reused."""
-        self._text_buf = ""
+        self._content_buf = ""
+        self._reasoning_buf = ""
         self._tools.clear()
         self._tool_order.clear()
         self.stop_reason = None
@@ -215,7 +219,7 @@ class StreamHandler(BaseHandler):
     # Core processing
     # ------------------------------------------------------------------
 
-    async def process(
+    async def process(  # noqa: C901 — one arm per StreamEvent type
         self, stream: AsyncIterator[StreamEvent],
     ) -> AsyncIterator[AgentEvent]:
         """Consume *stream* and yield :class:`AgentEvent` objects.
@@ -225,10 +229,15 @@ class StreamHandler(BaseHandler):
         """
         async for event in stream:
             match event.type:
-                case "text_delta":
-                    text = event.data.get("text", "")
-                    self._text_buf += text
-                    yield TextDelta(text=text)
+                case "content_delta":
+                    text_delta = event.data.get("text_delta", "")
+                    self._content_buf += text_delta
+                    yield ContentDelta(text_delta=text_delta)
+
+                case "reasoning_delta":
+                    text_delta = event.data.get("text_delta", "")
+                    self._reasoning_buf += text_delta
+                    yield ReasoningDelta(text_delta=text_delta)
 
                 case "tool_use_start":
                     evt = self._on_tool_start(event.data)
@@ -266,11 +275,20 @@ class StreamHandler(BaseHandler):
         Shared by the completed-message assembly and the partial-content
         extraction on cancel — both expose the same content, just at
         different points in the stream.
+
+        Reasoning comes first, matching both the model's emission order
+        and the ``Message.blocks`` invariant.  Because this path serves
+        the cancel handler too, a cancelled turn persists its partial
+        reasoning and the next request echoes it back — which DeepSeek
+        requires for tool-round messages.
         """
         blocks: list[MessageBlock] = []
 
-        if self._text_buf:
-            blocks.append(MessageBlock.content_block(self._text_buf))
+        if self._reasoning_buf:
+            blocks.append(MessageBlock.reasoning_block(self._reasoning_buf))
+
+        if self._content_buf:
+            blocks.append(MessageBlock.content_block(self._content_buf))
 
         for tool_id in self._tool_order:
             pt = self._tools[tool_id]
@@ -288,17 +306,18 @@ class StreamHandler(BaseHandler):
     def _assemble_message(self) -> Message:
         """Build the completed assistant :class:`Message` from accumulated data.
 
-        Returns a message with text content (if any) and tool-use blocks
-        (if any), suitable for appending to the conversation history.
+        Returns a message with reasoning (if any), text content (if any),
+        and tool-use blocks (if any), suitable for appending to the
+        conversation history.
         """  # noqa: E501
         return Message.assistant(self._content_blocks())
 
     def get_partial_content(self) -> list[MessageBlock]:
         """Return the content the model produced so far, mid-stream.
 
-        Text accumulated so far plus any tool calls started (with
-        best-effort parsed arguments).  Safe to append to the
-        conversation on cancellation — the turn's partial output is
+        Reasoning and text accumulated so far plus any tool calls
+        started (with best-effort parsed arguments).  Safe to append to
+        the conversation on cancellation — the turn's partial output is
         preserved so the next turn can continue from it.  Returns
         ``[]`` when nothing has been produced yet.
         """
@@ -383,7 +402,8 @@ class StreamHandler(BaseHandler):
 class NonStreamHandler(BaseHandler):
     """Wraps a complete :class:`LLMResponse` in the handler interface.
 
-    Yields a single :class:`TextDelta` (if the response has text), then
+    Yields a single :class:`ReasoningDelta` (if the message carries
+    reasoning) then a single :class:`ContentDelta` (if it has text), then
     exposes the assembled result via :meth:`get_final_result`.
 
     Usage::
@@ -416,7 +436,8 @@ class NonStreamHandler(BaseHandler):
     ) -> AsyncIterator[AgentEvent]:
         """Convert *response* into agent events.
 
-        Yields a single :class:`TextDelta` if the response contained text.
+        Yields the reasoning (if any) then the text (if any), mirroring
+        the streaming emission order.
         """
         self._assistant_msg = (
             response.messages[0]
@@ -425,9 +446,12 @@ class NonStreamHandler(BaseHandler):
         )
         self._stop_reason = response.stop_reason
         self._usage = response.usage
-        text = self._assistant_msg.content
-        if text:
-            yield TextDelta(text=text)
+        reasoning = self._assistant_msg.reasoning
+        if reasoning:
+            yield ReasoningDelta(text_delta=reasoning)
+        content = self._assistant_msg.content
+        if content:
+            yield ContentDelta(text_delta=content)
 
     def get_partial_content(self) -> list[MessageBlock]:
         """Return the response content.

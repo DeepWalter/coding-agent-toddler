@@ -14,11 +14,11 @@ from rich.markdown import Markdown
 from toddler.agent.events import (
     AgentFinished,
     AgentPaused,
+    ContentDelta,
     FatalAgentError,
     PlanProposed,
     PlanStepUpdate,
     RecoverableAgentError,
-    TextDelta,
     ToolCallDelta,
     ToolCallEnd,
     ToolCallStart,
@@ -194,7 +194,7 @@ class CLIApp:
 
         async for event in gen:
             match event:
-                case TextDelta():
+                case ContentDelta():
                     self._renderer.on_text_delta(event)
 
                 case ToolCallStart():

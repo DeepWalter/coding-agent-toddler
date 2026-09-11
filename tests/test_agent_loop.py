@@ -18,8 +18,8 @@ from toddler.agent.events import (
     AgentError,
     AgentFinished,
     AgentPaused,
+    ContentDelta,
     RecoverableAgentError,
-    TextDelta,
     ToolCallEnd,
     ToolCallStart,
 )
@@ -321,8 +321,8 @@ class TestSimpleTextResponse:
         events = await _collect_events(loop.run("Hi!"))
 
         assert len(events) >= 2
-        assert isinstance(events[0], TextDelta)
-        assert events[0].text == "Hello, world!"
+        assert isinstance(events[0], ContentDelta)
+        assert events[0].text_delta == "Hello, world!"
         assert isinstance(events[-1], AgentFinished)
         assert events[-1].reason == "LLM finished its turn."
 
@@ -336,8 +336,8 @@ class TestSimpleTextResponse:
         loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx, permission_manager=PermissionManager())
         events = await _collect_events(loop.run("Hi!"))
 
-        # No TextDelta when text is empty.
-        assert not any(isinstance(e, TextDelta) for e in events)
+        # No ContentDelta when text is empty.
+        assert not any(isinstance(e, ContentDelta) for e in events)
         assert isinstance(events[-1], AgentFinished)
 
 
@@ -370,10 +370,10 @@ class TestToolCalls:
         loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx, permission_manager=PermissionManager())
         events = await _collect_events(loop.run("Echo please"))
 
-        # Should have: ToolCallStart, ToolCallEnd, TextDelta, AgentFinished
+        # Should have: ToolCallStart, ToolCallEnd, ContentDelta, AgentFinished
         starts = [e for e in events if isinstance(e, ToolCallStart)]
         ends = [e for e in events if isinstance(e, ToolCallEnd)]
-        texts = [e for e in events if isinstance(e, TextDelta)]
+        texts = [e for e in events if isinstance(e, ContentDelta)]
         finishes = [e for e in events if isinstance(e, AgentFinished)]
 
         assert len(starts) == 1
@@ -893,12 +893,12 @@ class TestHandlerPartialContent:
         """A snapshot taken between chunks keeps the text so far."""
 
         async def stream() -> AsyncIterator[StreamEvent]:
-            yield StreamEvent(type="text_delta", data={"text": "Hello "})
-            yield StreamEvent(type="text_delta", data={"text": "world"})
+            yield StreamEvent(type="content_delta", data={"text_delta": "Hello "})
+            yield StreamEvent(type="content_delta", data={"text_delta": "world"})
 
         handler = StreamHandler()
         gen = handler.process(stream())
-        assert isinstance(await gen.__anext__(), TextDelta)
+        assert isinstance(await gen.__anext__(), ContentDelta)
 
         partial = handler.get_partial_content()
         assert [b.type for b in partial] == ["content"]
@@ -909,7 +909,7 @@ class TestHandlerPartialContent:
         best-effort parsed arguments."""
 
         async def stream() -> AsyncIterator[StreamEvent]:
-            yield StreamEvent(type="text_delta", data={"text": "Checking"})
+            yield StreamEvent(type="content_delta", data={"text_delta": "Checking"})
             yield StreamEvent(
                 type="tool_use_start",
                 data={"tool_id": "t1", "tool_name": "read_file"},
@@ -939,7 +939,7 @@ class TestHandlerPartialContent:
         starts."""
         handler = NonStreamHandler()
         gen = handler.process(_make_llm_response(text="Complete answer"))
-        assert isinstance(await gen.__anext__(), TextDelta)
+        assert isinstance(await gen.__anext__(), ContentDelta)
 
         partial = handler.get_partial_content()
         assert [b.type for b in partial] == ["content"]
@@ -972,10 +972,10 @@ class TestCancelMidStream:
 
         task = asyncio.create_task(_collect())
         for _ in range(200):
-            if any(isinstance(e, TextDelta) for e in events):
+            if any(isinstance(e, ContentDelta) for e in events):
                 break
             await asyncio.sleep(0.01)
-        assert any(isinstance(e, TextDelta) for e in events), (
+        assert any(isinstance(e, ContentDelta) for e in events), (
             "the first text delta never streamed"
         )
 
@@ -1031,7 +1031,7 @@ class TestMultiIteration:
 
         starts = [e for e in events if isinstance(e, ToolCallStart)]
         ends = [e for e in events if isinstance(e, ToolCallEnd)]
-        texts = [e for e in events if isinstance(e, TextDelta)]
+        texts = [e for e in events if isinstance(e, ContentDelta)]
 
         assert len(starts) == 2  # two rounds of tool calls
         assert len(ends) == 2
