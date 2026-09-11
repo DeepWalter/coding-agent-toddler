@@ -290,7 +290,7 @@ are UI strings, not vocabulary.
   `ConsolePane.vue` between the assistant bubble and tool-card branches; add
   `.thinking-card*` styles mirroring `.tool-card`.
 
-## Phase 8 — Test mocks
+## Phase 8 — Test mocks ✅
 
 `tests/mocks.py`: `MockLLMProvider._stream`'s per-type branches emit the renamed
 `content_delta` events (data `{"text_delta": ...}`) for kind `content`, plus a new
