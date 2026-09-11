@@ -82,10 +82,29 @@ function lastOpenToolId(s: ConsoleState): string | null {
 function closeAssistant(s: ConsoleState): void {
   // Open assistant blocks may sit anywhere in the stream (text before a
   // tool card, text after it) — the turn ending closes all of them so a
-  // later text_delta can never merge into a finished turn.
+  // later content_delta can never merge into a finished turn.
   for (const b of s.blocks) {
     if (b.kind === 'assistant' && !b.closed) b.closed = true
   }
+}
+
+function closeThinking(s: ConsoleState): void {
+  // Thinking precedes its answer and every execution event, so any path
+  // that ends a thought closes its card — a later reasoning_delta must
+  // never merge into a finished turn's reasoning.
+  for (const b of s.blocks) {
+    if (b.kind === 'thinking' && b.open) b.open = false
+  }
+}
+
+function lastOpenThinking(
+  s: ConsoleState,
+): Extract<Block, { kind: 'thinking' }> | null {
+  for (let i = s.blocks.length - 1; i >= 0; i--) {
+    const b = s.blocks[i]
+    if (b.kind === 'thinking' && b.open) return b
+  }
+  return null
 }
 
 function closeOpenTools(s: ConsoleState): void {
@@ -140,12 +159,26 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
           })
           continue
         }
-        if (!msg.content) continue
-        if (msg.role === 'user' && msg.fold) {
-          // Synthetic marker — fold line, not a user bubble.
-          push(s, { kind: 'fold', text: foldText(msg.fold, msg.content) })
-        } else if (msg.role === 'user') push(s, { kind: 'user', text: msg.content })
-        else push(s, { kind: 'assistant', text: msg.content, closed: true })
+        if (msg.role === 'user') {
+          if (!msg.content) continue
+          if (msg.fold) {
+            // Synthetic marker — fold line, not a user bubble.
+            push(s, { kind: 'fold', text: foldText(msg.fold, msg.content) })
+          } else {
+            push(s, { kind: 'user', text: msg.content })
+          }
+          continue
+        }
+        // Assistant — thinking first, matching the live order.  A
+        // thought-only entry (reasoning then straight to a tool call) has
+        // no content but must still replay its card, so the thinking push
+        // cannot sit behind a `!msg.content` guard.
+        if (msg.reasoning) {
+          push(s, { kind: 'thinking', reasoning: msg.reasoning, open: false })
+        }
+        if (msg.content) {
+          push(s, { kind: 'assistant', content: msg.content, closed: true })
+        }
       }
       // A plan proposed mid-turn is snapshotted server-side (proposal +
       // latest step statuses); re-render the card so a reconnecting or
@@ -167,16 +200,31 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
     case 'state':
       s.busy = action.busy
       break
-    case 'text_delta': {
+    case 'content_delta': {
+      // The reasoning precedes its text: the thought is complete once the
+      // answer starts, and a thought-only reply closes here, before the
+      // execution events its tool call will emit.
+      closeThinking(s)
       const last = s.blocks[s.blocks.length - 1]
       if (last && last.kind === 'assistant' && !last.closed) {
-        last.text += action.text
+        last.content += action.text_delta
       } else {
-        push(s, { kind: 'assistant', text: action.text, closed: false })
+        push(s, { kind: 'assistant', content: action.text_delta, closed: false })
+      }
+      break
+    }
+    case 'reasoning_delta': {
+      const block = lastOpenThinking(s)
+      if (block) {
+        block.reasoning += action.text_delta
+      } else {
+        push(s, { kind: 'thinking', reasoning: action.text_delta, open: true })
       }
       break
     }
     case 'tool_call_start': {
+      // Execution begins — the thought that requested it is over.
+      closeThinking(s)
       // Streaming mode emits two starts per call — the live stream
       // handler yields one as chunks arrive, the execution phase yields
       // another before running the tool, with the same tool_id.  Upsert
@@ -245,6 +293,8 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
     case 'agent_finished':
       // A completed turn needs no marker — reloaded transcripts never had
       // one, so pushing a notice here would break live/reload parity.
+      // A replayed card is closed the same way: the turn frame closes it.
+      closeThinking(s)
       closeAssistant(s)
       closeOpenTools(s)
       s.paused = null
@@ -265,6 +315,7 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
       s.conversation = action.conversation
       break
     case 'fatal_error':
+      closeThinking(s)
       closeAssistant(s)
       closeOpenTools(s)
       s.paused = null
@@ -272,7 +323,9 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
       break
     case 'turn_cancelled':
       // Same fold line the server's persisted repair marker replays as, so
-      // live and reloaded transcripts agree.
+      // live and reloaded transcripts agree.  A cancel mid-thought closes
+      // the partial card — the persisted partial message replays it too.
+      closeThinking(s)
       closeAssistant(s)
       closeOpenTools(s)
       s.paused = null

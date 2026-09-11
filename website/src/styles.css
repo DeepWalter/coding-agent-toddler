@@ -802,6 +802,59 @@ body {
   color: var(--error);
 }
 
+/* ------------------------------------------------------------------ */
+/* Thinking cards                                                      */
+/* ------------------------------------------------------------------ */
+
+.thinking-card {
+  border: 1px solid var(--editor-border);
+  border-radius: 6px;
+  background: var(--editor-surface-2);
+  overflow: hidden;
+}
+
+.thinking-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.thinking-card-header:hover {
+  background: var(--editor-surface-3);
+}
+
+.thinking-card-label {
+  font-weight: 600;
+}
+
+.thinking-card-chevron {
+  color: var(--text-muted);
+  margin-left: auto;
+}
+
+.thinking-card-body {
+  padding: 8px 10px;
+  border-top: 1px solid var(--editor-border);
+}
+
+.thinking-card-pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  font: inherit;
+  color: var(--text-muted);
+  max-height: 240px;
+  overflow-y: auto;
+}
+
 /* Spinner */
 .spinner {
   width: 11px;

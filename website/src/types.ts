@@ -43,6 +43,13 @@ export interface ReplayMessage {
   role: string
   content: string
   /**
+   * Assistant entry only — the model's thinking, joined verbatim server-side.
+   * Absent when the turn produced none; a thought-only entry (reasoning then
+   * straight to a tool call) has an empty content and must still replay as a
+   * thinking card.
+   */
+  reasoning?: string
+  /**
    * Synthetic marker the server tagged at replay — set only on user entries
    * whose text was never typed by a human (turn-cancelled repair, compacted
    * summary).  The console renders a fold line instead of a user bubble.
@@ -111,6 +118,9 @@ export interface TokenUsage {
   output_tokens: number | null
   cache_read_tokens: number | null
   cache_creation_tokens: number | null
+  /** Thinking-mode reasoning tokens — a subset of output_tokens, itemized
+   *  separately by the API. */
+  reasoning_tokens: number | null
 }
 
 // ---------------------------------------------------------------------------
@@ -129,7 +139,8 @@ export type Frame =
     }
   | { type: 'turn_started' }
   | { type: 'state'; busy: boolean }
-  | { type: 'text_delta'; text: string }
+  | { type: 'content_delta'; text_delta: string }
+  | { type: 'reasoning_delta'; text_delta: string }
   | {
       type: 'tool_call_start'
       tool_id: string
@@ -180,7 +191,18 @@ export type Command =
 /** One display unit in the linear console stream. */
 export type Block =
   | { id: number; kind: 'user'; text: string }
-  | { id: number; kind: 'assistant'; text: string; closed: boolean }
+  | { id: number; kind: 'assistant'; content: string; closed: boolean }
+  | {
+      id: number
+      kind: 'thinking'
+      /** The reasoning, verbatim — rendered as plain text, never markdown
+       *  (freeform prose that markdown would mangle). */
+      reasoning: string
+      /** Still streaming; `open` has tool-block semantics (the turn's
+       *  terminal frame closes it, user clicks never do).  Expanded or
+       *  collapsed is local to ThinkingCard. */
+      open: boolean
+    }
   | {
       id: number
       kind: 'tool'
