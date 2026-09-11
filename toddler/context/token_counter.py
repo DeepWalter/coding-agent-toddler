@@ -99,7 +99,11 @@ class TokenCounter:
 
     def _count_block(self, block) -> int:
         """Count tokens for a single :class:`MessageBlock`."""
-        if block.type == "content" and block.text:
+        # The ``content`` and ``reasoning`` kinds share the ``text`` payload
+        # slot, so one branch counts both.  Reasoning is echoed back on
+        # every request of the round, so it must be charged to the context
+        # window like answer text.
+        if block.type in ("content", "reasoning") and block.text:
             return self.count_tokens(block.text)
         if block.type == "tool_use":
             n = self.count_tokens(block.tool_name or "")

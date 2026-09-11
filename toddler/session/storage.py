@@ -454,6 +454,9 @@ def _serialize_content(blocks: list[MessageBlock]) -> str:
 
     def _block_to_dict(b: MessageBlock) -> dict[str, Any]:
         d: dict[str, Any] = {"type": b.type}
+        # The ``content`` and ``reasoning`` kinds share the ``text`` payload
+        # slot, so one untyped copy covers both — no per-kind branch, and
+        # the stored key matches the model field.
         if b.text is not None:
             d["text"] = b.text
         if b.tool_id is not None:
