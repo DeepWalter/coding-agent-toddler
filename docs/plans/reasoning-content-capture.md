@@ -334,7 +334,7 @@ reasoning_tokens=40)` producing `[reasoning_block, content_block]` with usage ca
   a canned `_chunks_for_reasoning` script (short CoT → answer text → finish); dispatch
   on content `"reason"`.
 
-## Phase 10 — UI harness (`website/scripts`)
+## Phase 10 — UI harness (`website/scripts`) ✅
 
 - `mock-server.mjs`: answer chunks emit `content_delta` frames carrying `text_delta`
   (renamed type and key); one seeded assistant message carries `reasoning`; a

@@ -72,13 +72,32 @@ const session = {
   cwd: '/tmp',
 }
 
+// Reasoning bodies the thinking-card assertions compare against — keep in
+// sync with ui-test.mjs (SEED_REASONING / THINK_REASONING).
+const SEED_REASONING =
+  'seed thought: check the pane scrolls before answering\n' +
+  'second line — rendered verbatim, never markdown'
+const THINK_FRAGMENTS = [
+  'live thought: stream the reasoning ',
+  'before the answer — accumulated ',
+  'fragment by fragment, kept verbatim',
+]
+const THINK_REASONING = THINK_FRAGMENTS.join('')
+
+// How long a think turn holds between its reasoning and its answer, so the
+// harness can observe the card mid-stream ("Thinking…", above its bubble).
+const THINK_HOLD_MS = Number(process.env.MOCK_THINK_HOLD_MS ?? 600)
+
 // Seed a tall console so the pane can scroll far before the gate pops.
+// The first entry carries a reasoning block — the replayed thinking card.
 function seedMessages() {
   const messages = []
   for (let i = 0; i < 14; i++) {
     const lines = []
     for (let j = 0; j < 22; j++) lines.push(`seed line ${i}.${j} — filler to make the console scrollable`)
-    messages.push({ role: 'assistant', content: lines.join('\n') })
+    const entry = { role: 'assistant', content: lines.join('\n') }
+    if (i === 0) entry.reasoning = SEED_REASONING
+    messages.push(entry)
   }
   return messages
 }
@@ -87,6 +106,11 @@ function seedMessages() {
 // replay — the mock stands in for that pipeline, so cancels accumulate here
 // (fold-tagged, like serialize_transcript emits) and every hello replays them.
 const cancelMarkers = []
+
+// Completed think turns accumulate here too: the real server persists the
+// assistant message (reasoning block + content) and replays it, so a
+// reloaded page shows the same thinking card the live stream built.
+const turnLog = []
 
 // The real server broadcasts session_info, notices and post-slash hello
 // replays to every subscribed client (only the connect-time hello is
@@ -102,7 +126,7 @@ function helloFrame() {
     busy: false,
     paused: null,
     plan: null,
-    messages: [...seedMessages(), ...cancelMarkers],
+    messages: [...seedMessages(), ...turnLog, ...cancelMarkers],
   }
 }
 
@@ -122,7 +146,7 @@ wss.on('connection', (ws) => {
   }
   send(helloFrame())
 
-  ws.on('message', (raw) => {
+  ws.on('message', async (raw) => {
     let msg
     try {
       msg = JSON.parse(String(raw))
@@ -151,11 +175,28 @@ wss.on('connection', (ws) => {
         // First turn gates on a Bash call; later turns stream and finish —
         // the harness needs a plain send (no ask) to test the send-pin alone.
         const gate = msg.input.startsWith('gate')
+        // A "think" turn streams reasoning before its answer, the way a
+        // thinking-mode model does.  The hold keeps the card open long
+        // enough for the harness to see "Thinking…" and its live position;
+        // the finished entry is logged so a reload replays the same card.
+        const think = msg.input.startsWith('think')
         send({ type: 'turn_started' })
+        if (think) {
+          for (const fragment of THINK_FRAGMENTS) {
+            send({ type: 'reasoning_delta', text_delta: fragment })
+          }
+          await new Promise((resolve) => setTimeout(resolve, THINK_HOLD_MS))
+        }
+        let content = ''
         for (let i = 0; i < 26; i++) {
-          send({ type: 'text_delta', text: `more streaming output chunk ${i}\n` })
+          const chunk = `more streaming output chunk ${i}\n`
+          content += chunk
+          send({ type: 'content_delta', text_delta: chunk })
         }
         if (!gate) {
+          if (think) {
+            turnLog.push({ role: 'assistant', content, reasoning: THINK_REASONING })
+          }
           send({ type: 'agent_finished', reason: 'completed', usage: null })
           send({ type: 'state', busy: false })
           break
@@ -184,7 +225,7 @@ wss.on('connection', (ws) => {
           input: { command: 'ls -la' },
           result: { success: true, output: 'ok\n', error: null, checkpoint_id: null, metadata: null },
         })
-        send({ type: 'text_delta', text: 'done.\n' })
+        send({ type: 'content_delta', text_delta: 'done.\n' })
         send({ type: 'agent_finished', reason: 'completed', usage: null })
         send({ type: 'state', busy: false })
         break

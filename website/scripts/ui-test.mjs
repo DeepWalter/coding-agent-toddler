@@ -12,6 +12,11 @@
 //            usage; past 50% the pill turns into a live /compact button
 //            (two-line hover copy) whose click lands the server's hello
 //            replay + notice
+//  phase 5 — thinking cards: the seeded reasoning replays collapsed and
+//            expands to its verbatim body; a live `think:` turn opens a
+//            second card above its bubble reading "Thinking…" while
+//            streaming, "Thought" after agent_finished — and a reload
+//            replays the same card, body byte-identical
 // Prints PASS/FAIL plus diagnostics; exits 1 on any failure.
 import { chromium } from 'playwright'
 import WebSocket from 'ws'
@@ -324,6 +329,141 @@ const tooltip = page.locator('.context-tooltip')
   }
   console.log(`phase4 click-then-leave hides tooltip ${stuck ? 'FAIL (tooltip still visible)' : 'PASS'}`)
   if (stuck) fails++
+}
+
+// --- Phase 5: thinking cards — collapsed, verbatim, replayable ---
+// The mock seeds one reasoning-bearing transcript entry (SEED_REASONING in
+// mock-server.mjs) and streams a second on a `think:` turn.
+const SEED_REASONING =
+  'seed thought: check the pane scrolls before answering\n' +
+  'second line — rendered verbatim, never markdown'
+
+// Document positions of the newest thinking card and newest assistant
+// bubble — the card must sit above the bubble its answer lands in.
+const cardAboveBubble = () =>
+  page.evaluate(() => {
+    const nodes = [...document.querySelector('.console-pane').children]
+    const cards = nodes.filter((el) => el.classList.contains('thinking-card'))
+    const bubbles = nodes.filter(
+      (el) => el.classList.contains('message') && el.classList.contains('assistant'),
+    )
+    const card = nodes.indexOf(cards[cards.length - 1])
+    const bubble = nodes.indexOf(bubbles[bubbles.length - 1])
+    return { card, bubble, ok: card >= 0 && bubble >= 0 && card < bubble }
+  })
+
+// P5a: the replayed card starts collapsed — "Thought" + ▸, no body.
+{
+  const card = page.locator('.thinking-card').first()
+  await card.waitFor({ timeout: 15000 })
+  const info = {
+    label: (await card.locator('.thinking-card-label').textContent()).trim(),
+    chevron: (await card.locator('.thinking-card-chevron').textContent()).trim(),
+    bodies: await card.locator('.thinking-card-pre').count(),
+  }
+  const ok = info.label === 'Thought' && info.chevron === '▸' && info.bodies === 0
+  console.log(`phase5 seeded card collapsed ${JSON.stringify(info)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+
+// P5b: click expands to the verbatim body; a second click collapses it.
+{
+  const card = page.locator('.thinking-card').first()
+  await card.locator('.thinking-card-header').click()
+  const body = await card.locator('.thinking-card-pre').textContent()
+  const ok = body === SEED_REASONING
+  console.log(`phase5 expand shows verbatim body ${ok ? 'PASS' : `FAIL (${JSON.stringify(body)})`}`)
+  if (!ok) fails++
+  await card.locator('.thinking-card-header').click()
+  const collapsed = (await card.locator('.thinking-card-pre').count()) === 0
+  console.log(`phase5 second click collapses ${collapsed ? 'PASS' : 'FAIL'}`)
+  if (!collapsed) fails++
+}
+
+// P5c: a live think turn opens one more card, reading "Thinking…" while the
+// reasoning streams (the mock holds before the answer for this window).
+// Counts are relative: the mock's turnLog grows across runs, so asserting
+// a literal card count would only hold for a freshly started mock.
+const cardCount = () => page.locator('.thinking-card').count()
+const cardsBefore = await cardCount()
+{
+  await page.fill('textarea.input-bar-textarea', 'think: about it')
+  await page.click('button:has-text("Send")')
+  let sawOpen = true
+  try {
+    await page.waitForFunction((want) => {
+      const cards = [...document.querySelectorAll('.thinking-card')]
+      const last = cards[cards.length - 1]
+      return (
+        cards.length === want &&
+        last?.querySelector('.thinking-card-label')?.textContent?.trim() === 'Thinking…'
+      )
+    }, cardsBefore + 1, { timeout: 15000 })
+  } catch {
+    sawOpen = false
+  }
+  console.log(`phase5 live card open while streaming ${sawOpen ? 'PASS' : 'FAIL'}`)
+  if (!sawOpen) fails++
+}
+
+// P5d: after agent_finished it reads "Thought" and sits above its bubble.
+{
+  let closed = true
+  try {
+    await page.waitForFunction((want) => {
+      const cards = [...document.querySelectorAll('.thinking-card')]
+      const last = cards[cards.length - 1]
+      return (
+        cards.length === want &&
+        last?.querySelector('.thinking-card-label')?.textContent?.trim() === 'Thought'
+      )
+    }, cardsBefore + 1, { timeout: 15000 })
+  } catch {
+    closed = false
+  }
+  console.log(`phase5 live card closes to "Thought" ${closed ? 'PASS' : 'FAIL'}`)
+  if (!closed) fails++
+
+  const order = await cardAboveBubble()
+  console.log(`phase5 live card above its bubble ${JSON.stringify(order)} ${order.ok ? 'PASS' : 'FAIL'}`)
+  if (!order.ok) fails++
+}
+
+// P5e: reload replays the same cards; the live card's body is byte-identical
+// to the replayed one, still above its bubble.
+{
+  const live = page.locator('.thinking-card').last()
+  await live.locator('.thinking-card-header').click()
+  const liveBody = await live.locator('.thinking-card-pre').textContent()
+  const okLive = liveBody.startsWith('live thought:')
+  console.log(`phase5 live card body is the streamed reasoning ${okLive ? 'PASS' : `FAIL (${JSON.stringify(liveBody)})`}`)
+  if (!okLive) fails++
+
+  await page.reload()
+  let replayed = null
+  let count = -1
+  try {
+    await page.waitForFunction(
+      (want) => document.querySelectorAll('.thinking-card').length === want,
+      cardsBefore + 1,
+      { timeout: 15000 },
+    )
+    const card = page.locator('.thinking-card').last()
+    await card.locator('.thinking-card-header').click()
+    replayed = await card.locator('.thinking-card-pre').textContent()
+  } catch {
+    // replayed stays null — the mismatch below reports it
+  }
+  count = await cardCount()
+  const ok = count === cardsBefore + 1 && replayed === liveBody
+  console.log(
+    `phase5 reload replays the card byte-identically (count=${count}) ${ok ? 'PASS' : `FAIL (${JSON.stringify(replayed)})`}`,
+  )
+  if (!ok) fails++
+
+  const order = await cardAboveBubble()
+  console.log(`phase5 replayed card above its bubble ${JSON.stringify(order)} ${order.ok ? 'PASS' : 'FAIL'}`)
+  if (!order.ok) fails++
 }
 
 await browser.close()

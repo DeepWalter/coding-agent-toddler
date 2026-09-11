@@ -731,6 +731,10 @@ body {
   border-radius: 6px;
   background: var(--editor-surface-2);
   overflow: hidden;
+  /* The console pane is a flex column: an item with non-visible overflow
+     has an automatic minimum size of zero, so without this a card shrinks
+     to its borders once the transcript overflows the pane. */
+  flex: none;
 }
 
 .tool-card-header {
@@ -811,6 +815,8 @@ body {
   border-radius: 6px;
   background: var(--editor-surface-2);
   overflow: hidden;
+  /* Same flex guard as .tool-card — see the comment there. */
+  flex: none;
 }
 
 .thinking-card-header {
