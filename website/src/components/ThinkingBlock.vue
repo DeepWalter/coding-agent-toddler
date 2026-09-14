@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import type { Block } from '../types'
+import { renderReasoning } from '../reasoning'
 import { estimateTokens, formatTokens } from '../utils'
 
 const props = defineProps<{ block: Extract<Block, { kind: 'thinking' }> }>()
@@ -42,6 +43,10 @@ const detail = computed(() => {
   return `${formatTokens(n)} ${n === 1 ? 'token' : 'tokens'}`
 })
 
+/** The reasoning, rendered once per delta and cached upstream: the prose
+ *  stays literal, only its code is lifted out. */
+const rendered = computed(() => renderReasoning(props.block.reasoning))
+
 /** Sub-second thoughts would round to a nonsensical "0 seconds", and a
  *  long one reads better in minutes than as "125 seconds". */
 function formatSpan(ms: number): string {
@@ -68,9 +73,10 @@ function formatSpan(ms: number): string {
       <span v-if="detail" class="thinking-detail">· {{ detail }}</span>
       <span class="thinking-chevron" aria-hidden="true">{{ expanded ? '▾' : '▸' }}</span>
     </button>
-    <!-- Plain text, never markdown: chain-of-thought is freeform prose that
-         markdown would mangle.  The full text renders — it is bounded
-         upstream by the request's max_tokens. -->
-    <pre v-if="expanded" class="thinking-quote">{{ block.reasoning }}</pre>
+    <!-- Never markdown: chain-of-thought is freeform prose that markdown
+         would mangle, so the text is escaped verbatim and only its code —
+         fenced blocks and `inline` spans — is lifted out and highlighted.
+         The full text renders: it is bounded upstream by max_tokens. -->
+    <pre v-if="expanded" class="thinking-quote" v-html="rendered"></pre>
   </div>
 </template>

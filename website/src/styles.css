@@ -862,6 +862,26 @@ body {
   word-wrap: break-word;
 }
 
+/* Code in a thought: a surface to sit on and full-contrast tokens, since
+   the quote around it is muted and unstyled tokens would inherit that.
+   Block-level inside the quote's <pre>, which keeps the wrapping. */
+.thinking-code {
+  display: block;
+  margin: 4px 0;
+  padding: 6px 8px;
+  background: var(--editor-surface-2);
+  border-radius: 4px;
+  color: var(--text);
+}
+
+/* An identifier reads the same in a thought as in an answer. */
+.thinking-inline {
+  background: var(--editor-surface-2);
+  border: 1px solid var(--editor-border);
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+
 /* Spinner */
 .spinner {
   width: 11px;
