@@ -1,17 +1,15 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { Block } from '../types'
+import { blockStatus } from '../blockStatus'
 
 const props = defineProps<{ block: Extract<Block, { kind: 'tool' }> }>()
 
 const expanded = ref(false)
 
-const state = computed<'running' | 'ok' | 'error' | 'cancelled'>(() => {
-  if (props.block.open) return 'running'
-  const result = props.block.result
-  if (!result) return 'cancelled'
-  return result.success ? 'ok' : 'error'
-})
+// The console-wide vocabulary, not a card-local one: the header's trailing
+// word and the gutter's mark are two readings of the same state.
+const state = computed(() => blockStatus(props.block))
 
 const statusLabel = computed(() => {
   switch (state.value) {
