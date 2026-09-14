@@ -106,15 +106,22 @@ function seedMessages() {
   return messages
 }
 
-// The real server persists a turn-cancelled repair marker and tags it at
-// replay — the mock stands in for that pipeline, so cancels accumulate here
-// (fold-tagged, like serialize_transcript emits) and every hello replays them.
-const cancelMarkers = []
+// The persisted transcript every hello replays: the seed history, plus what
+// the live turns below append — assistant messages (a completed think turn,
+// so a reload shows the same thinking card the live stream built) and the
+// fold-tagged turn-cancelled repair markers serialize_transcript emits.
+// Swapping conversations empties it, the way the real server replays a
+// fresh conversation's transcript.
+let transcript = seedMessages()
 
-// Completed think turns accumulate here too: the real server persists the
-// assistant message (reasoning block + content) and replays it, so a
-// reloaded page shows the same thinking card the live stream built.
-const turnLog = []
+// The active conversation, mirrored into the hello / session_info payloads.
+// The server auto-titles a conversation from the first user input of its
+// first turn, and /clear starts a new, untitled one.
+let conversation = { id: 'conv-1', sequence_num: 1, title: 'seed conversation' }
+
+// The server's MAX_TITLE_LENGTH (toddler/session/models.py): the auto-title
+// cuts a first user input to it, and a rename is clamped to it.
+const MAX_TITLE_LENGTH = 80
 
 // The real server broadcasts session_info, notices and post-slash hello
 // replays to every subscribed client (only the connect-time hello is
@@ -126,12 +133,16 @@ function helloFrame() {
   return {
     type: 'hello',
     session,
-    conversation: { id: null, sequence_num: null, title: null },
+    conversation,
     busy: false,
     paused: null,
     plan: null,
-    messages: [...seedMessages(), ...turnLog, ...cancelMarkers],
+    messages: [...transcript],
   }
+}
+
+function sessionInfoFrame() {
+  return { type: 'session_info', session: { ...session }, conversation }
 }
 
 const wss = new WebSocketServer({ server, path: '/ws' })
@@ -176,6 +187,29 @@ wss.on('connection', (ws) => {
           })
           break
         }
+        // /clear [title] swaps in a fresh conversation and broadcasts a full
+        // hello replay whose transcript is empty.  The title names the
+        // conversation being LEFT — the archived one, never the fresh one it
+        // activates — so a new conversation always starts untitled.  An
+        // empty conversation is renamed in place rather than archived.
+        if (msg.input.trim() === '/clear' || msg.input.trim().startsWith('/clear ')) {
+          const title = msg.input.trim().slice('/clear'.length).trim() || null
+          if (title) conversation = { ...conversation, title }
+          if (transcript.length) {
+            conversation = {
+              id: `conv-${conversation.sequence_num + 1}`,
+              sequence_num: conversation.sequence_num + 1,
+              title: null,
+            }
+            transcript = []
+          }
+          broadcast(helloFrame())
+          broadcast({
+            type: 'notice',
+            message: 'Started new conversation. Your previous conversation was archived.',
+          })
+          break
+        }
         // First turn gates on a Bash call; later turns stream and finish —
         // the harness needs a plain send (no ask) to test the send-pin alone.
         const gate = msg.input.startsWith('gate')
@@ -188,6 +222,14 @@ wss.on('connection', (ws) => {
         // that ends with success:false.  The seed only ever succeeds, and
         // the gate path is always approved and always returns a result.
         const fail = msg.input.startsWith('fail')
+        // The real server auto-titles a conversation from the first user
+        // input of its first turn, before the state change whose observer
+        // re-broadcasts session_info — so a live header follows untitled →
+        // titled without a reload.
+        if (!conversation.title) {
+          conversation = { ...conversation, title: msg.input.trim().slice(0, MAX_TITLE_LENGTH) }
+          broadcast(sessionInfoFrame())
+        }
         send({ type: 'turn_started' })
         if (fail) {
           send({ type: 'content_delta', text_delta: 'running the failing call\n' })
@@ -228,7 +270,7 @@ wss.on('connection', (ws) => {
         }
         if (!gate) {
           if (think) {
-            turnLog.push({ role: 'assistant', content, reasoning: THINK_REASONING })
+            transcript.push({ role: 'assistant', content, reasoning: THINK_REASONING })
           }
           send({ type: 'agent_finished', reason: 'completed', usage: null })
           send({ type: 'state', busy: false })
@@ -267,7 +309,7 @@ wss.on('connection', (ws) => {
         send({ type: 'turn_cancelled' })
         // Mirrors the real contract: cancel_turn() persists the repair
         // marker, then the runner's finally broadcasts busy:false.
-        cancelMarkers.push({
+        transcript.push({
           role: 'user',
           content: '[The previous turn was cancelled by the user.]',
           fold: 'cancelled',
@@ -277,8 +319,27 @@ wss.on('connection', (ws) => {
       case 'ping':
         send({ type: 'pong' })
         break
+      case 'rename_conversation': {
+        // Mirrors the real command: strip and clamp like the auto-title,
+        // refuse an empty one, ack the caller, then broadcast the metadata
+        // so every tab relabels its header without a hello replay.
+        const title = typeof msg.title === 'string' ? msg.title.trim().slice(0, MAX_TITLE_LENGTH) : ''
+        if (!title) {
+          send({
+            type: 'error',
+            code: 'invalid_title',
+            message: 'A conversation title cannot be empty.',
+          })
+          break
+        }
+        conversation = { ...conversation, title }
+        send({ type: 'ack', cmd: 'rename_conversation', accepted: true })
+        broadcast(sessionInfoFrame())
+        break
+      }
       case 'set_mode':
-        broadcast({ type: 'session_info', session: { ...session, permission_mode: msg.mode }, conversation: { id: null, sequence_num: null, title: null } })
+        session.permission_mode = msg.mode
+        broadcast(sessionInfoFrame())
         break
       case 'set_context': {
         // Test-only backdoor: step context_usage_pct across the pill's 50%
@@ -292,7 +353,7 @@ wss.on('connection', (ws) => {
         session.context_usage_pct = pct
         if (land !== undefined) session.compact_to_pct = land
         send({ type: 'ack', cmd: 'set_context', accepted: true })
-        broadcast({ type: 'session_info', session: { ...session }, conversation: { id: null, sequence_num: null, title: null } })
+        broadcast(sessionInfoFrame())
         break
       }
       default:

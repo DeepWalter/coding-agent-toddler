@@ -19,6 +19,13 @@
 //            streams and reading "Thought for …" once agent_finished lands
 //            — and a reload replays the same block, body byte-identical
 //            but with the live-only readings gone
+//  phase 7 — console header: the conversation's title sits on the same row
+//            as the explorer's, and follows the live conversation through
+//            /clear (fresh, untitled) and the auto-title its first turn gets
+//  phase 8 — renaming it in place: hovering lights the title block and its
+//            pen, the click opens a selected box sized to the text on the
+//            same row, Enter commits (and keeps the transcript), Escape and
+//            an empty commit both revert, and the new title survives a reload
 // Prints PASS/FAIL plus diagnostics; exits 1 on any failure.
 import { chromium } from 'playwright'
 import WebSocket from 'ws'
@@ -680,6 +687,262 @@ await page.click('button:has-text("Send")')
   }
   console.log(`phase6 failed call reads ✗ ${JSON.stringify(seen)} ${seen === '✗' ? 'PASS' : 'FAIL'}`)
   if (seen !== '✗') fails++
+}
+
+// --- Phase 7: the console header — the pane's title line, on the same row
+// as the explorer's, following the live conversation ---
+
+// Longer than the server's 80-char title limit, so the auto-title's
+// truncation is exercised rather than assumed.
+const FIRST_TURN_MESSAGE =
+  'auto-title this conversation from its first user input, which the server truncates at eighty chars'
+const AUTO_TITLE = FIRST_TURN_MESSAGE.slice(0, 80)
+const RENAMED_TITLE = 'renamed by the test'
+
+// Reads the two header rows and the console's title in one pass.  The
+// boxes are compared as measured geometry, so retuning the padding cannot
+// silently drift the rows apart.
+const headerInfo = () =>
+  page.evaluate(() => {
+    const rect = (sel) => {
+      const el = document.querySelector(sel)
+      if (!el) return null
+      const r = el.getBoundingClientRect()
+      return { top: Math.round(r.top), height: Math.round(r.height) }
+    }
+    const title = document.querySelector('.console-title')
+    const explorerTitle = document.querySelector('.explorer-title')
+    return {
+      console: rect('.console-header'),
+      explorer: rect('.explorer-header'),
+      text: title?.textContent.trim() ?? null,
+      weight: title ? getComputedStyle(title).fontWeight : null,
+      explorerWeight: explorerTitle ? getComputedStyle(explorerTitle).fontWeight : null,
+    }
+  })
+
+// P7a: one row across the split, naming the conversation the hello payload
+// carried — and weighting the title like the explorer's next to it.
+{
+  const info = await headerInfo()
+  const ok =
+    info.console !== null &&
+    info.explorer !== null &&
+    info.console.top === info.explorer.top &&
+    info.console.height === info.explorer.height &&
+    info.text === 'seed conversation' &&
+    info.weight === info.explorerWeight
+  console.log(`phase7 console header names the conversation on the explorer's row ${JSON.stringify(info)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+
+// P7b: /clear starts a fresh conversation — the header drops to its empty
+// state live, off the hello replay the server broadcasts, no reload.
+await page.fill('textarea.input-bar-textarea', '/clear')
+await page.click('button:has-text("Send")')
+{
+  let text = null
+  try {
+    await page.waitForFunction(
+      () => document.querySelector('.console-title')?.textContent.trim() === 'New conversation',
+      { timeout: 8000 },
+    )
+    text = 'New conversation'
+  } catch {
+    // Left null — the mismatch below reports it.
+  }
+  console.log(`phase7 /clear leaves the header on a fresh conversation ${JSON.stringify(text)} ${text === 'New conversation' ? 'PASS' : 'FAIL'}`)
+  if (text !== 'New conversation') fails++
+}
+
+// P7c: the first turn titles the conversation (server-side, truncated at
+// 80 chars) and the header follows — still on the one row the explorer's
+// header holds, however long the title runs.
+{
+  await page.fill('textarea.input-bar-textarea', FIRST_TURN_MESSAGE)
+  await page.click('button:has-text("Send")')
+  let info = null
+  try {
+    await page.waitForFunction(
+      (want) => document.querySelector('.console-title')?.textContent.trim() === want,
+      AUTO_TITLE,
+      { timeout: 8000 },
+    )
+    info = await headerInfo()
+  } catch {
+    info = await headerInfo()
+  }
+  const ok =
+    info.text === AUTO_TITLE &&
+    info.console.height === info.explorer.height &&
+    info.console.top === info.explorer.top
+  console.log(`phase7 first turn titles the header (${info.text?.length} chars) on the same row ${JSON.stringify(info.console)}/${JSON.stringify(info.explorer)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+
+// --- Phase 8: renaming the title in place ---
+const titleText = () =>
+  page.evaluate(() => document.querySelector('.console-title')?.textContent.trim() ?? null)
+// The title box, or null when the header is showing the title itself.
+// `sizer` is the invisible span the box takes its width from, so
+// input === sizer is what "the box fits the title" means.
+const boxInfo = () =>
+  page.evaluate(() => {
+    const input = document.querySelector('.console-title-input')
+    if (!input) return null
+    const header = document.querySelector('.console-header')
+    const explorer = document.querySelector('.explorer-header')
+    const sizer = document.querySelector('.console-title-sizer')
+    const hcs = getComputedStyle(header)
+    return {
+      value: input.value,
+      focused: document.activeElement === input,
+      selected: input.selectionStart === 0 && input.selectionEnd === input.value.length,
+      width: Math.round(input.getBoundingClientRect().width),
+      sizer: Math.round(sizer.getBoundingClientRect().width),
+      // the room the box is clamped to: the header's content box, not its
+      // border box — the 10px side paddings are not available to it
+      avail: Math.round(
+        header.clientWidth - parseFloat(hcs.paddingLeft) - parseFloat(hcs.paddingRight),
+      ),
+      height: Math.round(header.getBoundingClientRect().height),
+      explorerHeight: Math.round(explorer.getBoundingClientRect().height),
+      top: Math.round(header.getBoundingClientRect().top),
+      explorerTop: Math.round(explorer.getBoundingClientRect().top),
+    }
+  })
+
+// What the title offers before it is clicked: the hover block and the pen.
+// `block` is the button's own width — it hugs the title, it is not the row.
+const titleAffordance = () =>
+  page.evaluate(() => {
+    const btn = document.querySelector('.console-title')
+    const pen = document.querySelector('.console-title-pen')
+    return {
+      pen: Number(getComputedStyle(pen).opacity),
+      background: getComputedStyle(btn).backgroundColor,
+      block: Math.round(btn.getBoundingClientRect().width),
+      row: Math.round(document.querySelector('.console-header').getBoundingClientRect().width),
+    }
+  })
+
+// Let the auto-titling turn settle first: the row count below is the
+// baseline for "renaming did not replay the transcript", and a turn still
+// streaming would add to it on its own.
+await page.waitForSelector('button:has-text("Send")', { timeout: 15000 })
+
+// P8a0: hovering the title lights the block and fades the pen in — at
+// rest neither shows, so the affordance is what says "editable".
+await page.mouse.move(10, 400) // park the pointer clear of the header
+{
+  const resting = await titleAffordance()
+  await page.hover('.console-title')
+  const hovered = await titleAffordance()
+  const ok =
+    resting.pen === 0 &&
+    resting.background === 'rgba(0, 0, 0, 0)' &&
+    hovered.pen === 1 &&
+    hovered.background !== resting.background
+  console.log(`phase8 hover lights the title block and its pen ${JSON.stringify({ resting, hovered })} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+
+// P8a: clicking the title opens a box holding it, focused and selected, on
+// the same row — and no wider than the text in it, which is the whole point
+// of replacing the full-width box.
+{
+  const rows = await page.evaluate(
+    () => document.querySelectorAll('.console-pane .stream-row').length,
+  )
+  await page.click('.console-title')
+  const info = await boxInfo()
+  const ok =
+    info !== null &&
+    info.value === AUTO_TITLE &&
+    info.focused &&
+    info.selected &&
+    info.height === info.explorerHeight &&
+    info.top === info.explorerTop &&
+    // The box is the text's width, capped by the row: this 80-char title is
+    // wider than the pane, so here it clamps — the short-title rename below
+    // is where hugging is read on its own.
+    Math.abs(info.width - Math.min(info.sizer, info.avail)) <= 1
+  console.log(`phase8 click opens a focused, selected title box on the same row, sized to the text ${JSON.stringify(info)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+
+  // P8b: Enter commits — the header takes the new title, and the transcript
+  // it labeled is still there (a rename is metadata, not a replay).
+  await page.fill('.console-title-input', RENAMED_TITLE)
+  await page.keyboard.press('Enter')
+  let text = null
+  try {
+    await page.waitForFunction(
+      (want) => document.querySelector('.console-title')?.textContent.trim() === want,
+      RENAMED_TITLE,
+      { timeout: 8000 },
+    )
+    text = RENAMED_TITLE
+  } catch {
+    text = await titleText()
+  }
+  const after = await page.evaluate(
+    () => document.querySelectorAll('.console-pane .stream-row').length,
+  )
+  // With a short title the resting block is unmistakably not the row —
+  // which is what the hover highlight draws around.
+  const block = await titleAffordance()
+  const ok2 =
+    text === RENAMED_TITLE &&
+    after === rows &&
+    block.block < block.row / 2
+  console.log(`phase8 Enter commits the title and keeps the transcript (${rows} rows) ${JSON.stringify(text)} ${ok2 ? 'PASS' : 'FAIL'}`)
+  if (!ok2) fails++
+}
+
+// P8c: Escape discards the edit — the stored title comes back.
+await page.click('.console-title')
+await page.fill('.console-title-input', 'discard me')
+await page.keyboard.press('Escape')
+await page.waitForTimeout(200)
+{
+  const text = await titleText()
+  const box = await boxInfo()
+  const ok = text === RENAMED_TITLE && box === null
+  console.log(`phase8 Escape discards the edit ${JSON.stringify(text)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+
+// P8d: an empty box is not a title — it reverts instead of clearing, since
+// a cleared title would be re-derived from the next turn's first words.
+await page.click('.console-title')
+await page.fill('.console-title-input', '   ')
+await page.keyboard.press('Enter')
+await page.waitForTimeout(200)
+{
+  const text = await titleText()
+  const ok = text === RENAMED_TITLE
+  console.log(`phase8 an empty commit reverts ${JSON.stringify(text)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+
+// P8e: the rename reached the server, not just the header — a reload
+// replays the stored title through hello, and the discarded edits are gone.
+await page.reload()
+await page.waitForSelector('.console-pane')
+{
+  let text = null
+  try {
+    await page.waitForFunction(
+      (want) => document.querySelector('.console-title')?.textContent.trim() === want,
+      RENAMED_TITLE,
+      { timeout: 8000 },
+    )
+    text = RENAMED_TITLE
+  } catch {
+    text = await titleText()
+  }
+  console.log(`phase8 the rename survives a reload ${JSON.stringify(text)} ${text === RENAMED_TITLE ? 'PASS' : 'FAIL'}`)
+  if (text !== RENAMED_TITLE) fails++
 }
 
 await browser.close()
