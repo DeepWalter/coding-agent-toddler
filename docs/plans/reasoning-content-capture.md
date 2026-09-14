@@ -120,7 +120,7 @@ Columns are the final names; "(was …)" marks the rename baseline from decision
 | WS frame / TS Frame | `{"type": "content_delta", "text_delta": ...}` (was `text_delta`/`text`) | `{"type": "reasoning_delta", "text_delta": ...}`, new union member |
 | ReplayMessage | `content: string` (unchanged) | `reasoning?: string`, attached to the assistant entry |
 | Console block kind | `'assistant'`, payload `content` (was `text`) | `'thinking'`, payload `reasoning`, `{id, kind, reasoning, open}` — **new kind**; do *not* reuse `'fold'` (that is the non-expandable muted marker line with its own label machinery) |
-| Vue component | assistant bubble unchanged | `ThinkingCard.vue` (body = `block.reasoning`), copies ToolCard's collapse anatomy |
+| Vue component | assistant bubble unchanged | `ThinkingBlock.vue` (body = `block.reasoning`), a "Thought" toggle over a quoted block |
 | Terminal | renderer buffer `_content_buf` (was `_text_buf`) | `_thinking` accumulator + dismiss "thinking" view |
 
 Factories follow the kinds and take the payload slot's name: `content_block(text)`
@@ -224,7 +224,7 @@ are UI strings, not vocabulary.
   — was `msg.text`) and attach `entry["reasoning"] = msg.reasoning` (joined verbatim);
   **emit the entry when `msg.content or msg.reasoning`** — today's `if msg.text:`
   swallows thought-only assistant messages (reasoning then a tool call), which must
-  replay as a thinking card.  Entry order stays `[thinking, content, tool_use...]`,
+  replay as a thinking block.  Entry order stays `[thinking, content, tool_use...]`,
   matching the live stream.  No changes needed in `ws.py` or `api.py` (both call this).
 - `serialize_token_usage`: add `reasoning_tokens`.
 
@@ -282,13 +282,18 @@ are UI strings, not vocabulary.
     `msg.reasoning` is present, then the assistant bubble when `msg.content` exists.
     Parity is structural: a replayed card is closed exactly like a live card after
     `agent_finished`.
-- New `ThinkingCard.vue` (copy ToolCard's collapse anatomy): `💭` + header label
-  `Thinking…` while `block.open`, else `Thought`; chevron `▾/▸`; body `v-if` on a local
-  `expanded` ref, rendered as a `<pre>` with `white-space: pre-wrap` **plain text**
-  (CoT is freeform prose that markdown would mangle) showing `block.reasoning`, dim
-  styling, full text on expand (bounded by `max_tokens` server-side).  Wire into
-  `ConsolePane.vue` between the assistant bubble and tool-card branches; add
-  `.thinking-card*` styles mirroring `.tool-card`.
+- New `ThinkingBlock.vue`: the console's one quoted aside, not a card — tool
+  invocations keep the card chrome, a thought must not read as their peer.  A
+  content-width `💭` + label toggle (`Thinking…` while `block.open`, else
+  `Thought`; chevron `▾/▸`, `aria-expanded`) over a body `v-if` on a local
+  `expanded` ref: a `<pre>` with `white-space: pre-wrap` **plain text** (CoT is
+  freeform prose that markdown would mangle) showing `block.reasoning`, dim
+  styling, indented behind a neutral 2px `--editor-border` rule — deliberately
+  quieter than the accent-barred markdown blockquote inside replies.  No
+  `max-height`: revealing is always the user's click, so the text flows and the
+  pane scrolls it.  Both live and replayed blocks start collapsed, and expansion
+  is local UI state that never touches the block.  Wire into `ConsolePane.vue`
+  between the assistant bubble and tool-card branches; add `.thinking*` styles.
 
 ## Phase 8 — Test mocks ✅
 
@@ -344,11 +349,14 @@ reasoning_tokens=40)` producing `[reasoning_block, content_block]` with usage ca
   `content_delta` and push `{role: 'assistant', content, reasoning}` on finish.
   Non-think turns change only in the renamed frame type and key — byte-identical
   otherwise.
-- `ui-test.mjs`: seeded thinking card collapsed by default (`Thought` + `▸`), click
-  expands to verbatim body, click collapses; a live `think:` turn produces a second
-  card *before* its message bubble reading `Thinking…` while streaming and `Thought`
-  after `agent_finished`; after `page.reload()` the card count and body text are
-  byte-identical and the card sits above its assistant bubble (live/reload parity).
+- `ui-test.mjs`: seeded thought block collapsed by default (`Thought` + `▸`, no
+  quote), click expands to the verbatim body behind a 2px left rule (the
+  quoted-block contract, asserted on the computed style), click collapses; a live
+  `think:` turn produces a second block *before* its message bubble reading
+  `Thinking…` while streaming — still collapsed, so no future auto-open slips in —
+  and `Thought` after `agent_finished`; after `page.reload()` the block count and
+  body text are byte-identical and the block sits above its assistant bubble
+  (live/reload parity).
 
 ## Out of scope
 
@@ -366,8 +374,8 @@ streaming in the terminal (keys only exist at the dismiss screen).
    state-level tests, manual `TEST=cli` verification.
 3. Unconditional echo key — a strict third-party validator could reject it; accepted
    trade-off (self-scoping argument), documented in a code comment.
-4. Live/replay parity of the thinking card depends on the reducer close rules; a chunk
-   carrying reasoning + content interleaved could split cards live vs one in replay —
+4. Live/replay parity of the thinking block depends on the reducer close rules; a chunk
+   carrying reasoning + content interleaved could split blocks live vs one in replay —
    cosmetic, never content loss.
 5. The rename baseline's read-time alias (legacy `"type": "text"` rows) must outlive
    the sessions that wrote them — type-only, since the payload key never renamed;
