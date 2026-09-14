@@ -304,8 +304,10 @@ are UI strings, not vocabulary.
   opening to its `open` flipping false — one watch covers all five close paths
   (answer starting, tool call, turn end, fatal error, cancel).  Sub-second
   thoughts read `less than a second` rather than a rounded `0 seconds`, and a
-  minute-plus reads in minutes.  The count is a sibling `.thinking-detail` span
-  so the phrase keeps the 600 weight and the number stays secondary.
+  minute-plus reads in minutes; past a thousand the count abbreviates to one
+  decimal (`1.1K`, `1.1M`), rounding before it picks the unit so a near-million
+  never prints as `1000.0K`.  The count is a sibling `.thinking-detail` span so
+  the phrase keeps the 600 weight and the number stays secondary.
 
 ## Phase 8 — Test mocks ✅
 

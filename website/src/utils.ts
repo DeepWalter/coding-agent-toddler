@@ -22,6 +22,18 @@ export function estimateTokens(text: string): number {
   return Math.ceil((text.length - wide) / 4) + wide
 }
 
+/** Token counts get long fast, and the label is a glanceable figure rather
+ *  than a measurement — so past a thousand it abbreviates to one decimal:
+ *  999 stays exact, then a K, then an M. */
+export function formatTokens(n: number): string {
+  if (n < 1000) return `${n}`
+  // Round to the printed decimal *before* choosing the unit, so 999_990
+  // reads as 1.0M instead of 1000.0K.
+  const thousands = Math.round(n / 100) / 10
+  if (thousands < 1000) return `${thousands.toFixed(1)}K`
+  return `${(Math.round(n / 100_000) / 10).toFixed(1)}M`
+}
+
 /** Identity of a tab-strip entry — the same file can be open as a file
  * tab AND as a staged/unstaged diff, so the kind + side prefix the path. */
 export function tabKey(tab: TabEntry): string {

@@ -342,7 +342,7 @@ const SEED_REASONING =
 // Label shapes — the counts are the point, so these match a pattern rather
 // than pinning the mock's fragment count and stream duration (which lands in
 // the sub-second branch on a fast run, "1 second" on a slow one).
-const THINKING_LIVE = /^Thinking… · \d+ tokens?$/
+const THINKING_LIVE = /^Thinking… · \d+(\.\d+[KM])? tokens?$/
 const THOUGHT_DONE =
   /^Thought for (\d+ seconds?|\d+ minutes?( \d+ seconds?)?|less than a second)$/
 

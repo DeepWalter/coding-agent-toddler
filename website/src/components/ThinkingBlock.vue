@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import type { Block } from '../types'
-import { estimateTokens } from '../utils'
+import { estimateTokens, formatTokens } from '../utils'
 
 const props = defineProps<{ block: Extract<Block, { kind: 'thinking' }> }>()
 
@@ -39,7 +39,7 @@ const label = computed(() => {
 const detail = computed(() => {
   if (!props.block.open) return ''
   const n = estimateTokens(props.block.reasoning)
-  return `${n} ${n === 1 ? 'token' : 'tokens'}`
+  return `${formatTokens(n)} ${n === 1 ? 'token' : 'tokens'}`
 })
 
 /** Sub-second thoughts would round to a nonsensical "0 seconds", and a
