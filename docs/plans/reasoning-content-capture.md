@@ -235,25 +235,39 @@ are UI strings, not vocabulary.
   `self._renderer.on_reasoning_delta(event)` (without the arm the catch-all silently
   drops thinking).
 - `toddler/cli/renderer.py` `StreamingRenderer`:
-  - State: `_thinking = ""` and `_dismiss_view: Literal["output", "thinking"]`, both
-    reset in `start()`.
-  - `on_content_delta` (renamed from `on_text_delta`): accumulate `event.text_delta`
-    (the fragment field, formerly `event.text`); `on_reasoning_delta`: accumulate
-    `event.text_delta` + `_refresh()`.
+  - State: `_thinking = ""` plus `_thinking_started`/`_thinking_seconds` (the round in
+    flight and the rounds banked), and `_dismiss_view: Literal["output", "thinking"]`,
+    all reset in `start()`.
+  - `on_content_delta` (renamed from `on_text_delta`): close the reasoning round,
+    accumulate `event.text_delta` (the fragment field, formerly `event.text`);
+    `on_reasoning_delta`: open a round if none is in flight, accumulate
+    `event.text_delta` + `_refresh()`.  `on_tool_call_start` closes a round too.
   - `_build_renderable`: in the `"thinking"` dismiss view (non-empty `_thinking`) the
     scrollable panel shows `Markdown(self._thinking)` titled "Thinking" instead of the
     Output panel — reusing the existing clip/scroll machinery; otherwise, when
     `_thinking` is non-empty, a dim collapsed line above the Output panel:
-    `💭 Thought — press t to review` (dismiss) / `💭 Thinking…` (live streaming).
+    `💭 Thought for N seconds — press t to review` (dismiss) or
+    `💭 Thinking… · N tokens` (live streaming).  Both readings are the console's own
+    (`toddler/utils/format.py`, mirroring the web label): the count estimates the
+    buffer — the real tokenizer lives in the context window and the marker repaints
+    10x/s — and the span accumulates per round, since a tool call ends one round and
+    the model thinks again.  The clock is injectable, and `stop()` closes it so the
+    dismiss screen cannot tick while the user sits there.
   - `_wait_for_dismiss`: enter the raw key loop when scrollable **or**
     (`_thinking` and stdin is a tty — the termios path crashes on piped stdin);
     `_wait_for_dismiss_scrollable` gains `t`/`T` → swap `_dismiss_view` +
     `_refresh(force=True)` (no-op when no thinking).  Existing keys are ↑/↓/PgUp/PgDn/
     Enter/q/Q/Ctrl+C — `t` is free.  Expanded-while-streaming is deliberately not
     supported: keys only exist at the dismiss screen.
-  - `flush_to_console`: normal output plus a single dim `💭 Thought — N chars`
+  - `flush_to_console`: normal output plus a single dim `💭 Thought — N seconds`
     summary line in the scrollback (no interaction after the alt screen; the full text
-    is lossless in the session DB).  Reset `_dismiss_view` in `stop()`.
+    is lossless in the session DB).  A span, not a size: `flush_to_console` runs before
+    `on_agent_finished` hands over the turn's usage, so the API's own reasoning count
+    belongs on that later `Tokens:` line, not here.  Reset `_dismiss_view` in `stop()`.
+  - `Renderer.on_agent_finished` (base, so both renderers get it): the closing
+    `Tokens: X in / Y out` line itemizes `(N reasoning)` when the API reported any —
+    truthiness, since `reasoning_tokens` defaults to 0 and the plan-explore phase
+    passes `usage=None`.
 - `NonStreamingRenderer`: plain scrollback cannot collapse — print dim
   `💭 Thought:` then dim-italic text, once per message (NonStreamHandler yields one
   ReasoningDelta).
@@ -426,13 +440,15 @@ All pre-existing suites staying green doubles as the regression net for the
 Manual terminal streaming through the real provider path:
 
 ```
-printf 'reason\n/quit\n' | TEST=cli .venv/bin/python -m toddler
+printf 'reason\n/quit\n' | TEST=cli .venv/bin/tod
 ```
 
-Expect: dim `💭 Thinking…` line while streaming; at the dismiss screen press `t` to
-flip to the scrollable "Thinking" panel; Enter → scrollback shows output plus
-`💭 Thought — N chars`.  `text` turns show no thinking UI; `read` (tool) turns show
-thinking before the tool row.
+Expect: dim `💭 Thinking… · N tokens` line while streaming; at the dismiss screen
+`💭 Thought for N seconds — press t to review`, and `t` flips to the scrollable
+"Thinking" panel; Enter → scrollback shows output plus `💭 Thought — N seconds`,
+then `Tokens: X in / Y out (60 reasoning)` (the dummy provider itemizes 60) and
+`Done`.  `text` turns show no thinking UI; `read` (tool) turns show thinking before
+the tool row.
 
 Web harness (Playwright against the mock — no Python backend needed; `npm run build`
 runs `vue-tsc`):
