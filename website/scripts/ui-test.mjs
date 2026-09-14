@@ -363,16 +363,20 @@ const THOUGHT_DONE =
 
 // Document positions of the newest thought block and newest assistant
 // bubble — the block must sit above the bubble its answer lands in.
+// Compared in document order, not by pane-child index: every block now
+// renders inside a .stream-row (the status gutter), so the pane's children
+// are rows, not blocks.
 const thoughtAboveBubble = () =>
   page.evaluate(() => {
-    const nodes = [...document.querySelector('.console-pane').children]
-    const thoughts = nodes.filter((el) => el.classList.contains('thinking'))
-    const bubbles = nodes.filter(
-      (el) => el.classList.contains('message') && el.classList.contains('assistant'),
-    )
-    const thought = nodes.indexOf(thoughts[thoughts.length - 1])
-    const bubble = nodes.indexOf(bubbles[bubbles.length - 1])
-    return { thought, bubble, ok: thought >= 0 && bubble >= 0 && thought < bubble }
+    const thoughts = document.querySelectorAll('.console-pane .thinking')
+    const bubbles = document.querySelectorAll('.console-pane .message.assistant')
+    const thought = thoughts[thoughts.length - 1]
+    const bubble = bubbles[bubbles.length - 1]
+    const ok =
+      !!thought &&
+      !!bubble &&
+      (thought.compareDocumentPosition(bubble) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+    return { thoughts: thoughts.length, bubbles: bubbles.length, ok }
   })
 
 // P5a: the replayed block starts collapsed — "Thought" + ▸, no quote, and no
@@ -537,6 +541,145 @@ const thoughtsBefore = await thoughtCount()
   const order = await thoughtAboveBubble()
   console.log(`phase5 replayed block above its bubble ${JSON.stringify(order)} ${order.ok ? 'PASS' : 'FAIL'}`)
   if (!order.ok) fails++
+}
+
+// --- Phase 6: the status gutter — every output block indents behind one
+// status mark; user input is the one row that stays flush left, unmarked ---
+const GLYPH = { running: '', ok: '✓', error: '✗', cancelled: '·' }
+
+// P6a: a plain turn settles the whole transcript, so the gutter contract —
+// indent, one outdented mark per output block, none on user input — can be
+// read in one pass.  Widths are measured, never hard-coded: the pane's own
+// 14px inset and the gutter are compared as edges, so retuning either cannot
+// silently fail this.
+await page.fill('textarea.input-bar-textarea', 'plain message, no gate')
+await page.click('button:has-text("Send")')
+await waitPinned()
+await page.waitForTimeout(700)
+{
+  const info = await page.evaluate(() => {
+    const pane = document.querySelector('.console-pane')
+    const rows = [...pane.querySelectorAll(':scope > .stream-row')]
+    const mark = (r) => r.querySelector(':scope > .status-mark')
+    const block = (r) => r.querySelector(':scope > :not(.status-mark)')
+    const box = (el) => el.getBoundingClientRect()
+    const users = rows.filter((r) => r.dataset.kind === 'user')
+    const output = rows.filter((r) => r.dataset.kind !== 'user')
+    return {
+      rows: rows.length,
+      output: output.length,
+      // the doc's contract: exactly one mark per output row, none on a user
+      // row, and every mark left of the block it belongs to
+      stray: output.filter((r) => r.querySelectorAll(':scope > .status-mark').length !== 1).length,
+      userMarked: users.filter((r) => mark(r)).length,
+      outdented: output.filter((r) => box(mark(r)).right <= box(block(r)).left + 1).length,
+      // the indent: the user's text sits at the pane's content edge, the
+      // output blocks one gutter to its right
+      contentLeft: Math.round(box(pane).left) + 14,
+      userTextLeft: Math.round(box(block(users[0])).left),
+      outputTextLeft: Math.round(box(block(output[0])).left),
+    }
+  })
+  const ok =
+    info.output > 0 &&
+    info.stray === 0 &&
+    info.userMarked === 0 &&
+    info.outdented === info.output &&
+    info.userTextLeft === info.contentLeft &&
+    info.outputTextLeft > info.userTextLeft
+  console.log(
+    `phase6 output blocks indented behind one outdented mark, user flush left ${JSON.stringify(info)} ${ok ? 'PASS' : 'FAIL'}`,
+  )
+  if (!ok) fails++
+}
+
+// P6a2: the settled transcript reads as one vocabulary — spinner iff
+// running, the right glyph otherwise, and nothing still turning.
+{
+  const marks = await page.evaluate(() =>
+    [...document.querySelectorAll('.console-pane .status-mark')].map((el) => ({
+      state: ['running', 'ok', 'error', 'cancelled'].find((s) => el.classList.contains(s)) ?? '(none)',
+      kind: el.closest('.stream-row')?.dataset.kind ?? '?',
+      text: el.textContent.trim(),
+      spinner: el.querySelector('.spinner') !== null,
+    })),
+  )
+  const uniform = marks.every(
+    (m) => m.spinner === (m.state === 'running') && m.text === (GLYPH[m.state] ?? null),
+  )
+  const live = marks.filter((m) => m.state === 'running').length
+  const ok = uniform && live === 0
+  console.log(
+    `phase6 settled transcript carries one vocabulary (${marks.length} marks, ${live} live) ${ok ? 'PASS' : `FAIL (${JSON.stringify(marks.slice(0, 4))})`}`,
+  )
+  if (!ok) fails++
+}
+
+// P6b: the gate is a wait state — the tool's mark is the only live one, and
+// the answer that asked for it has already settled.  Before the reducer
+// closed the answer block on tool_call_start, this row span forever.
+await page.fill('textarea.input-bar-textarea', 'gate: list files')
+await page.click('button:has-text("Send")')
+await page.waitForSelector('.pause-prompt', { timeout: 15000 })
+{
+  const live = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('.console-pane > .stream-row')]
+    const has = (r, sel) => r?.querySelector(`:scope > ${sel}`) !== null
+    const last = rows[rows.length - 1]
+    return {
+      live: rows.filter((r) => has(r, '.status-mark.running')).length,
+      lastKind: last?.dataset.kind ?? '?',
+      toolLive: has(last, '.status-mark.running'),
+      answerSettled: has(rows[rows.length - 2], '.status-mark.ok'),
+      // the mark moved out of the card: nothing inline in its header
+      inline: document.querySelectorAll(
+        '.tool-card-header .spinner, .tool-card-header .tool-card-status',
+      ).length,
+    }
+  })
+  const ok =
+    live.live === 1 &&
+    live.lastKind === 'tool' &&
+    live.toolLive &&
+    live.answerSettled &&
+    live.inline === 0
+  console.log(`phase6 gate holds one live mark, its answer settled ${JSON.stringify(live)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+await page.click('.ask-close')
+await page.waitForSelector('.pause-prompt', { state: 'detached', timeout: 8000 })
+
+// P6c: a cancelled call settles as · — not a spinner that never stops.
+{
+  const mark = await page.evaluate(() =>
+    document
+      .querySelector('.stream-row[data-kind="tool"] .status-mark.cancelled')
+      ?.textContent.trim() ?? null,
+  )
+  console.log(`phase6 cancelled call reads · ${JSON.stringify(mark)} ${mark === '·' ? 'PASS' : 'FAIL'}`)
+  if (mark !== '·') fails++
+}
+
+// P6d: a failed call is the one producer of ✗.
+await page.fill('textarea.input-bar-textarea', 'fail: run it')
+await page.click('button:has-text("Send")')
+{
+  let seen = null
+  try {
+    await page.waitForFunction(
+      () => {
+        const rows = [...document.querySelectorAll('.stream-row[data-kind="tool"]')]
+        const row = rows[rows.length - 1]
+        return row?.querySelector(':scope > .status-mark.error')?.textContent.trim() === '✗'
+      },
+      { timeout: 15000 },
+    )
+    seen = '✗'
+  } catch {
+    // Left null — the mismatch below reports it.
+  }
+  console.log(`phase6 failed call reads ✗ ${JSON.stringify(seen)} ${seen === '✗' ? 'PASS' : 'FAIL'}`)
+  if (seen !== '✗') fails++
 }
 
 await browser.close()

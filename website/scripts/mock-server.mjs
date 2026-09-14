@@ -184,7 +184,36 @@ wss.on('connection', (ws) => {
         // enough for the harness to see "Thinking…" and its live position;
         // the finished entry is logged so a reload replays the same card.
         const think = msg.input.startsWith('think')
+        // A "fail" turn is the one producer of the gutter's ✗: a tool call
+        // that ends with success:false.  The seed only ever succeeds, and
+        // the gate path is always approved and always returns a result.
+        const fail = msg.input.startsWith('fail')
         send({ type: 'turn_started' })
+        if (fail) {
+          send({ type: 'content_delta', text_delta: 'running the failing call\n' })
+          send({
+            type: 'tool_call_start',
+            tool_id: 't2',
+            tool_name: 'Bash',
+            partial_input: { command: 'false' },
+          })
+          send({
+            type: 'tool_call_end',
+            tool_id: 't2',
+            tool_name: 'Bash',
+            input: { command: 'false' },
+            result: {
+              success: false,
+              output: null,
+              error: 'exit status 1',
+              checkpoint_id: null,
+              metadata: null,
+            },
+          })
+          send({ type: 'agent_finished', reason: 'completed', usage: null })
+          send({ type: 'state', busy: false })
+          break
+        }
         if (think) {
           for (const fragment of THINK_FRAGMENTS) {
             send({ type: 'reasoning_delta', text_delta: fragment })
