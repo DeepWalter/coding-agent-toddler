@@ -200,7 +200,7 @@ export type Block =
       reasoning: string
       /** Still streaming; `open` has tool-block semantics (the turn's
        *  terminal frame closes it, user clicks never do).  Expanded or
-       *  collapsed is local to ThinkingCard. */
+       *  collapsed is local to ThinkingBlock. */
       open: boolean
     }
   | {

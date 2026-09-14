@@ -4,7 +4,7 @@ import type { Block } from '../types'
 import { renderMarkdown } from '../markdown'
 import MessageBubble from './MessageBubble.vue'
 import PlanCard from './PlanCard.vue'
-import ThinkingCard from './ThinkingCard.vue'
+import ThinkingBlock from './ThinkingBlock.vue'
 import ToolCard from './ToolCard.vue'
 
 const props = defineProps<{
@@ -178,7 +178,7 @@ onBeforeUnmount(() => {
         :text="block.content"
         @open-file="(path) => emit('open-file', path)"
       />
-      <ThinkingCard v-else-if="block.kind === 'thinking'" :block="block" />
+      <ThinkingBlock v-else-if="block.kind === 'thinking'" :block="block" />
       <ToolCard v-else-if="block.kind === 'tool'" :block="block" />
       <PlanCard
         v-else-if="block.kind === 'plan'"
