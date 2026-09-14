@@ -12,11 +12,11 @@
 //            usage; past 50% the pill turns into a live /compact button
 //            (two-line hover copy) whose click lands the server's hello
 //            replay + notice
-//  phase 5 — thinking cards: the seeded reasoning replays collapsed and
-//            expands to its verbatim body; a live `think:` turn opens a
-//            second card above its bubble reading "Thinking…" while
+//  phase 5 — thought blocks: the seeded reasoning replays collapsed and
+//            expands to its verbatim quoted body; a live `think:` turn adds
+//            a second block above its bubble reading "Thinking…" while
 //            streaming, "Thought" after agent_finished — and a reload
-//            replays the same card, body byte-identical
+//            replays the same block, body byte-identical
 // Prints PASS/FAIL plus diagnostics; exits 1 on any failure.
 import { chromium } from 'playwright'
 import WebSocket from 'ws'
@@ -331,78 +331,87 @@ const tooltip = page.locator('.context-tooltip')
   if (stuck) fails++
 }
 
-// --- Phase 5: thinking cards — collapsed, verbatim, replayable ---
+// --- Phase 5: thought blocks — collapsed, verbatim, replayable ---
 // The mock seeds one reasoning-bearing transcript entry (SEED_REASONING in
 // mock-server.mjs) and streams a second on a `think:` turn.
 const SEED_REASONING =
   'seed thought: check the pane scrolls before answering\n' +
   'second line — rendered verbatim, never markdown'
 
-// Document positions of the newest thinking card and newest assistant
-// bubble — the card must sit above the bubble its answer lands in.
-const cardAboveBubble = () =>
+// Document positions of the newest thought block and newest assistant
+// bubble — the block must sit above the bubble its answer lands in.
+const thoughtAboveBubble = () =>
   page.evaluate(() => {
     const nodes = [...document.querySelector('.console-pane').children]
-    const cards = nodes.filter((el) => el.classList.contains('thinking-card'))
+    const thoughts = nodes.filter((el) => el.classList.contains('thinking'))
     const bubbles = nodes.filter(
       (el) => el.classList.contains('message') && el.classList.contains('assistant'),
     )
-    const card = nodes.indexOf(cards[cards.length - 1])
+    const thought = nodes.indexOf(thoughts[thoughts.length - 1])
     const bubble = nodes.indexOf(bubbles[bubbles.length - 1])
-    return { card, bubble, ok: card >= 0 && bubble >= 0 && card < bubble }
+    return { thought, bubble, ok: thought >= 0 && bubble >= 0 && thought < bubble }
   })
 
-// P5a: the replayed card starts collapsed — "Thought" + ▸, no body.
+// P5a: the replayed block starts collapsed — "Thought" + ▸, no quote.
 {
-  const card = page.locator('.thinking-card').first()
-  await card.waitFor({ timeout: 15000 })
+  const block = page.locator('.thinking').first()
+  await block.waitFor({ timeout: 15000 })
   const info = {
-    label: (await card.locator('.thinking-card-label').textContent()).trim(),
-    chevron: (await card.locator('.thinking-card-chevron').textContent()).trim(),
-    bodies: await card.locator('.thinking-card-pre').count(),
+    label: (await block.locator('.thinking-label').textContent()).trim(),
+    chevron: (await block.locator('.thinking-chevron').textContent()).trim(),
+    quotes: await block.locator('.thinking-quote').count(),
   }
-  const ok = info.label === 'Thought' && info.chevron === '▸' && info.bodies === 0
-  console.log(`phase5 seeded card collapsed ${JSON.stringify(info)} ${ok ? 'PASS' : 'FAIL'}`)
+  const ok = info.label === 'Thought' && info.chevron === '▸' && info.quotes === 0
+  console.log(`phase5 seeded block collapsed ${JSON.stringify(info)} ${ok ? 'PASS' : 'FAIL'}`)
   if (!ok) fails++
 }
 
-// P5b: click expands to the verbatim body; a second click collapses it.
+// P5b: click expands to the verbatim body inside a quoted block (a rule down
+// its left edge, not the old bordered card); a second click collapses it.
 {
-  const card = page.locator('.thinking-card').first()
-  await card.locator('.thinking-card-header').click()
-  const body = await card.locator('.thinking-card-pre').textContent()
-  const ok = body === SEED_REASONING
-  console.log(`phase5 expand shows verbatim body ${ok ? 'PASS' : `FAIL (${JSON.stringify(body)})`}`)
+  const block = page.locator('.thinking').first()
+  await block.locator('.thinking-toggle').click()
+  const revealed = await block.locator('.thinking-quote').evaluate((el) => ({
+    text: el.textContent,
+    bar: getComputedStyle(el).borderLeftWidth,
+  }))
+  const ok = revealed.text === SEED_REASONING && revealed.bar === '2px'
+  console.log(
+    `phase5 expand shows a verbatim quoted body ${ok ? 'PASS' : `FAIL (${JSON.stringify(revealed)})`}`,
+  )
   if (!ok) fails++
-  await card.locator('.thinking-card-header').click()
-  const collapsed = (await card.locator('.thinking-card-pre').count()) === 0
+  await block.locator('.thinking-toggle').click()
+  const collapsed = (await block.locator('.thinking-quote').count()) === 0
   console.log(`phase5 second click collapses ${collapsed ? 'PASS' : 'FAIL'}`)
   if (!collapsed) fails++
 }
 
-// P5c: a live think turn opens one more card, reading "Thinking…" while the
-// reasoning streams (the mock holds before the answer for this window).
+// P5c: a live think turn adds one more block, reading "Thinking…" while the
+// reasoning streams (the mock holds before the answer for this window).  It
+// stays collapsed — revealing reasoning is always the user's click, live or
+// replayed alike.
 // Counts are relative: the mock's turnLog grows across runs, so asserting
-// a literal card count would only hold for a freshly started mock.
-const cardCount = () => page.locator('.thinking-card').count()
-const cardsBefore = await cardCount()
+// a literal block count would only hold for a freshly started mock.
+const thoughtCount = () => page.locator('.thinking').count()
+const thoughtsBefore = await thoughtCount()
 {
   await page.fill('textarea.input-bar-textarea', 'think: about it')
   await page.click('button:has-text("Send")')
   let sawOpen = true
   try {
     await page.waitForFunction((want) => {
-      const cards = [...document.querySelectorAll('.thinking-card')]
-      const last = cards[cards.length - 1]
+      const blocks = [...document.querySelectorAll('.thinking')]
+      const last = blocks[blocks.length - 1]
       return (
-        cards.length === want &&
-        last?.querySelector('.thinking-card-label')?.textContent?.trim() === 'Thinking…'
+        blocks.length === want &&
+        last?.querySelector('.thinking-label')?.textContent?.trim() === 'Thinking…' &&
+        last?.querySelector('.thinking-quote') === null
       )
-    }, cardsBefore + 1, { timeout: 15000 })
+    }, thoughtsBefore + 1, { timeout: 15000 })
   } catch {
     sawOpen = false
   }
-  console.log(`phase5 live card open while streaming ${sawOpen ? 'PASS' : 'FAIL'}`)
+  console.log(`phase5 live block collapsed while streaming ${sawOpen ? 'PASS' : 'FAIL'}`)
   if (!sawOpen) fails++
 }
 
@@ -411,32 +420,32 @@ const cardsBefore = await cardCount()
   let closed = true
   try {
     await page.waitForFunction((want) => {
-      const cards = [...document.querySelectorAll('.thinking-card')]
-      const last = cards[cards.length - 1]
+      const blocks = [...document.querySelectorAll('.thinking')]
+      const last = blocks[blocks.length - 1]
       return (
-        cards.length === want &&
-        last?.querySelector('.thinking-card-label')?.textContent?.trim() === 'Thought'
+        blocks.length === want &&
+        last?.querySelector('.thinking-label')?.textContent?.trim() === 'Thought'
       )
-    }, cardsBefore + 1, { timeout: 15000 })
+    }, thoughtsBefore + 1, { timeout: 15000 })
   } catch {
     closed = false
   }
-  console.log(`phase5 live card closes to "Thought" ${closed ? 'PASS' : 'FAIL'}`)
+  console.log(`phase5 live block closes to "Thought" ${closed ? 'PASS' : 'FAIL'}`)
   if (!closed) fails++
 
-  const order = await cardAboveBubble()
-  console.log(`phase5 live card above its bubble ${JSON.stringify(order)} ${order.ok ? 'PASS' : 'FAIL'}`)
+  const order = await thoughtAboveBubble()
+  console.log(`phase5 live block above its bubble ${JSON.stringify(order)} ${order.ok ? 'PASS' : 'FAIL'}`)
   if (!order.ok) fails++
 }
 
-// P5e: reload replays the same cards; the live card's body is byte-identical
+// P5e: reload replays the same blocks; the live block's body is byte-identical
 // to the replayed one, still above its bubble.
 {
-  const live = page.locator('.thinking-card').last()
-  await live.locator('.thinking-card-header').click()
-  const liveBody = await live.locator('.thinking-card-pre').textContent()
+  const live = page.locator('.thinking').last()
+  await live.locator('.thinking-toggle').click()
+  const liveBody = await live.locator('.thinking-quote').textContent()
   const okLive = liveBody.startsWith('live thought:')
-  console.log(`phase5 live card body is the streamed reasoning ${okLive ? 'PASS' : `FAIL (${JSON.stringify(liveBody)})`}`)
+  console.log(`phase5 live block body is the streamed reasoning ${okLive ? 'PASS' : `FAIL (${JSON.stringify(liveBody)})`}`)
   if (!okLive) fails++
 
   await page.reload()
@@ -444,25 +453,25 @@ const cardsBefore = await cardCount()
   let count = -1
   try {
     await page.waitForFunction(
-      (want) => document.querySelectorAll('.thinking-card').length === want,
-      cardsBefore + 1,
+      (want) => document.querySelectorAll('.thinking').length === want,
+      thoughtsBefore + 1,
       { timeout: 15000 },
     )
-    const card = page.locator('.thinking-card').last()
-    await card.locator('.thinking-card-header').click()
-    replayed = await card.locator('.thinking-card-pre').textContent()
+    const block = page.locator('.thinking').last()
+    await block.locator('.thinking-toggle').click()
+    replayed = await block.locator('.thinking-quote').textContent()
   } catch {
     // replayed stays null — the mismatch below reports it
   }
-  count = await cardCount()
-  const ok = count === cardsBefore + 1 && replayed === liveBody
+  count = await thoughtCount()
+  const ok = count === thoughtsBefore + 1 && replayed === liveBody
   console.log(
-    `phase5 reload replays the card byte-identically (count=${count}) ${ok ? 'PASS' : `FAIL (${JSON.stringify(replayed)})`}`,
+    `phase5 reload replays the block byte-identically (count=${count}) ${ok ? 'PASS' : `FAIL (${JSON.stringify(replayed)})`}`,
   )
   if (!ok) fails++
 
-  const order = await cardAboveBubble()
-  console.log(`phase5 replayed card above its bubble ${JSON.stringify(order)} ${order.ok ? 'PASS' : 'FAIL'}`)
+  const order = await thoughtAboveBubble()
+  console.log(`phase5 replayed block above its bubble ${JSON.stringify(order)} ${order.ok ? 'PASS' : 'FAIL'}`)
   if (!order.ok) fails++
 }
 

@@ -72,7 +72,7 @@ const session = {
   cwd: '/tmp',
 }
 
-// Reasoning bodies the thinking-card assertions compare against — keep in
+// Reasoning bodies the thought-block assertions compare against — keep in
 // sync with ui-test.mjs (SEED_REASONING / THINK_REASONING).
 const SEED_REASONING =
   'seed thought: check the pane scrolls before answering\n' +
