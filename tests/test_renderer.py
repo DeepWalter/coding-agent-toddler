@@ -20,6 +20,24 @@ from toddler.agent.events import (
 )
 from toddler.agent.planner import Plan, PlanStep
 from toddler.cli.renderer import NonStreamingRenderer, StreamingRenderer
+from toddler.llm.responses import TokenUsage
+
+
+class _FakeClock:
+    """A monotonic stand-in the tests advance by hand.
+
+    The renderer takes its clock as a parameter so a span can be asserted
+    exactly, instead of racing the real one.
+    """
+
+    def __init__(self, start: float = 0.0) -> None:
+        self._now = start
+
+    def __call__(self) -> float:
+        return self._now
+
+    def advance(self, seconds: float) -> None:
+        self._now += seconds
 
 
 def _plan_with_two_steps() -> Plan:
@@ -348,8 +366,18 @@ class TestStreamingReasoning:
         renderer.on_reasoning_delta(ReasoningDelta(text_delta="cot"))
 
         renderable = renderer._build_renderable()
-        assert "💭 Thinking…" in self._texts(renderable)
+        # Four characters is the estimator's floor: one token, singular.
+        assert "💭 Thinking… · 1 token" in self._texts(renderable)
         assert self._titles(renderable) == ["Output"]
+
+    def test_collapsed_line_counts_the_streamed_buffer(self):
+        renderer = self._renderer()
+        renderer.on_reasoning_delta(ReasoningDelta(text_delta="x" * 4200))
+
+        renderable = renderer._build_renderable()
+        # 4200 ASCII characters estimate at 1050 tokens — the same boundary
+        # the web console prints as 1.1K.
+        assert "💭 Thinking… · 1.1K tokens" in self._texts(renderable)
 
     def test_no_thinking_line_without_reasoning(self):
         renderer = self._renderer()
@@ -364,9 +392,49 @@ class TestStreamingReasoning:
         renderer._dismiss_prompt = True
 
         renderable = renderer._build_renderable()
-        assert "💭 Thought — press t to review" in self._texts(renderable)
+        # No clock was ever started, so the span reads as the floor.
+        assert (
+            "💭 Thought for less than a second — press t to review"
+            in self._texts(renderable)
+        )
         assert any("t to view thinking" in text for text in self._texts(renderable))
         assert self._titles(renderable) == ["Output"]
+
+    def test_dismiss_line_reports_the_span(self):
+        clock = _FakeClock()
+        renderer = StreamingRenderer(
+            console=Console(file=io.StringIO()), clock=clock,
+        )
+        renderer.on_reasoning_delta(ReasoningDelta(text_delta="weigh"))
+        clock.advance(12.4)
+        renderer.on_content_delta(ContentDelta(text_delta="the answer"))
+        renderer._dismiss_prompt = True
+
+        renderable = renderer._build_renderable()
+        assert (
+            "💭 Thought for 12 seconds — press t to review"
+            in self._texts(renderable)
+        )
+
+    def test_span_accumulates_across_rounds(self):
+        # A tool call ends one round and the model thinks again: the span
+        # is the sum, not the wall-clock distance between the first and
+        # last fragment.
+        clock = _FakeClock()
+        renderer = StreamingRenderer(
+            console=Console(file=io.StringIO()), clock=clock,
+        )
+        renderer.on_reasoning_delta(ReasoningDelta(text_delta="first"))
+        clock.advance(3.0)
+        renderer.on_tool_call_start(
+            ToolCallStart(tool_id="t1", tool_name="read", partial_input=None)
+        )
+        clock.advance(30.0)          # tool runs — not thinking time
+        renderer.on_reasoning_delta(ReasoningDelta(text_delta="second"))
+        clock.advance(5.0)
+        renderer.on_content_delta(ContentDelta(text_delta="answer"))
+
+        assert renderer._thinking_span() == 8.0
 
     def test_dismiss_view_shows_the_thinking_panel(self):
         renderer = self._renderer()
@@ -427,10 +495,24 @@ class TestStreamingReasoning:
         renderer.flush_to_console()
 
         output = buf.getvalue()
-        assert "💭 Thought — 13 chars" in output
+        # The deltas arrive in the same instant, so the span is the floor.
+        assert "💭 Thought — less than a second" in output
         assert "the answer" in output
         # The live collapsed line does not leak into the scrollback.
         assert "💭 Thinking…" not in output
+
+    def test_flush_summary_reports_the_span(self):
+        clock = _FakeClock()
+        buf = io.StringIO()
+        renderer = StreamingRenderer(console=Console(file=buf), clock=clock)
+        renderer.start(turn_number=1)
+        renderer.on_reasoning_delta(ReasoningDelta(text_delta="weigh options"))
+        clock.advance(125.4)
+        renderer.on_content_delta(ContentDelta(text_delta="the answer"))
+        renderer.stop()
+        renderer.flush_to_console()
+
+        assert "💭 Thought — 2 minutes 5 seconds" in buf.getvalue()
 
 
 class TestNonStreamingReasoning:
@@ -459,3 +541,37 @@ class TestNonStreamingReasoning:
 
         assert len(printed) == 1
         assert isinstance(printed[0], Markdown)
+
+
+class TestUsageLine:
+    """The turn's closing Tokens line, where the API's own reasoning count
+    lands — the one number the live estimate never claims to be."""
+
+    @staticmethod
+    def _output(usage: TokenUsage | None) -> str:
+        buf = io.StringIO()
+        renderer = NonStreamingRenderer(console=Console(file=buf))
+        renderer.on_agent_finished(AgentFinished(reason="completed", usage=usage))
+        return buf.getvalue()
+
+    def test_reasoning_tokens_are_itemized(self):
+        usage = TokenUsage(
+            input_tokens=12345, output_tokens=1087, reasoning_tokens=1020,
+        )
+
+        assert (
+            "Tokens: 12,345 in / 1,087 out (1,020 reasoning)"
+            in self._output(usage)
+        )
+
+    def test_no_parenthetical_without_reasoning(self):
+        output = self._output(TokenUsage(input_tokens=10, output_tokens=5))
+
+        assert "Tokens: 10 in / 5 out" in output
+        assert "reasoning" not in output
+
+    def test_no_tokens_line_without_usage(self):
+        output = self._output(None)
+
+        assert "Tokens:" not in output
+        assert "Done — completed" in output
