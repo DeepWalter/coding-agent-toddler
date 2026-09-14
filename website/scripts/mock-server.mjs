@@ -75,8 +75,12 @@ const session = {
 // Reasoning bodies the thought-block assertions compare against — keep in
 // sync with ui-test.mjs (SEED_REASONING / THINK_REASONING).
 const SEED_REASONING =
-  'seed thought: check the pane scrolls before answering\n' +
-  'second line — rendered verbatim, never markdown'
+  'seed thought: check `scrollable` before answering\n' +
+  '```python\n' +
+  'def fits(pane):\n' +
+  '    return pane.scrollHeight > pane.clientHeight\n' +
+  '```\n' +
+  'second line — prose stays verbatim, fences do not'
 const THINK_FRAGMENTS = [
   'live thought: stream the reasoning ',
   'before the answer — accumulated ',

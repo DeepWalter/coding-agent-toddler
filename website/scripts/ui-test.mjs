@@ -13,8 +13,9 @@
 //            (two-line hover copy) whose click lands the server's hello
 //            replay + notice
 //  phase 5 — thought blocks: the seeded reasoning replays collapsed and
-//            expands to its verbatim quoted body; a live `think:` turn adds
-//            a second block above its bubble, counting tokens while it
+//            expands to its quoted body — prose verbatim, its fenced and
+//            inline code lifted out and highlighted; a live `think:` turn
+//            adds a second block above its bubble, counting tokens while it
 //            streams and reading "Thought for …" once agent_finished lands
 //            — and a reload replays the same block, body byte-identical
 //            but with the live-only readings gone
@@ -336,8 +337,22 @@ const tooltip = page.locator('.context-tooltip')
 // The mock seeds one reasoning-bearing transcript entry (SEED_REASONING in
 // mock-server.mjs) and streams a second on a `think:` turn.
 const SEED_REASONING =
-  'seed thought: check the pane scrolls before answering\n' +
-  'second line — rendered verbatim, never markdown'
+  'seed thought: check `scrollable` before answering\n' +
+  '```python\n' +
+  'def fits(pane):\n' +
+  '    return pane.scrollHeight > pane.clientHeight\n' +
+  '```\n' +
+  'second line — prose stays verbatim, fences do not'
+
+// What the block renders that seed as: the prose lines survive character
+// for character, the code is lifted into its own element, and the fence
+// lines and backticks are consumed rather than shown.
+const SEED_PROSE = [
+  'seed thought: check scrollable before answering',
+  'second line — prose stays verbatim, fences do not',
+]
+const SEED_CODE = 'def fits(pane):\n    return pane.scrollHeight > pane.clientHeight'
+const SEED_CHIP = 'scrollable'
 
 // Label shapes — the counts are the point, so these match a pattern rather
 // than pinning the mock's fragment count and stream duration (which lands in
@@ -377,18 +392,30 @@ const thoughtAboveBubble = () =>
   if (!ok) fails++
 }
 
-// P5b: click expands to the verbatim body inside a quoted block (a rule down
-// its left edge, not the old bordered card); a second click collapses it.
+// P5b: click expands to the reasoning inside a quoted block (a rule down its
+// left edge, not the old bordered card): the prose verbatim, the code it
+// carries lifted out and highlighted.  A second click collapses it.
 {
   const block = page.locator('.thinking').first()
   await block.locator('.thinking-toggle').click()
   const revealed = await block.locator('.thinking-quote').evaluate((el) => ({
-    text: el.textContent,
+    text: el.textContent ?? '',
     bar: getComputedStyle(el).borderLeftWidth,
+    code: el.querySelector('code.thinking-code')?.textContent ?? null,
+    chip: el.querySelector('code.thinking-inline')?.textContent ?? null,
+    tokens: el.querySelectorAll('code.thinking-code span').length,
   }))
-  const ok = revealed.text === SEED_REASONING && revealed.bar === '2px'
+  const ok =
+    revealed.bar === '2px' &&
+    SEED_PROSE.every((line) => revealed.text.includes(line)) &&
+    // The syntax the block renders away must not leak into the text.
+    !revealed.text.includes('`') &&
+    revealed.code === SEED_CODE &&
+    revealed.chip === SEED_CHIP &&
+    // Coloured, not just boxed: the grammar produced token spans.
+    revealed.tokens > 0
   console.log(
-    `phase5 expand shows a verbatim quoted body ${ok ? 'PASS' : `FAIL (${JSON.stringify(revealed)})`}`,
+    `phase5 expand shows prose verbatim and code lifted out ${ok ? 'PASS' : `FAIL (${JSON.stringify(revealed)})`}`,
   )
   if (!ok) fails++
   await block.locator('.thinking-toggle').click()
