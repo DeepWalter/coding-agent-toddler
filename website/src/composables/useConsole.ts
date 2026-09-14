@@ -223,8 +223,13 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
       break
     }
     case 'tool_call_start': {
-      // Execution begins — the thought that requested it is over.
+      // Execution begins — the thought that requested it is over, and so is
+      // the text above it: content only ever merges into the last block
+      // (content_delta below), so an answer with a card after it can never
+      // grow again.  Without this it would keep rendering as streaming for
+      // the rest of the turn.
       closeThinking(s)
+      closeAssistant(s)
       // Streaming mode emits two starts per call — the live stream
       // handler yields one as chunks arrive, the execution phase yields
       // another before running the tool, with the same tool_id.  Upsert
@@ -264,6 +269,11 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
       break
     }
     case 'plan_proposed':
+      // The card interrupts the stream exactly as an execution event does —
+      // and this one holds for as long as the user takes to decide, so the
+      // prose that set the plan up must not still read as streaming.
+      closeThinking(s)
+      closeAssistant(s)
       push(s, { kind: 'plan', plan: action.plan, steps: [], decision: null })
       break
     case 'plan_step_update': {
@@ -300,6 +310,10 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
       s.paused = null
       break
     case 'recoverable_error':
+      // The turn continues, but the text before the error cannot: the
+      // notice below it is the last block now, so any later content_delta
+      // opens a fresh one.  Close it for the same reason as tool_call_start.
+      closeAssistant(s)
       push(s, { kind: 'notice', message: action.message })
       break
     case 'notice':
