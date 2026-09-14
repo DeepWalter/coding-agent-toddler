@@ -284,16 +284,28 @@ are UI strings, not vocabulary.
     `agent_finished`.
 - New `ThinkingBlock.vue`: the console's one quoted aside, not a card — tool
   invocations keep the card chrome, a thought must not read as their peer.  A
-  content-width `💭` + label toggle (`Thinking…` while `block.open`, else
-  `Thought`; chevron `▾/▸`, `aria-expanded`) over a body `v-if` on a local
-  `expanded` ref: a `<pre>` with `white-space: pre-wrap` **plain text** (CoT is
-  freeform prose that markdown would mangle) showing `block.reasoning`, dim
-  styling, indented behind a neutral 2px `--editor-border` rule — deliberately
-  quieter than the accent-barred markdown blockquote inside replies.  No
-  `max-height`: revealing is always the user's click, so the text flows and the
-  pane scrolls it.  Both live and replayed blocks start collapsed, and expansion
-  is local UI state that never touches the block.  Wire into `ConsolePane.vue`
-  between the assistant bubble and tool-card branches; add `.thinking*` styles.
+  content-width `💭` + label toggle (chevron `▾/▸`, `aria-expanded`) over a body
+  `v-if` on a local `expanded` ref: a `<pre>` with `white-space: pre-wrap`
+  **plain text** (CoT is freeform prose that markdown would mangle) showing
+  `block.reasoning`, dim styling, indented behind a neutral 2px
+  `--editor-border` rule — deliberately quieter than the accent-barred markdown
+  blockquote inside replies.  No `max-height`: revealing is always the user's
+  click, so the text flows and the pane scrolls it.  Both live and replayed
+  blocks start collapsed, and expansion is local UI state that never touches the
+  block.  Wire into `ConsolePane.vue` between the assistant bubble and tool-card
+  branches; add `.thinking*` styles.
+- The label reports scale, not just state: `Thinking… · N tokens` while
+  `block.open`, `Thought for N seconds` once it closes, and the bare `Thought`
+  for a block that never streamed in this page.  Both readings are produced in
+  the component, for the same purity reason `expanded` lives there: the count is
+  `estimateTokens` over the accumulated buffer (the client has no tokenizer; the
+  API's own `reasoning_tokens` only lands on `agent_finished.usage`, too late to
+  be a live reading), and the span is a `Date.now()` delta from the block
+  opening to its `open` flipping false — one watch covers all five close paths
+  (answer starting, tool call, turn end, fatal error, cancel).  Sub-second
+  thoughts read `less than a second` rather than a rounded `0 seconds`, and a
+  minute-plus reads in minutes.  The count is a sibling `.thinking-detail` span
+  so the phrase keeps the 600 weight and the number stays secondary.
 
 ## Phase 8 — Test mocks ✅
 
@@ -350,13 +362,17 @@ reasoning_tokens=40)` producing `[reasoning_block, content_block]` with usage ca
   Non-think turns change only in the renamed frame type and key — byte-identical
   otherwise.
 - `ui-test.mjs`: seeded thought block collapsed by default (`Thought` + `▸`, no
-  quote), click expands to the verbatim body behind a 2px left rule (the
-  quoted-block contract, asserted on the computed style), click collapses; a live
-  `think:` turn produces a second block *before* its message bubble reading
-  `Thinking…` while streaming — still collapsed, so no future auto-open slips in —
-  and `Thought` after `agent_finished`; after `page.reload()` the block count and
-  body text are byte-identical and the block sits above its assistant bubble
-  (live/reload parity).
+  quote, no count — a block that never streamed here has no reading to show),
+  click expands to the verbatim body behind a 2px left rule (the quoted-block
+  contract, asserted on the computed style), click collapses; a live `think:`
+  turn produces a second block *before* its message bubble, matching
+  `Thinking… · N tokens` while streaming — still collapsed, so no future auto-open
+  slips in — and `Thought for N seconds` after `agent_finished`; after
+  `page.reload()` the block count and body text are byte-identical, the block sits
+  above its assistant bubble (live/reload parity), and the label is back to the
+  bare `Thought`.  The label assertions match patterns rather than exact strings:
+  the numbers are the point, and pinning them would just pin the mock's fragment
+  count and stream duration (which lands in the sub-second branch on a fast run).
 
 ## Out of scope
 
@@ -364,6 +380,14 @@ Per-call thinking on/off (`extra_body` plumbing); reasoning-cost UI beyond the
 `TokenUsage` field; `/view` and flush truncation files stay answer-text-only (the DB is
 the lossless store); compaction changes; expanding the thinking section *during* live
 streaming in the terminal (keys only exist at the dismiss screen).
+
+Persisting the thought label's readings: the token count and duration are live
+readings of a stream, so a reloaded transcript shows the bare `Thought` and the
+label's numbers never touch the wire, the reducer, or storage.  Making them
+survive a refresh is a separate change — a `MessageBlock` field (no DB migration;
+the two `content_json` whitelists and a `.get()` default cover it, as the storage
+section above records) plus the hello-replay entry, and a server-side clock, since
+nothing in the agent loop measures reasoning time today.
 
 ## Risks
 
