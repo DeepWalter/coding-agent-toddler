@@ -300,14 +300,27 @@ are UI strings, not vocabulary.
   invocations keep the card chrome, a thought must not read as their peer.  A
   content-width `💭` + label toggle (chevron `▾/▸`, `aria-expanded`) over a body
   `v-if` on a local `expanded` ref: a `<pre>` with `white-space: pre-wrap`
-  **plain text** (CoT is freeform prose that markdown would mangle) showing
-  `block.reasoning`, dim styling, indented behind a neutral 2px
+  showing `block.reasoning`, dim styling, indented behind a neutral 2px
   `--editor-border` rule — deliberately quieter than the accent-barred markdown
   blockquote inside replies.  No `max-height`: revealing is always the user's
   click, so the text flows and the pane scrolls it.  Both live and replayed
   blocks start collapsed, and expansion is local UI state that never touches the
   block.  Wire into `ConsolePane.vue` between the assistant bubble and tool-card
   branches; add `.thinking*` styles.
+- The reasoning never goes through markdown — CoT is freeform prose a parser
+  would mangle (literal `*`, `1.`, indentation) and flicker mid-stream.  Only
+  its **code** is lifted out, in `reasoning.ts`'s `renderReasoning`: fenced
+  blocks become `.thinking-code` elements through the shared
+  `highlightToHtml` (same grammar and theme as an answer's code), paired
+  backticks become `.thinking-inline` chips, and everything else is escaped
+  verbatim.  Fence lines and backticks are consumed — the block shows the code,
+  not the markers — so a fence still open mid-stream is what the streaming case
+  renders, growing as fragments arrive.  Deliberately excluded, each for a
+  reason: headings, emphasis, lists, links, tables (prose structure the model
+  did not mean), indented code (models indent plans — that fidelity is the
+  point of the block), and raw HTML (escaped, as everywhere).  `markdown.ts`'s
+  highlighter and cache moved to `highlight.ts` / `renderCache.ts` so both
+  renderers share one copy.
 - The label reports scale, not just state: `Thinking… · N tokens` while
   `block.open`, `Thought for N seconds` once it closes, and the bare `Thought`
   for a block that never streamed in this page.  Both readings are produced in
@@ -379,8 +392,12 @@ reasoning_tokens=40)` producing `[reasoning_block, content_block]` with usage ca
   otherwise.
 - `ui-test.mjs`: seeded thought block collapsed by default (`Thought` + `▸`, no
   quote, no count — a block that never streamed here has no reading to show),
-  click expands to the verbatim body behind a 2px left rule (the quoted-block
-  contract, asserted on the computed style), click collapses; a live `think:`
+  click expands to the body behind a 2px left rule (the quoted-block contract,
+  asserted on the computed style): its prose lines verbatim, its fenced code in
+  a `.thinking-code` element carrying token spans, its inline identifier in a
+  `.thinking-inline` chip, and no backtick or fence left in the text — the
+  seeded reasoning carries each, so the rendering is covered end to end; click
+  collapses; a live `think:`
   turn produces a second block *before* its message bubble, matching
   `Thinking… · N tokens` while streaming — still collapsed, so no future auto-open
   slips in — and `Thought for N seconds` after `agent_finished`; after
