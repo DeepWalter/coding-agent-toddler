@@ -30,9 +30,9 @@ const signature = computed(() => {
 
 <template>
   <div class="tool-card" :class="state" :data-expanded="expanded">
+    <!-- No status mark in the header: the gutter carries it for every
+         block kind, and a second one here would read as a second state. -->
     <button class="tool-card-header" type="button" @click="expanded = !expanded">
-      <span v-if="state === 'running'" class="spinner" aria-label="running" />
-      <span v-else class="tool-card-status">{{ state === 'ok' ? '✓' : state === 'error' ? '✗' : '·' }}</span>
       <span class="tool-card-name">{{ block.tool_name }}</span>
       <span class="tool-card-state">{{ statusLabel }}</span>
       <span class="tool-card-chevron">{{ expanded ? '▾' : '▸' }}</span>

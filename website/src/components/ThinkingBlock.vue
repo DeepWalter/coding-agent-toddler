@@ -68,7 +68,8 @@ function formatSpan(ms: number): string {
       :aria-expanded="expanded"
       @click="expanded = !expanded"
     >
-      <span aria-hidden="true">💭</span>
+      <!-- No 💭 here: the gutter's mark carries the block's status, and
+           the label carries its identity. -->
       <span class="thinking-label">{{ label }}</span>
       <span v-if="detail" class="thinking-detail">· {{ detail }}</span>
       <span class="thinking-chevron" aria-hidden="true">{{ expanded ? '▾' : '▸' }}</span>

@@ -2,8 +2,10 @@
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { Block } from '../types'
 import { renderMarkdown } from '../markdown'
+import { blockStatus } from '../blockStatus'
 import MessageBubble from './MessageBubble.vue'
 import PlanCard from './PlanCard.vue'
+import StatusMark from './StatusMark.vue'
 import ThinkingBlock from './ThinkingBlock.vue'
 import ToolCard from './ToolCard.vue'
 
@@ -162,11 +164,31 @@ onBeforeUnmount(() => {
   scroller.value?.removeEventListener('wheel', releaseFollow)
   scroller.value?.removeEventListener('pointerdown', releaseFollow)
 })
+
+/** The gutter mark's reading for a row — null for user input, the one kind
+ *  that gets neither a mark nor the indent.  The two key on 'user' and must
+ *  stay in step: `.stream-row:not([data-kind='user'])` in styles.css is the
+ *  other half of this rule. */
+function rowStatus(block: Block) {
+  return block.kind === 'user' ? null : blockStatus(block)
+}
 </script>
 
 <template>
   <div ref="scroller" class="console-pane" @scroll="onScroll">
-    <template v-for="block in blocks" :key="block.id">
+    <div
+      v-for="block in blocks"
+      :key="block.id"
+      class="stream-row"
+      :data-kind="block.kind"
+    >
+      <!-- One mark per block, outdented into the row's left padding: the
+           indent every output block gets is what makes room for it, and
+           user input — the one kind with no mark — is the one row that
+           stays flush left.  data-kind carries the Block member rather
+           than a class of the same name, which would one day collide with
+           a component's own rule (.thinking already exists). -->
+      <StatusMark :status="rowStatus(block)" />
       <MessageBubble
         v-if="block.kind === 'user'"
         :role="'user'"
@@ -202,7 +224,7 @@ onBeforeUnmount(() => {
         class="stream-line notice markdown"
         v-html="renderMarkdown(block.message)"
       ></div>
-    </template>
+    </div>
     <div v-if="!blocks.length" class="console-empty">
       No messages yet — describe a task below.
     </div>
