@@ -263,8 +263,10 @@ plans survive a client reconnect but not a server restart.
   PlanCard from `hello.plan` — a card whose steps already show progress is treated
   as decided (no re-offered approve/deny buttons).
 - Console rendering: `text_delta` appends to the tail assistant block;
-  `tool_call_start/end` render collapsible cards (spinner while open, red on
-  error); `plan_step_update` replaces step chips; `agent_paused` → approve/deny
+  `tool_call_start/end` render collapsible cards (red border on error; the
+  running/settled reading moved to the transcript's status gutter — see
+  [console-stream-gutter.md](console-stream-gutter.md));
+  `plan_step_update` replaces step chips; `agent_paused` → approve/deny
   buttons; `plan_proposed` → PlanCard with steps + approve / approve+auto /
   deny + feedback input.
 - Input: send disabled while busy, Cancel button instead; Enter=send,
