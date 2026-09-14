@@ -191,9 +191,10 @@ cd website && npx vite --config mock-vite.config.ts      # :5199
 node website/scripts/ui-test.mjs                         # exit 1 on failure
 ```
 
-The mock is **stateful** — `turnLog` accumulates live turns and the context
-pill's percentage persists — so a second run against the same process fails
-phase 3's fold count and phase 4's pill. Restart the mock between runs.
+The mock is **stateful** — its `transcript` accumulates live turns and cancel
+markers, and the context pill's percentage persists — so a second run against
+the same process fails phase 3's fold count and phase 4's pill. Restart the
+mock between runs.
 
 By eye in both selectable themes (tokyo-night, github-light), checking
 `--success` / `--error` legibility on `--editor-surface`: a `think:` turn

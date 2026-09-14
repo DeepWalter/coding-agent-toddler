@@ -105,12 +105,20 @@ distribution matters).
 | `reject_plan` | `plan_id`, `feedback` | yes |
 | `set_mode` | `mode: "manual"\|"auto"` | yes |
 | `new_conversation` | `title` | no |
+| `rename_conversation` | `title` | yes |
 | `switch_session` | `session_id` | no |
 | `ping` | — | yes |
 
 Approval/deny/cancel stay available during a run — parity with the CLI's
 separate input task. `new_conversation`/`switch_session` swap state under a
-running agent, hence busy rejection.
+running agent, hence busy rejection. `rename_conversation` does not: a title
+is metadata, one write of one field on the live conversation with no
+check-then-act pair to race, so a tab can retitle the turn that is still
+running. The title is stripped and clamped to `MAX_TITLE_LENGTH`
+(`toddler/session/models.py`), the same rule the auto-title applies to a
+first user input; an empty one is refused with
+`{"type":"error","code":"invalid_title"}`, and an unknown/not-yet-active
+conversation with `code: "no_conversation"`.
 
 ### Server → client (JSON `{"type": ...}`)
 
@@ -118,6 +126,7 @@ running agent, hence busy rejection.
 hello              {session: {id, title, mode_label, permission_mode, context_usage_pct, model, cwd},
                      conversation: {id, sequence_num, title},
                      busy, paused, plan, messages: [replay from storage_mgr.get_messages()]}
+session_info       {session, conversation}   # the hello metadata without the replay
 turn_started
 state              {busy: true|false}
 text_delta         {text}
@@ -137,6 +146,13 @@ client applies it with the same "replace everything" reducer path.  An
 earlier `conversation_switched {conversation}` frame was dropped from
 the protocol: it carried no session info and no replay, so it couldn't
 fulfill "session switch replays history" on its own.
+
+`session_info` is the metadata-only sibling: the same `session` +
+`conversation` payloads, no transcript, so every tab relabels its header
+and keeps its console scroll-back.  Broadcast by `set_mode`, by
+`rename_conversation`, and by the runner on every state-machine transition
+(mode label, plan phase); the slash commands that mutate session metadata
+but keep the transcript (`/mode`, `/plan`) answer with it too.
 plan_proposed      {plan: {id, title, summary, steps, rationale, risks, estimated_files_touched}}
 plan_step_update   {steps: [[id, description, status], ...]}   # complete snapshot — replace, don't diff
 
@@ -269,6 +285,26 @@ plans survive a client reconnect but not a server restart.
   `plan_step_update` replaces step chips; `agent_paused` → approve/deny
   buttons; `plan_proposed` → PlanCard with steps + approve / approve+auto /
   deny + feedback input.
+- Console header: one title line naming the live conversation, off the same
+  `hello`/`session_info` payloads the rest of the state rides — so it picks up
+  the server's auto-title (first user input, truncated at `MAX_TITLE_LENGTH`)
+  and the fresh conversation `/clear` swaps in, without a reload. A
+  conversation the server has not titled yet reads "New conversation". It
+  shares `.explorer-header`'s rule and its `min-height`, so a title-only row
+  still lines up with the two headers that carry a refresh button.
+- Console header editing (`ConsoleHeader.vue`): the title is a button that
+  hugs its text — so hovering lights a block around the *title*, with a pen
+  fading in at its end, rather than the whole row. Clicking swaps in a text
+  box holding the title, focused and selected, the same width as the text in
+  it: an invisible sizer span carries the same string in the same font and
+  padding, and the input is laid over it, growing and shrinking as it is
+  typed into and clamped to the row. (A text input sizes to its `size`
+  attribute, not its content, and its box cannot go below the font's line
+  box, so it neither hugs nor fits the row's 21px content box unaided.)
+  Enter and blur commit; Escape discards. An empty box reverts instead of
+  clearing: a null title is what the server re-derives from the next turn's
+  first words, which is not what clearing one looks like it does. The rename
+  applies optimistically and the `session_info` broadcast confirms it.
 - Input: send disabled while busy, Cancel button instead; Enter=send,
   Shift+Enter=newline.
 - Editor: `Ctrl/Cmd+S` → PUT `/api/file`; explorer has a refresh button so
