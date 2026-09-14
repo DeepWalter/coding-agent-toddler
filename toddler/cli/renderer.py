@@ -19,6 +19,7 @@ import sys
 import termios
 import time
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -49,6 +50,7 @@ from toddler.agent.events import (
     ToolCallStart,
 )
 from toddler.tools.plan import PlanStepStatus
+from toddler.utils.format import estimate_tokens, format_span, format_tokens
 
 if TYPE_CHECKING:
     from toddler.tools.base import ToolResult
@@ -369,10 +371,15 @@ class Renderer(ABC):
         """Render the final completion message."""
         self._console.print()
         if event.usage:
-            self.info(
+            line = (
                 f"Tokens: {event.usage.input_tokens:,} in / "
                 f"{event.usage.output_tokens:,} out"
             )
+            if event.usage.reasoning_tokens:
+                # A subset of output_tokens, itemized by the API — and
+                # absent (0 or None) when the model produced no reasoning.
+                line += f" ({event.usage.reasoning_tokens:,} reasoning)"
+            self.info(line)
         self.success(f"Done — {event.reason}")
 
     def on_agent_error(self, event: AgentError) -> None:
@@ -494,6 +501,10 @@ class StreamingRenderer(Renderer):
         is applied in that case.  Under a real terminal the output panel
         height is always computed dynamically from the terminal size.
         During the dismiss prompt, arrow keys scroll clipped content.
+    clock:
+        Monotonic seconds source for the thinking span (injectable so
+        tests can advance it; Rich's own Live refresh thread uses the
+        real clock either way).
     """
 
     def __init__(
@@ -503,12 +514,14 @@ class StreamingRenderer(Renderer):
         refresh_per_second: float = 10.0,
         max_output_lines: int = 40,
         max_output_panel_height: int = 0,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         super().__init__(console)
 
         # -- configuration (immutable after init) -------------------------
         # Min seconds between Live refreshes (throttle).
         self._min_interval: float = 1.0 / refresh_per_second
+        self._clock = clock
         # Max output lines before truncating (0 = disabled).
         self._max_lines: int = max_output_lines
         # Saved panel height so start() can restore it each turn.
@@ -525,6 +538,12 @@ class StreamingRenderer(Renderer):
         # Shown collapsed while streaming; reviewable at the dismiss
         # screen and summarised in scrollback by flush_to_console().
         self._thinking: str = ""
+        # Reasoning spans the turn's rounds (a tool call ends one and the
+        # model thinks again), so the span accumulates the same way the
+        # web's per-block spans do: `_thinking_started` is the round in
+        # flight, `_thinking_seconds` the rounds already banked.
+        self._thinking_started: float | None = None
+        self._thinking_seconds: float = 0.0
         # Tool rows keyed by tool call ID.
         self._tools: dict[str, _ToolRow] = {}
         # Tool call IDs in arrival order (for stable table ordering).
@@ -603,6 +622,8 @@ class StreamingRenderer(Renderer):
         """
         self._text = ""
         self._thinking = ""
+        self._thinking_started = None
+        self._thinking_seconds = 0.0
         self._tools.clear()
         self._tool_order.clear()
         self._scroll_offset = 0
@@ -633,6 +654,9 @@ class StreamingRenderer(Renderer):
         if self._stopped:
             return
 
+        # The turn is over: freeze the span before the dismiss screen
+        # repaints it, so it does not tick up while the user sits there.
+        self._close_thinking()
         self._scroll_offset = 0
         self._dismiss_prompt = True
         self._refresh(force=True)
@@ -707,8 +731,11 @@ class StreamingRenderer(Renderer):
         alternate screen.
         """
         if self._thinking:
+            # A span, not a size: how much was thought is what the
+            # Thinking panel and the session DB are for, and the API's own
+            # reasoning count lands on the turn's usage line.
             self._console.print(Text(
-                f"💭 Thought — {len(self._thinking)} chars",
+                f"💭 Thought — {format_span(self._thinking_span())}",
                 style="dim",
             ))
 
@@ -952,8 +979,33 @@ class StreamingRenderer(Renderer):
     # Streaming event handlers
     # ------------------------------------------------------------------
 
+    def _thinking_span(self) -> float:
+        """Seconds spent emitting reasoning this turn.
+
+        Banked rounds plus the one still streaming, so the reading never
+        jumps backwards when a round closes.
+        """
+        live = (
+            self._clock() - self._thinking_started
+            if self._thinking_started is not None
+            else 0.0
+        )
+        return self._thinking_seconds + live
+
+    def _close_thinking(self) -> None:
+        """Bank the round in flight, if any.
+
+        A round ends where the web's thinking block closes: the answer
+        starting, a tool call, or the turn ending.  A later delta opens a
+        new one — a tool round can think again.
+        """
+        if self._thinking_started is not None:
+            self._thinking_seconds += self._clock() - self._thinking_started
+            self._thinking_started = None
+
     def on_content_delta(self, event: ContentDelta) -> None:
         """Accumulate text and throttle-refresh the Live display."""
+        self._close_thinking()
         self._text += event.text_delta
         self._refresh()
 
@@ -963,13 +1015,17 @@ class StreamingRenderer(Renderer):
         The fragment is kept verbatim — it is echoed back to the API on
         the next request of the round — and the Thinking panel renders
         the accumulated text through the markdown renderer, like the
-        answer panel does for content.
+        answer panel does for content.  The first fragment of a round
+        starts its clock; the marker counts the buffer up from there.
         """
+        if self._thinking_started is None:
+            self._thinking_started = self._clock()
         self._thinking += event.text_delta
         self._refresh()
 
     def on_tool_call_start(self, event: ToolCallStart) -> None:
         """Add a running row to the tools panel."""
+        self._close_thinking()
         signature = _format_tool_signature(
             event.tool_name, event.partial_input or {},
         )
@@ -1339,9 +1395,12 @@ class StreamingRenderer(Renderer):
         # (flush_to_console) carries its own one-line summary instead.
         if self._thinking and not showing_thinking and not self._stopped:
             elements.append(Text(
-                "💭 Thought — press t to review"
+                (
+                    f"💭 Thought for {format_span(self._thinking_span())}"
+                    " — press t to review"
+                )
                 if self._dismiss_prompt
-                else "💭 Thinking…",
+                else f"💭 Thinking… · {_token_text(self._thinking)}",
                 style="dim",
             ))
         elements.append(main_panel)
@@ -1797,6 +1856,13 @@ def create_renderer(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+def _token_text(buf: str) -> str:
+    """The live reasoning count as the marker prints it — an estimate of
+    the buffer, singular when it is one."""
+    n = estimate_tokens(buf)
+    return f"{format_tokens(n)} {'token' if n == 1 else 'tokens'}"
+
 
 def _format_tool_signature(name: str, params: dict) -> str:
     """Format a tool name + key params for the streaming tools table."""
