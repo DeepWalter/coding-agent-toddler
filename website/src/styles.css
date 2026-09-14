@@ -838,6 +838,12 @@ body {
   font-weight: 600;
 }
 
+/* The live count is secondary to the phrase it follows — the label keeps
+   the 600 weight, the count rides at the toggle's muted colour. */
+.thinking-detail {
+  font-weight: 400;
+}
+
 .thinking-chevron {
   color: var(--text-subtle);
 }
