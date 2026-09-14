@@ -14,9 +14,10 @@
 //            replay + notice
 //  phase 5 — thought blocks: the seeded reasoning replays collapsed and
 //            expands to its verbatim quoted body; a live `think:` turn adds
-//            a second block above its bubble reading "Thinking…" while
-//            streaming, "Thought" after agent_finished — and a reload
-//            replays the same block, body byte-identical
+//            a second block above its bubble, counting tokens while it
+//            streams and reading "Thought for …" once agent_finished lands
+//            — and a reload replays the same block, body byte-identical
+//            but with the live-only readings gone
 // Prints PASS/FAIL plus diagnostics; exits 1 on any failure.
 import { chromium } from 'playwright'
 import WebSocket from 'ws'
@@ -338,6 +339,13 @@ const SEED_REASONING =
   'seed thought: check the pane scrolls before answering\n' +
   'second line — rendered verbatim, never markdown'
 
+// Label shapes — the counts are the point, so these match a pattern rather
+// than pinning the mock's fragment count and stream duration (which lands in
+// the sub-second branch on a fast run, "1 second" on a slow one).
+const THINKING_LIVE = /^Thinking… · \d+ tokens?$/
+const THOUGHT_DONE =
+  /^Thought for (\d+ seconds?|\d+ minutes?( \d+ seconds?)?|less than a second)$/
+
 // Document positions of the newest thought block and newest assistant
 // bubble — the block must sit above the bubble its answer lands in.
 const thoughtAboveBubble = () =>
@@ -352,7 +360,8 @@ const thoughtAboveBubble = () =>
     return { thought, bubble, ok: thought >= 0 && bubble >= 0 && thought < bubble }
   })
 
-// P5a: the replayed block starts collapsed — "Thought" + ▸, no quote.
+// P5a: the replayed block starts collapsed — "Thought" + ▸, no quote, and no
+// count: a block that never streamed in this page has no reading to show.
 {
   const block = page.locator('.thinking').first()
   await block.waitFor({ timeout: 15000 })
@@ -360,8 +369,10 @@ const thoughtAboveBubble = () =>
     label: (await block.locator('.thinking-label').textContent()).trim(),
     chevron: (await block.locator('.thinking-chevron').textContent()).trim(),
     quotes: await block.locator('.thinking-quote').count(),
+    details: await block.locator('.thinking-detail').count(),
   }
-  const ok = info.label === 'Thought' && info.chevron === '▸' && info.quotes === 0
+  const ok =
+    info.label === 'Thought' && info.chevron === '▸' && info.quotes === 0 && info.details === 0
   console.log(`phase5 seeded block collapsed ${JSON.stringify(info)} ${ok ? 'PASS' : 'FAIL'}`)
   if (!ok) fails++
 }
@@ -386,7 +397,7 @@ const thoughtAboveBubble = () =>
   if (!collapsed) fails++
 }
 
-// P5c: a live think turn adds one more block, reading "Thinking…" while the
+// P5c: a live think turn adds one more block, counting tokens while the
 // reasoning streams (the mock holds before the answer for this window).  It
 // stays collapsed — revealing reasoning is always the user's click, live or
 // replayed alike.
@@ -399,38 +410,55 @@ const thoughtsBefore = await thoughtCount()
   await page.click('button:has-text("Send")')
   let sawOpen = true
   try {
-    await page.waitForFunction((want) => {
-      const blocks = [...document.querySelectorAll('.thinking')]
-      const last = blocks[blocks.length - 1]
-      return (
-        blocks.length === want &&
-        last?.querySelector('.thinking-label')?.textContent?.trim() === 'Thinking…' &&
-        last?.querySelector('.thinking-quote') === null
-      )
-    }, thoughtsBefore + 1, { timeout: 15000 })
+    await page.waitForFunction(
+      // The phrase and the count are separate spans (the count rides at a
+      // lighter weight), so the label a user reads is both of them.
+      ([want, pattern]) => {
+        const blocks = [...document.querySelectorAll('.thinking')]
+        const last = blocks[blocks.length - 1]
+        const label = `${last?.querySelector('.thinking-label')?.textContent ?? ''} ${
+          last?.querySelector('.thinking-detail')?.textContent ?? ''
+        }`.trim()
+        return (
+          blocks.length === want &&
+          new RegExp(pattern).test(label) &&
+          last?.querySelector('.thinking-quote') === null
+        )
+      },
+      [thoughtsBefore + 1, THINKING_LIVE.source],
+      { timeout: 15000 },
+    )
   } catch {
     sawOpen = false
   }
-  console.log(`phase5 live block collapsed while streaming ${sawOpen ? 'PASS' : 'FAIL'}`)
+  console.log(`phase5 live block counts tokens while streaming ${sawOpen ? 'PASS' : 'FAIL'}`)
   if (!sawOpen) fails++
 }
 
-// P5d: after agent_finished it reads "Thought" and sits above its bubble.
+// P5d: after agent_finished it reports its duration and sits above its bubble.
 {
   let closed = true
   try {
-    await page.waitForFunction((want) => {
-      const blocks = [...document.querySelectorAll('.thinking')]
-      const last = blocks[blocks.length - 1]
-      return (
-        blocks.length === want &&
-        last?.querySelector('.thinking-label')?.textContent?.trim() === 'Thought'
-      )
-    }, thoughtsBefore + 1, { timeout: 15000 })
+    await page.waitForFunction(
+      ([want, pattern]) => {
+        const blocks = [...document.querySelectorAll('.thinking')]
+        const last = blocks[blocks.length - 1]
+        const label = `${last?.querySelector('.thinking-label')?.textContent ?? ''} ${
+          last?.querySelector('.thinking-detail')?.textContent ?? ''
+        }`.trim()
+        return (
+          blocks.length === want &&
+          new RegExp(pattern).test(label) &&
+          last?.querySelector('.thinking-detail') === null
+        )
+      },
+      [thoughtsBefore + 1, THOUGHT_DONE.source],
+      { timeout: 15000 },
+    )
   } catch {
     closed = false
   }
-  console.log(`phase5 live block closes to "Thought" ${closed ? 'PASS' : 'FAIL'}`)
+  console.log(`phase5 live block reports its duration ${closed ? 'PASS' : 'FAIL'}`)
   if (!closed) fails++
 
   const order = await thoughtAboveBubble()
@@ -439,7 +467,8 @@ const thoughtsBefore = await thoughtCount()
 }
 
 // P5e: reload replays the same blocks; the live block's body is byte-identical
-// to the replayed one, still above its bubble.
+// to the replayed one, still above its bubble — but the duration, being a
+// reading of the live stream, is not replayed with it.
 {
   const live = page.locator('.thinking').last()
   await live.locator('.thinking-toggle').click()
@@ -450,6 +479,7 @@ const thoughtsBefore = await thoughtCount()
 
   await page.reload()
   let replayed = null
+  let replayedLabel = null
   let count = -1
   try {
     await page.waitForFunction(
@@ -458,6 +488,7 @@ const thoughtsBefore = await thoughtCount()
       { timeout: 15000 },
     )
     const block = page.locator('.thinking').last()
+    replayedLabel = (await block.locator('.thinking-label').textContent()).trim()
     await block.locator('.thinking-toggle').click()
     replayed = await block.locator('.thinking-quote').textContent()
   } catch {
@@ -469,6 +500,12 @@ const thoughtsBefore = await thoughtCount()
     `phase5 reload replays the block byte-identically (count=${count}) ${ok ? 'PASS' : `FAIL (${JSON.stringify(replayed)})`}`,
   )
   if (!ok) fails++
+
+  const bare = replayedLabel === 'Thought'
+  console.log(
+    `phase5 reload drops the live-only duration ${bare ? 'PASS' : `FAIL (${JSON.stringify(replayedLabel)})`}`,
+  )
+  if (!bare) fails++
 
   const order = await thoughtAboveBubble()
   console.log(`phase5 replayed block above its bubble ${JSON.stringify(order)} ${order.ok ? 'PASS' : 'FAIL'}`)
