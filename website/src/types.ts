@@ -172,6 +172,11 @@ export type Frame =
 // Client → server commands
 // ---------------------------------------------------------------------------
 
+/** Longest conversation title the server keeps (toddler/session/models.py:
+ *  MAX_TITLE_LENGTH) — it clamps a rename to this, so the title input does
+ *  the same and the box can never hold something the server will cut. */
+export const MAX_TITLE_LENGTH = 80
+
 export type Command =
   | { cmd: 'turn'; input: string; force_plan?: boolean }
   | { cmd: 'cancel' }
@@ -181,6 +186,7 @@ export type Command =
   | { cmd: 'reject_plan'; plan_id: string; feedback?: string }
   | { cmd: 'set_mode'; mode: Mode }
   | { cmd: 'new_conversation'; title?: string }
+  | { cmd: 'rename_conversation'; title: string }
   | { cmd: 'switch_session'; session_id: string }
   | { cmd: 'ping' }
 

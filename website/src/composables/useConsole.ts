@@ -24,6 +24,7 @@ export type ConsoleAction =
   | Frame
   | { type: 'local_user'; text: string }
   | { type: 'local_mode'; mode: Mode }
+  | { type: 'local_title'; title: string }
   | { type: 'local_plan_decision'; planId: number; decision: PlanDecision | null }
 
 export function initialState(): ConsoleState {
@@ -393,6 +394,12 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
       }
       break
     }
+    case 'local_title':
+      // Optimistic rename — the server's session_info broadcast carries the
+      // stored title back.  A conversation that has none yet takes the new
+      // one the same way: session_info replaces the object wholesale.
+      if (s.conversation) s.conversation.title = action.title
+      break
   }
 }
 
@@ -479,6 +486,13 @@ export function useConsole(send: (cmd: Command) => void) {
     send({ cmd: 'new_conversation' })
   }
 
+  function renameConversation(title: string) {
+    // Optimistic — the server's session_info broadcast confirms the stored
+    // title (it clamps to the same length this header's input allows).
+    applyFrame({ type: 'local_title', title })
+    send({ cmd: 'rename_conversation', title })
+  }
+
   function switchSession(sessionId: string) {
     if (!state.session || sessionId !== state.session.id) {
       send({ cmd: 'switch_session', session_id: sessionId })
@@ -497,6 +511,7 @@ export function useConsole(send: (cmd: Command) => void) {
     rejectPlan,
     setMode,
     newConversation,
+    renameConversation,
     switchSession,
   }
 }

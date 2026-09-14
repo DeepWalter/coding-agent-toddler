@@ -31,7 +31,7 @@ from toddler.checkpoint.models import (
 from toddler.config.settings import Settings
 from toddler.context.manager import CompactionResult, ContextManager
 from toddler.llm import BaseLLMProvider, Message, TokenUsage
-from toddler.session.models import Conversation, Session
+from toddler.session.models import MAX_TITLE_LENGTH, Conversation, Session
 from toddler.session.storage import StorageManager
 from toddler.tools import create_default_registry
 from toddler.tools.base import PermissionManager, PermissionMode
@@ -234,7 +234,7 @@ class SessionManager:
 
         # --- Auto-title new conversations ---
         if self._conv is not None and not self._conv.title:
-            self._conv.title = user_input[:80]
+            self._conv.title = user_input[:MAX_TITLE_LENGTH]
 
         # --- Classify ---
         self._sm.reset()
@@ -613,6 +613,28 @@ class SessionManager:
             self._session.id,
         )
         await self._activate_context()
+
+    def rename_conversation(self, title: str) -> bool:
+        """Retitle the active conversation in place.
+
+        Unlike :meth:`new_conversation` this archives nothing: a title is
+        metadata, so the conversation keeps its transcript, its sequence
+        number and its place as the active one — the auto-title simply
+        never fires again, since it only fills an empty title.
+
+        The title is stripped and clamped to :data:`MAX_TITLE_LENGTH`, the
+        same rule the auto-title applies to a first user input.  Returns
+        ``False`` when no conversation is active, or when *title* carries
+        nothing but whitespace.
+        """
+        if self._conv is None:
+            return False
+        title = title.strip()[:MAX_TITLE_LENGTH]
+        if not title:
+            return False
+        self._conv.title = title
+        self._storage_mgr.update_conversation(self._conv)
+        return True
 
     async def resume_conversation(self, conversation_id: str) -> None:
         """Switch to an existing (usually archived) conversation.

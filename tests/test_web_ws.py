@@ -27,6 +27,7 @@ from toddler.agent.state_machine import AgentMode
 from toddler.cli.commands import CommandResult
 from toddler.config.settings import Settings
 from toddler.llm import LLMResponse, Message, MessageBlock, TokenUsage
+from toddler.session.models import MAX_TITLE_LENGTH
 from toddler.web.app import create_app
 
 # ============================================================================
@@ -969,6 +970,101 @@ class TestSessionManagement:
             assert probe["sneak_accepted"] is False
             assert llm.call_count == 1  # only the real "hi" turn
             assert state.runner.busy is False
+
+    def test_rename_conversation_acks_and_broadcasts_session_info(self, tmp_path):
+        llm = make_mock_llm(text_response("Hello."))
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client:
+            with client.websocket_connect("/ws") as ws:
+                ws.receive_json()  # hello
+                ws.send_json({"cmd": "turn", "input": "hi"})
+                _wait_for(ws, "agent_finished")
+
+                mgr = client.app.state.web.session_mgr
+                conv_id = mgr.conversation.id
+                ws.send_json({
+                    "cmd": "rename_conversation",
+                    "title": "  Release the kraken  ",
+                })
+                ack = _wait_for(ws, "ack")
+                assert ack == {
+                    "type": "ack",
+                    "cmd": "rename_conversation",
+                    "accepted": True,
+                }
+                # Every tab relabels its header off the broadcast — a hello
+                # replay would wipe the console scroll-back instead.
+                info = _wait_for(ws, "session_info")
+                assert info["conversation"]["title"] == "Release the kraken"
+
+                # Metadata only: the same conversation stays active, in
+                # place, with its transcript — nothing is archived the way
+                # new_conversation would archive it.
+                assert mgr.conversation.id == conv_id
+                assert [m.content for m in mgr.context.messages[-2:]] == [
+                    "hi",
+                    "Hello.",
+                ]
+
+            # Persisted, not just in memory: a reload replays the new title.
+            with client.websocket_connect("/ws") as ws:
+                hello = ws.receive_json()
+                assert hello["conversation"]["title"] == "Release the kraken"
+                contents = [m["content"] for m in hello["messages"]]
+                assert "hi" in contents
+
+    def test_rename_conversation_rejects_an_empty_title(self, tmp_path):
+        llm = make_mock_llm(text_response("Hello."))
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "turn", "input": "hi"})
+            _wait_for(ws, "agent_finished")
+
+            for bad in ("", "   ", None, 7):
+                ws.send_json({"cmd": "rename_conversation", "title": bad})
+                error = _wait_for(ws, "error")
+                assert error == {
+                    "type": "error",
+                    "code": "invalid_title",
+                    "message": "A conversation title cannot be empty.",
+                }
+            # Refused, not applied — the auto-title still stands.
+            assert client.app.state.web.session_mgr.conversation.title == "hi"
+
+    def test_rename_conversation_clamps_to_the_title_limit(self, tmp_path):
+        llm = make_mock_llm(text_response("Hello."))
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "rename_conversation", "title": "t" * 200})
+            _wait_for(ws, "ack")
+            info = _wait_for(ws, "session_info")
+            # The same clamp the auto-title applies to a first user input.
+            assert info["conversation"]["title"] == "t" * MAX_TITLE_LENGTH
+
+    def test_rename_conversation_lands_while_a_turn_runs(self, tmp_path):
+        """A rename is metadata, so it takes no busy lock: a tab can fix a
+        bad auto-title while the turn that produced it is still running."""
+        llm = make_mock_llm(pause_on_write(str(tmp_path / "out.txt")))
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "turn", "input": "write"})
+            _wait_for(ws, "agent_paused")
+
+            ws.send_json({"cmd": "rename_conversation", "title": "mid-turn"})
+            ack = _wait_for(ws, "ack")
+            assert ack == {
+                "type": "ack",
+                "cmd": "rename_conversation",
+                "accepted": True,
+            }
+            info = _wait_for(ws, "session_info")
+            assert info["conversation"]["title"] == "mid-turn"
+
+            ws.send_json({"cmd": "cancel"})
+            _wait_for(ws, "turn_cancelled")
 
 
 # ============================================================================

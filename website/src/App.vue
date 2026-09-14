@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import ConsoleDock from './components/ConsoleDock.vue'
+import ConsoleHeader from './components/ConsoleHeader.vue'
 import ConsolePane from './components/ConsolePane.vue'
 import FileEditor from './components/FileEditor.vue'
 import FileExplorer from './components/FileExplorer.vue'
@@ -30,6 +31,7 @@ const {
   rejectPlan,
   setMode,
   newConversation,
+  renameConversation,
   switchSession,
 } = useConsole(send)
 const git = useGitStatus()
@@ -51,6 +53,16 @@ const pillMode = computed<Mode>(() =>
 )
 const inPlan = computed(() =>
   (state.session?.mode_label ?? '').toUpperCase() === 'PLAN',
+)
+
+// The console header's one line: the live conversation's title.  It rides
+// the hello / session_info payloads like the rest of the session state, so
+// a fresh conversation reads its empty state here until the server titles
+// it — auto-titled from the first user input of its first turn, which the
+// state change that follows re-broadcasts.  Null before the first hello,
+// and for a conversation the server has not titled yet.
+const conversationTitle = computed(
+  () => state.conversation?.title ?? 'New conversation',
 )
 
 // The plan block awaiting THIS tab's decision, if any — the console dock
@@ -505,6 +517,14 @@ function onDividerUp(event: PointerEvent) {
       />
 
       <section class="pane pane-console">
+        <!-- Out of the scroller, like the explorer's: the title names the
+             pane for the whole session, it does not scroll away with the
+             transcript.  Same row as .explorer-header / .sc-header. -->
+        <ConsoleHeader
+          :title="conversationTitle"
+          :editable="state.conversation !== null && connected"
+          @rename="renameConversation"
+        />
         <div class="console-wrap">
           <ConsolePane
             :blocks="state.blocks"

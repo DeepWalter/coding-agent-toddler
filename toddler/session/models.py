@@ -13,12 +13,19 @@ from datetime import UTC, datetime
 from typing import Any
 
 __all__ = [
+    "MAX_TITLE_LENGTH",
     "Conversation",
     "ConversationSummary",
     "Session",
     "SessionSummary",
     "StoredMessage",
 ]
+
+# How long a conversation title may run.  One rule for both ways a title
+# arrives — the auto-title cuts the first user input to it, an explicit
+# rename is clamped to it — so a title is never longer than a header line
+# can show and the two paths cannot disagree.
+MAX_TITLE_LENGTH = 80
 
 # ---------------------------------------------------------------------------
 # Session

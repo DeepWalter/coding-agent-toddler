@@ -367,6 +367,39 @@ async def _cmd_new_conversation(
     state.runner.broadcast(_hello_frame(state))
 
 
+async def _cmd_rename_conversation(
+    websocket: WebSocket, state: WebAppState, raw: dict,
+) -> None:
+    """Retitle the active conversation.
+
+    A rename is metadata — the transcript, the sequence number and which
+    conversation is active all stay put — so nothing is archived and no
+    busy lock is needed: it is one write of one field on the live
+    conversation, with no check-then-act pair to race (the same reasoning
+    as a live gating flip in :func:`_cmd_set_mode`).  A tab may retitle a
+    turn that is still running, which is exactly when a bad auto-title is
+    worth fixing.
+
+    The new title goes out as ``session_info``, not a ``hello`` replay,
+    so every tab relabels its header and keeps its console scroll-back.
+    """
+    title = raw.get("title")
+    if not isinstance(title, str) or not title.strip():
+        await _send_error(
+            websocket, "invalid_title", "A conversation title cannot be empty.",
+        )
+        return
+    if not state.session_mgr.rename_conversation(title):
+        await _send_error(websocket, "no_conversation", "No active conversation.")
+        return
+    await websocket.send_json(_ack_frame("rename_conversation", True))
+    # Broadcast so every tab's header follows — the ack alone leaves the
+    # others showing the old title.
+    state.runner.broadcast(session_info_frame(
+        state.session_mgr, state.llm.model, str(state.repo_root),
+    ))
+
+
 async def _cmd_switch_session(
     websocket: WebSocket, state: WebAppState, raw: dict,
 ) -> None:
@@ -401,6 +434,7 @@ _COMMANDS: dict[str, Callable] = {
     "reject_plan": _cmd_reject_plan,
     "set_mode": _cmd_set_mode,
     "new_conversation": _cmd_new_conversation,
+    "rename_conversation": _cmd_rename_conversation,
     "switch_session": _cmd_switch_session,
     "ping": _cmd_ping,
 }
