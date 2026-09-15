@@ -326,6 +326,18 @@ plans survive a client reconnect but not a server restart.
   from `git.sections` with counts, sorted rows (dimmed dir prefix +
   full-weight basename), git letter badges, muted empty states, and a single
   "not a git repository" line when `branch` is null.
+- **File tabs** (`FileEditor.vue`): one tab per open file. The tab list and
+  active tab live in App.vue; the editor owns per-file CodeMirror state and
+  serves every tab from a single `EditorView`, swapping it with `setState` —
+  which is what carries each tab's doc, undo history, cursor and scroll. A
+  tab refetches from disk on activation unless it has unsaved edits, so the
+  agent's writes show up; a dirty tab blocks the reload with the browser's
+  own confirm rather than discarding the edits silently. The restored active
+  tab is looked up *in* the restored list, never rebuilt from its path: a tab
+  is closed by matching the entry the strip hands up against the list, so a
+  second literal for the same path outlives its own close — the strip empties
+  while the pane keeps the file, its header, and a stored active tab that is
+  no longer open.
 - **Diff tabs**: clicking a row opens a read-only diff tab in the editor
   pane — staged rows open the staged diff, unstaged rows the unstaged one;
   an `MM` file has two distinct tabs. Tabs are `TabEntry = file | diff`,
