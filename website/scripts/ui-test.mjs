@@ -26,6 +26,10 @@
 //            pen, the click opens a selected box sized to the text on the
 //            same row, Enter commits (and keeps the transcript), Escape and
 //            an empty commit both revert, and the new title survives a reload
+//  phase 9 — reloaded file tabs: the tab list a reload restores closes
+//            cleanly — the tab to the right takes over when the active one
+//            goes, and closing the last one empties the pane (header, doc
+//            and the stored active tab all go with it)
 // Prints PASS/FAIL plus diagnostics; exits 1 on any failure.
 import { chromium } from 'playwright'
 import WebSocket from 'ws'
@@ -943,6 +947,82 @@ await page.waitForSelector('.console-pane')
   }
   console.log(`phase8 the rename survives a reload ${JSON.stringify(text)} ${text === RENAMED_TITLE ? 'PASS' : 'FAIL'}`)
   if (text !== RENAMED_TITLE) fails++
+}
+
+// --- Phase 9: the tab list a reload restores closes cleanly ---
+
+// The regression: open a file, reload, close its tab — the strip emptied
+// while the pane kept the file, header and all.  The restored active tab was
+// a second literal for the path rather than the open list's own entry, so
+// closeTab's match missed it and activeTab was never cleared.  The restore
+// reads localStorage (root must match the session cwd, /tmp), which is
+// exactly the state a reload rebuilds from.
+const editorState = () =>
+  page.evaluate(() => {
+    const active = document.querySelector('.editor-tab.active .editor-tab-name')
+    const stored = JSON.parse(localStorage.getItem('tod.tabs') ?? 'null')
+    return {
+      tabs: [...document.querySelectorAll('.editor-tab-name')].map((el) => el.textContent.trim()),
+      active: active?.textContent.trim() ?? null,
+      header: document.querySelector('.editor-path')?.textContent.trim() ?? null,
+      doc: document.querySelector('.editor-cm .cm-content')?.textContent ?? '',
+      stored,
+    }
+  })
+
+await page.evaluate(() => {
+  localStorage.setItem('tod.tabs', JSON.stringify({
+    open: ['mock-a.md', 'mock-b.md'],
+    active: 'mock-b.md',
+    root: '/tmp',
+  }))
+})
+await page.reload()
+await page.waitForSelector('.editor-tab')
+{
+  // Both tabs come back with their own content — the restore is what the
+  // close below is matched against, so assert it rather than assume it.
+  let st = { tabs: [], active: null, doc: '', header: null, stored: null }
+  try {
+    await page.waitForFunction(
+      () => document.querySelector('.editor-cm .cm-content')?.textContent.includes('mock B'),
+      { timeout: 8000 },
+    )
+    st = await editorState()
+  } catch {
+    st = await editorState()
+  }
+  const ok = st.tabs.join(',') === 'mock-a.md,mock-b.md' &&
+    st.active === 'mock-b.md' && st.doc.includes('mock B')
+  console.log(`phase9 a reload restores the tabs and the active file's content ${JSON.stringify(st.tabs)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+
+// P9b: closing the active tab hands the pane to its neighbour — with the
+// neighbour's doc, not the closed file's.
+await page.click('.editor-tab.active .editor-tab-close')
+await page.waitForTimeout(400)
+{
+  const st = await editorState()
+  const ok = st.tabs.join(',') === 'mock-a.md' &&
+    st.active === 'mock-a.md' && st.header === 'mock-a.md' &&
+    st.doc.includes('mock A') && !st.doc.includes('mock B')
+  console.log(`phase9 closing the active tab shows its neighbour ${JSON.stringify(st.doc.slice(0, 20))} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+
+// P9c: the last tab leaves nothing behind — the pane returns to its empty
+// state and the stored active tab is cleared, so the next reload does not
+// resurrect a tab that is no longer open.
+await page.click('.editor-tab .editor-tab-close')
+await page.waitForTimeout(400)
+{
+  const st = await editorState()
+  const ok = st.tabs.length === 0 && st.active === null &&
+    st.header === 'no file selected' && st.doc.trim() === '' &&
+    st.stored?.open.length === 0 && st.stored?.active === null
+  console.log(`phase9 closing the last tab empties the pane ${JSON.stringify(st)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
 }
 
 await browser.close()

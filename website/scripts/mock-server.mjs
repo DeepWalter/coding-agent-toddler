@@ -41,8 +41,33 @@ const API = {
   },
 }
 
+// Files the editor phase opens, served with the same payload (and 404) as
+// toddler/web/files.read_file.  The tree stays empty: the phase restores its
+// tabs from localStorage, so the explorer needs no entries to drive them.
+const FILES = new Map([
+  ['mock-a.md', '# mock A\n\nfirst seeded file\n'],
+  ['mock-b.md', '# mock B\n\nsecond seeded file\n'],
+])
+
+function filePayload(rel, content) {
+  // Same line count as read_file: newlines, plus one for a trailing line
+  // that has no newline of its own.
+  const newlines = (content.match(/\n/g) ?? []).length
+  return { path: rel, content, total_lines: newlines + (content.endsWith('\n') ? 0 : 1) }
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://${req.headers.host}`)
+  if (url.pathname === '/api/file') {
+    const rel = url.searchParams.get('path') ?? ''
+    const content = FILES.get(rel)
+    const missing = content === undefined
+    res.writeHead(missing ? 404 : 200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify(
+      missing ? { error: `file not found: '${rel}'` } : filePayload(rel, content),
+    ))
+    return
+  }
   if (url.pathname.startsWith('/api/')) {
     const body = API[url.pathname] ?? {}
     res.writeHead(200, { 'content-type': 'application/json' })
