@@ -266,8 +266,15 @@ const restoredTabs = readStored<PersistedTabs>(
 )
 
 const openTabs = ref<TabEntry[]>(restoredTabs.open.map((p) => ({ kind: 'file', path: p })))
+// The restored active tab must BE its entry in openTabs, never a second
+// literal for the same path: a tab is closed by matching the entry handed
+// up from the strip against both lists, and a detached active tab survives
+// its own close — the strip empties while the pane keeps the file (and a
+// reload then restores a path no longer in `open`).
 const activeTab = ref<TabEntry | null>(
-  restoredTabs.active ? { kind: 'file', path: restoredTabs.active } : null,
+  restoredTabs.active
+    ? (openTabs.value.find((t) => t.path === restoredTabs.active) ?? null)
+    : null,
 )
 
 /** The file path of the active tab, if it is a file tab — the explorer's
@@ -329,10 +336,15 @@ function openDiff(path: string, staged: boolean) {
 }
 
 function closeTab(tab: TabEntry) {
-  const idx = openTabs.value.indexOf(tab)
+  // Matched by key, not identity: entries reach here as reactive proxies of
+  // the list elements, and the only thing that makes one tab distinct from
+  // another is its key — a second object for the same path must not survive
+  // the close of the first.
+  const idx = openTabs.value.findIndex((t) => tabKey(t) === tabKey(tab))
   if (idx === -1) return
+  const wasActive = activeTab.value !== null && tabKey(activeTab.value) === tabKey(tab)
   openTabs.value.splice(idx, 1)
-  if (activeTab.value === tab) {
+  if (wasActive) {
     // Prefer the tab to the right (same index after splice), fall back left.
     activeTab.value = openTabs.value[idx] ?? openTabs.value[idx - 1] ?? null
   }
