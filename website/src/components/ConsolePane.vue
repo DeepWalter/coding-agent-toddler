@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import type { Block } from '../types'
 import { renderMarkdown } from '../markdown'
 import { blockStatus } from '../blockStatus'
+import ConsoleTopFloat from './ConsoleTopFloat.vue'
 import MessageBubble from './MessageBubble.vue'
 import PlanCard from './PlanCard.vue'
 import StatusMark from './StatusMark.vue'
@@ -27,6 +28,9 @@ const emit = defineEmits<{
 const scroller = ref<HTMLElement | null>(null)
 const atBottom = ref(true)
 
+// Within 40px of the bottom counts as pinned to the bottom.
+const AT_BOTTOM_PX = 40
+
 // True from a local send until the user grabs the scroller: while set, the
 // blocks watch keeps pinning no matter where the scrollbar sat — a sent
 // message must not be answered below the fold.  Cleared only by real user
@@ -39,8 +43,8 @@ let follow = false
 function onScroll() {
   const el = scroller.value
   if (!el) return
-  // Within 40px of the bottom counts as pinned to the bottom.
-  atBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < 40
+  atBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < AT_BOTTOM_PX
+  updateFloat()
 }
 
 function scrollToBottom() {
@@ -48,11 +52,131 @@ function scrollToBottom() {
   if (el && (atBottom.value || follow)) el.scrollTop = el.scrollHeight
 }
 
+/* ------------------------------------------------------------------ */
+/* The floating input box                                              */
+/* ------------------------------------------------------------------ */
+
+/** The `user` rows, index-locked to `floatTexts`/`floatIds` — row i is the i-th
+ *  `user` block, the one-row-per-block order the template renders.  The
+ *  elements are cached and the rects are not, so a row that grows in place
+ *  cannot go stale; only `blocks` changing identity invalidates the list. */
+let floatRows: HTMLElement[] = []
+let floatIds: number[] = []
+let floatTexts: string[] = []
+let floatRowsDirty = true
+
+/** Which input boxes the reader has opened, by block id.  It lives here, on the
+ *  blocks, because a box is read in two places — its own row and the console's
+ *  top float — and they are the same message: opening one has to open both, and
+ *  the float taking over a box the reader opened in the transcript has to find
+ *  it already open. */
+const expandedIds = reactive(new Set<number>())
+
+function toggleExpanded(id: number) {
+  if (!expandedIds.delete(id)) expandedIds.add(id)
+}
+
+/** Where the last tick found the boundary.  The rows above the fold are a
+ *  prefix of an ordered, disjoint list, so the answer is unique and the walk
+ *  converges from either side: starting where the previous tick stopped
+ *  costs a rect or two as the fold moves, and a jump costs one pass, once. */
+let floatHint = 0
+
+/** Which input the echo names, and whether its box is up.  Two questions, and
+ *  the second cannot be answered until the first has rendered: the room the
+ *  echo needs is its own height. */
+const floatText = ref<string | null>(null)
+const floatId = ref<number | null>(null)
+const floatShown = ref(false)
+const floatBox = ref<InstanceType<typeof ConsoleTopFloat> | null>(null)
+
+function toggleFloat() {
+  if (floatId.value !== null) toggleExpanded(floatId.value)
+}
+
+function refreshFloatRows(el: HTMLElement) {
+  if (!floatRowsDirty) return
+  floatRows = [...el.querySelectorAll<HTMLElement>(':scope > .stream-row[data-kind="user"]')]
+  floatIds = []
+  floatTexts = []
+  for (const block of props.blocks) {
+    if (block.kind !== 'user') continue
+    floatIds.push(block.id)
+    floatTexts.push(block.text)
+  }
+  floatRowsDirty = false
+}
+
+/** The index of the last `user` box the fold has scrolled past, or -1.  All of
+ *  it is viewport space against the pane's own top edge: the pane has no
+ *  border, so that edge is the top of the visible output, and the pane's own
+ *  14px padding never enters the arithmetic. */
+function floatAt(el: HTMLElement): number {
+  refreshFloatRows(el)
+  if (!floatRows.length) return -1
+  const fold = el.getBoundingClientRect().top
+  // The *top* edge is what the fold has to reach: the echo takes a box over the
+  // moment it starts to leave, not once it is gone.  Nothing has to be hidden
+  // for that to read — the echo is the same box, same text, same width, same
+  // clamp, so it covers the part still showing and the handover is invisible.
+  //
+  // Forward to the first row whose top is past the fold, then back to the last
+  // one above it: `floatHint` starts the pair where the last tick left off.
+  let i = Math.min(floatHint, floatRows.length - 1)
+  for (; i < floatRows.length; i++) {
+    if (floatRows[i].getBoundingClientRect().top > fold) break
+  }
+  for (i = Math.min(i, floatRows.length - 1); i >= 0; i--) {
+    if (floatRows[i].getBoundingClientRect().top <= fold) break
+  }
+  floatHint = Math.max(i, 0)
+  return i
+}
+
+/** Refresh the echo.  Reached from the scroll and resize paths only, never
+ *  from the blocks watch: that fires on every streamed frame, and content
+ *  streaming in lands *below* the fold, where it cannot move the rows this
+ *  reads — the fold itself only moves when the scroller does.
+ *
+ *  The echo is shown at the live tail too, which is the point of reading the
+ *  fold rather than the scroll position: a reply that runs past a screenful
+ *  takes the prompt that asked for it off the top, and that prompt is the one
+ *  thing the reader cannot recover from what is on screen. */
+async function updateFloat() {
+  const el = scroller.value
+  if (!el) return
+  const i = floatAt(el)
+  const id = i < 0 ? null : (floatIds[i] ?? null)
+  const text = i < 0 ? null : (floatTexts[i] ?? null)
+  // The id travels with the *index*, not with the text: two inputs can read the
+  // same, and the echo still has to take the second one's state rather than
+  // carrying the first one's across.
+  if (id !== floatId.value || text !== floatText.value) {
+    floatId.value = id
+    floatText.value = text
+    // The box the next input has to reach is the echo's own, and it is not in
+    // the document until the patch above lands — which is also the only place a
+    // change of state (the echo moving to a box that reads differently) is
+    // reflected before that boundary is measured.
+    await nextTick()
+  }
+  // It floats for exactly as long as it has room: the next input ends the echo
+  // by reaching its bottom edge, and there is no other limit.
+  const box = floatBox.value?.box
+  const next = i < 0 ? undefined : floatRows[i + 1]
+  floatShown.value =
+    !!box && (!next || next.getBoundingClientRect().top > box.getBoundingClientRect().bottom)
+}
+
 // Each reducer pass returns a new blocks array, so identity change fires
 // on every frame — streaming text stays pinned while the user is at the
 // bottom, and doesn't yank the scrollbar while they scroll up.
 watch(() => props.blocks, async () => {
   await nextTick()
+  // The float's row list survives the patch (identity, not geometry) — it is
+  // the *rows* that may have been replaced, so invalidate and let the next
+  // scroll or resize rebuild it.
+  floatRowsDirty = true
   scrollToBottom()
 })
 
@@ -148,6 +272,10 @@ onMounted(() => {
   // sub-pixel drift) reads as no change instead of an unrequested scroll.
   lastBoxHeight = el.getBoundingClientRect().height
   boxObserver = new ResizeObserver((entries) => {
+    // Before the height guard: a taller --bar-h grows this scroller's bottom
+    // padding — a report with an unchanged border box — and that can unpin
+    // the bottom with no scroll event behind it.
+    updateFloat()
     const blockSize = entries[0]?.borderBoxSize[0]?.blockSize
     if (typeof blockSize !== 'number' || Math.abs(blockSize - lastBoxHeight) < 0.5) {
       return
@@ -158,6 +286,7 @@ onMounted(() => {
   boxObserver.observe(el)
   el.addEventListener('wheel', releaseFollow, { passive: true })
   el.addEventListener('pointerdown', releaseFollow)
+  updateFloat()
 })
 onBeforeUnmount(() => {
   boxObserver?.disconnect()
@@ -193,6 +322,8 @@ function rowStatus(block: Block) {
         v-if="block.kind === 'user'"
         :role="'user'"
         :text="block.text"
+        :expanded="expandedIds.has(block.id)"
+        @toggle="toggleExpanded(block.id)"
       />
       <MessageBubble
         v-else-if="block.kind === 'assistant'"
@@ -229,4 +360,17 @@ function rowStatus(block: Block) {
       No messages yet — describe a task below.
     </div>
   </div>
+  <!-- The top float is this component's second root, a positioned sibling of
+       the scroller inside the wrap — which is also its offset parent, and the
+       reason it lands below the header without knowing the header's height.
+       Outside the scroller: it echoes content that has scrolled away, so it
+       must not scroll with it. -->
+  <ConsoleTopFloat
+    v-if="floatText !== null"
+    ref="floatBox"
+    :text="floatText"
+    :shown="floatShown"
+    :expanded="floatId !== null && expandedIds.has(floatId)"
+    @toggle="toggleFloat"
+  />
 </template>

@@ -509,6 +509,11 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  /* Offset parent for the console's top float (absolute, top-inset), which
+     ConsolePane renders as the scroller's sibling.  The dock uses .pane-console
+     the same way — but this box starts below the header, which is what lets the
+     float sit at the top of the output without measuring the header. */
+  position: relative;
 }
 
 .console-pane {
@@ -603,21 +608,25 @@ body {
    flush with the block's top, so they take the default.  Child combinators:
    nothing inside a block renders a mark, and a nested one must never
    inherit these offsets. */
-.stream-row[data-kind='tool'] > .status-mark {
-  top: 7px; /* 1px card border + 6px header padding */
+.stream-row[data-kind='tool']>.status-mark {
+  top: 7px;
+  /* 1px card border + 6px header padding */
 }
 
-.stream-row[data-kind='plan'] > .status-mark {
-  top: 11px; /* 1px card border + 10px card padding */
+.stream-row[data-kind='plan']>.status-mark {
+  top: 11px;
+  /* 1px card border + 10px card padding */
 }
 
-.stream-row[data-kind='error'] > .status-mark {
-  top: 4px; /* .stream-line.error's own padding */
+.stream-row[data-kind='error']>.status-mark {
+  top: 4px;
+  /* .stream-line.error's own padding */
 }
 
-.stream-row[data-kind='notice'] > .status-mark,
-.stream-row[data-kind='fold'] > .status-mark {
-  top: 2px; /* .stream-line's own padding */
+.stream-row[data-kind='notice']>.status-mark,
+.stream-row[data-kind='fold']>.status-mark {
+  top: 2px;
+  /* .stream-line's own padding */
 }
 
 .message {
@@ -647,46 +656,74 @@ body {
   background: var(--editor-bg);
 }
 
-/* Collapsed user input: one ellipsized line.  Specificity beats the base
-   pre-wrap rule; nowrap is required for text-overflow to engage. */
+/* Collapsed user input: three lines, and the fade below if there are more of
+   them.  The text keeps its own breaks — the base rule's pre-wrap — rather
+   than being flattened into one line, which is what turned the reader's
+   newlines into spaces.  3 × 13px/1.55 mono line-height ≈ 60px, plus the
+   box's 8px padding and 1px border; the second declaration is the same via
+   the modern lh unit, so the cut lands on a line boundary whatever the type
+   scale is. */
 .message.user .message-content.collapsed {
-  white-space: nowrap;
+  max-height: 78px;
+  max-height: calc(3lh + 18px);
   overflow: hidden;
-  text-overflow: ellipsis;
+}
+
+/* The fade: the box's own fill painted over its last line, so the cut reads
+   as "there is more" rather than as a message that happens to end there.  It
+   waits on the measure (data-clamped) because a message that fits its three
+   lines has nothing to point at, and on the collapse because an opened box
+   that still overflows scrolls — a gradient over a scroll lies about where
+   the content ends.  The box is position: relative (above), so this rides
+   inside its radius and its clip.
+
+   ::before, not ::after: the chip is positioned in the same corner, and among
+   positioned siblings with no z-index anywhere, tree order is paint order —
+   and a pseudo-element is generated as the first child, or the last. */
+.message.user .message-content.collapsed[data-clamped]::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1.5em;
+  background: linear-gradient(to bottom, transparent, var(--editor-bg));
 }
 
 /* The floating toggle reserves the box's bottom-right corner (same width in
    both states, so expanding never reflows the text), leaving the chip clear
-   of the content whether the box is one line or many. */
+   of the content whether the box is three lines or many.  It is the chip's own
+   width plus a gap: widen the label and this has to follow it. */
 .message.user .message-content.has-toggle {
-  padding-right: 56px;
+  padding-right: 76px;
 }
 
+/* The chip is a target, and it is sized to the box it opens: 1.5 transcript
+   lines — half the three-line box it sits in — which is 1.5 × 13px/1.55 ≈ 30px.
+   Written out rather than derived, because neither unit can say it: `lh` on
+   line-height is self-referential, and `em` would measure the chip's own label
+   rather than the transcript's line.  The label is a step up from that 13px
+   base rather than down from it: the chip carries a word, and at a 30px height
+   a smaller one reads as a caption in a button-shaped hole. */
 .message-toggle {
   position: absolute;
   right: 6px;
   bottom: 5px;
-  padding: 0 6px;
+  padding: 0 8px;
   border: 0;
-  border-radius: 5px;
+  border-radius: 6px;
   background: color-mix(in srgb, var(--text-subtle) 12%, transparent);
-  font-size: 11px;
-  line-height: 18px;
+  font-size: 14px;
+  line-height: 30px;
   color: var(--text-muted);
   cursor: pointer;
 }
 
-/* A one-line collapsed box is as tall as its text — the chip centers on the
-   line there (reads as a trailing control) instead of hanging below it. */
-.message.user .message-content.collapsed .message-toggle {
-  bottom: auto;
-  top: 50%;
-  transform: translateY(-50%);
-}
-
+/* Hover takes the fill most of the way to the text tier rather than a nudge:
+   against the box's own --editor-bg, a 12%-to-22% step is barely a shade. */
 .message-toggle:hover {
   color: var(--accent);
-  background: color-mix(in srgb, var(--text-subtle) 22%, transparent);
+  background: color-mix(in srgb, var(--text-subtle) 45%, transparent);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1212,6 +1249,61 @@ body {
   box-shadow: 0 6px 18px rgb(0 0 0 / 0.25);
 }
 
+/* ------------------------------------------------------------------ */
+/* Console top float (the input box the fold has scrolled past)        */
+/* ------------------------------------------------------------------ */
+
+/* The last user box above the fold, echoed over the console's top edge at
+   the pane's own 14px inset.  Out of flow, and the pane reserves no room for
+   it: a float that moved the content it measures would oscillate — appear →
+   rows shift → the row three lines above the fold is now one line above it →
+   hide → rows shift back.  The lift goes on the bubble rather than on this
+   box, so the shadow hugs the box's own radius instead of the pane's full
+   width.  No z-index, for the dock's reason: .console-wrap is not a stacking
+   context and this is its positioned last child, so it paints over the rows.
+   pointer-events: none is load-bearing — the ancestors here do not scroll, so
+   a wheel over the float would scroll nothing and the console would feel
+   frozen under the cursor — and only the reader's chip and an opened box,
+   the two things here that are meant to be used, take the pointer back. */
+.console-top-float {
+  position: absolute;
+  top: 0px;
+  left: 14px;
+  right: 14px;
+  pointer-events: none;
+}
+
+/* Not up: still laid out — the pane measures this box to know where the next
+   input ends the echo — but out of paint, out of the tab order, and out of the
+   accessibility tree. */
+.console-top-float[data-hidden] {
+  visibility: hidden;
+}
+
+/* The box is the transcript's own user box, clamp, fade and chip included —
+   those rules are up with it, not here.  The float adds only its lift. */
+.console-top-float .message-content {
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.25);
+}
+
+/* Opened: the whole input, capped so the box cannot run past the pane and
+   take its own chip out of reach, and scrollable because a cap without a
+   scroll would hide the rest with nothing to reach it.  This is the one place
+   inside the float that wants the wheel, so it is the one that takes the
+   pointer back.  The transcript's opened box needs no cap — the transcript
+   itself scrolls, and the box is a row in it. */
+.console-top-float .message-content:not(.collapsed) {
+  max-height: 55vh;
+  overflow-y: auto;
+  pointer-events: auto;
+}
+
+/* The chip is the float's one control, and the only other thing in here that
+   is meant to be used. */
+.console-top-float .message-toggle {
+  pointer-events: auto;
+}
+
 /* ✕ close on the ask cards' head row (tool gate, plan ask) — replaces the
    old text Cancel; cancels the running turn, so it only shows while busy. */
 .ask-close {
@@ -1360,11 +1452,9 @@ body {
   stroke-width: 2;
   /* Fallback for engines without color-mix() in oklab */
   stroke: var(--error);
-  stroke: color-mix(
-    in oklab,
-    var(--success),
-    var(--error) calc(var(--gauge-t, 0) * 100%)
-  );
+  stroke: color-mix(in oklab,
+      var(--success),
+      var(--error) calc(var(--gauge-t, 0) * 100%));
 }
 
 /* The whole "N%" — digits and percent sign in one line — sits inside the
