@@ -669,13 +669,14 @@ body {
   overflow: hidden;
 }
 
-/* The fade: the box's own fill painted over its last line, so the cut reads
-   as "there is more" rather than as a message that happens to end there.  It
-   waits on the measure (data-clamped) because a message that fits its three
-   lines has nothing to point at, and on the collapse because an opened box
-   that still overflows scrolls — a gradient over a scroll lies about where
-   the content ends.  The box is position: relative (above), so this rides
-   inside its radius and its clip.
+/* The fade: the box's own fill laid over the bottom 4.5em — the whole of the
+   reading the clamp shows, three lines at the 1.55 line-height — so the cut
+   reads as "there is more" rather than as a message that happens to end
+   there.  It waits on the measure (data-clamped) because a message that fits
+   its three lines has nothing to point at, and on the collapse because an
+   opened box that still overflows scrolls — a gradient over a scroll lies
+   about where the content ends.  The box is position: relative (above), so
+   this rides inside its radius and its clip.
 
    ::before, not ::after: the chip is positioned in the same corner, and among
    positioned siblings with no z-index anywhere, tree order is paint order —
@@ -686,7 +687,7 @@ body {
   left: 0;
   right: 0;
   bottom: 0;
-  height: 1.5em;
+  height: 4.5em;
   background: linear-gradient(to bottom, transparent, var(--editor-bg));
 }
 
