@@ -247,6 +247,12 @@ wss.on('connection', (ws) => {
         // that ends with success:false.  The seed only ever succeeds, and
         // the gate path is always approved and always returns a result.
         const fail = msg.input.startsWith('fail')
+        // A "long" turn streams past a screenful.  That is where the console's
+        // top float earns its keep — the prompt that asked for the answer is
+        // off the top while the answer is still arriving — and a plain turn's
+        // 26 lines end just short of it, at the tail where the harness has to
+        // see the difference.
+        const long = msg.input.startsWith('long')
         // The real server auto-titles a conversation from the first user
         // input of its first turn, before the state change whose observer
         // re-broadcasts session_info — so a live header follows untitled →
@@ -288,7 +294,8 @@ wss.on('connection', (ws) => {
           await new Promise((resolve) => setTimeout(resolve, THINK_HOLD_MS))
         }
         let content = ''
-        for (let i = 0; i < 26; i++) {
+        const chunks = long ? 60 : 26
+        for (let i = 0; i < chunks; i++) {
           const chunk = `more streaming output chunk ${i}\n`
           content += chunk
           send({ type: 'content_delta', text_delta: chunk })

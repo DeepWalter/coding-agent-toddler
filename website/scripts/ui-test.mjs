@@ -30,6 +30,15 @@
 //            cleanly — the tab to the right takes over when the active one
 //            goes, and closing the last one empties the pane (header, doc
 //            and the stored active tab all go with it)
+//  phase 10 — the console's top float: the last input box the fold has
+//            reached is echoed over the pane's top edge and follows the
+//            scroll, from the moment the box's *top* crosses the fold until
+//            the next input reaches the echo's own bottom edge, and stands
+//            down at the top of the transcript where there is nothing above
+//            to echo.  It holds at the live tail too, which is where a long
+//            stream needs it.  An echo taller than three lines is cut there
+//            and faded, with a chip that opens the rest of the input and
+//            closes it again
 // Prints PASS/FAIL plus diagnostics; exits 1 on any failure.
 import { chromium } from 'playwright'
 import WebSocket from 'ws'
@@ -1022,6 +1031,424 @@ await page.waitForTimeout(400)
     st.header === 'no file selected' && st.doc.trim() === '' &&
     st.stored?.open.length === 0 && st.stored?.active === null
   console.log(`phase9 closing the last tab empties the pane ${JSON.stringify(st)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+
+// --- Phase 10: the console's top float — the last input box the fold has
+// scrolled past, echoed over the pane's top edge.  A plain turn streams 26
+// lines, which is the room the fold needs to sit between two boxes. ---
+const FLOAT_A = 'float A — the input box the fold scrolls past first'
+// Four short lines.  Short is the point: joined by spaces the text would fit
+// on one line, so the echo showing more than one can only be the breaks being
+// kept — and four of them is one past the three-line clamp.
+const FLOAT_B = ['fix login bug', 'on expiry', 'not on retry', 'in prod'].join('\n')
+// A third turn: room below B for the folds above, and — being a `long:` turn,
+// so its answer runs well past a screenful — the state the float exists for
+// while a reply streams, with its own prompt a long way off the top.
+const FLOAT_C = 'long: float C — the turn whose answer runs past a screenful'
+
+// The transcript is rebuilt by this phase rather than seeded: phase 7's
+// /clear emptied the mock's store, and the float's DOM is the same for
+// replayed and live rows.
+for (const text of [FLOAT_A, FLOAT_B, FLOAT_C]) {
+  await page.waitForSelector('button:has-text("Send")', { timeout: 8000 })
+  await page.fill('textarea.input-bar-textarea', text)
+  await page.click('button:has-text("Send")')
+  await waitPinned()
+  await page.waitForTimeout(400)
+}
+
+// One transcript line (13px/1.55), and the phase's threshold: the same three
+// lines ConsolePane's FLOAT_LINES counts.
+const LINE = await page.evaluate(() => {
+  const el = document.querySelector('.console-pane .message-content')
+  return Number.parseFloat(getComputedStyle(el).lineHeight)
+})
+const T = 3 * LINE
+
+// The last `count` user rows in *content* coordinates: the pane's scrollTop
+// shares that origin, so a row sits `scrollTop - bottom` px above the fold
+// and a target fold is a plain scrollTop.  Positions in content space do not
+// move when the pane scrolls, so these stay good for the whole phase.
+const lastInputs = (count) =>
+  page.evaluate((n) => {
+    const pane = document.querySelector('.console-pane')
+    const paneTop = pane.getBoundingClientRect().top
+    const scrollTop = pane.scrollTop
+    return [...document.querySelectorAll('.console-pane > .stream-row[data-kind="user"]')]
+      .slice(-n)
+      .map((el) => {
+        const box = el.getBoundingClientRect()
+        const top = box.top - paneTop + scrollTop
+        return { top, height: box.height, bottom: box.bottom - paneTop + scrollTop }
+      })
+  }, count)
+
+// Put the fold `gap` px above a row's bottom edge — a gap smaller than the
+// row's height lands inside it, and a negative one leaves it hanging into
+// view.  The read-back is what the assertions compare, so a pane that ran out
+// of scroll cannot pass silently.
+const foldAt = async (row, gap) => {
+  const at = await page.evaluate(
+    ({ bottom, by }) => {
+      const pane = document.querySelector('.console-pane')
+      pane.scrollTop = bottom + by
+      return {
+        fold: Math.round(pane.scrollTop),
+        want: Math.round(bottom + by),
+        max: Math.round(pane.scrollHeight - pane.clientHeight),
+      }
+    },
+    { bottom: row.bottom, by: gap },
+  )
+  await page.waitForTimeout(150)
+  return at
+}
+
+// Everything the float's contract is read from.  `hit` is what the point at
+// the box's own centre resolves to and `chipHit` the point at the chip's:
+// null when nothing is there, false when something underneath is, true when
+// the float itself is.
+const floatState = () =>
+  page.evaluate(() => {
+    const el = document.querySelector('.console-top-float')
+    // The box is in the document whenever there is anything above the fold to
+    // echo, shown or not — the pane measures it either way.  Not shown is what
+    // visibility says.
+    if (!el || getComputedStyle(el).visibility === 'hidden') return null
+    const box = el.getBoundingClientRect()
+    const paneEl = document.querySelector('.console-pane')
+    const pane = paneEl.getBoundingClientRect()
+    // The row the echo copies, for the alignment the box owes it — the float's
+    // own inset is a look, the row's edges are what it lines up with.
+    const row = paneEl.querySelector(':scope > .stream-row[data-kind="user"]')?.getBoundingClientRect()
+    const content = el.querySelector('.message-content')
+    const chip = el.querySelector('.message-toggle')
+    const chipBox = chip?.getBoundingClientRect()
+    const text = [...(content?.childNodes ?? [])]
+      .filter((n) => n.nodeType === Node.TEXT_NODE)
+      .map((n) => n.textContent)
+      .join('')
+    const style = getComputedStyle(content)
+    const at = (x, y) => {
+      const found = document.elementFromPoint(x, y)
+      return found ? el.contains(found) : null
+    }
+    return {
+      text,
+      top: Math.round(box.top),
+      bottom: Math.round(box.bottom),
+      left: Math.round(box.left),
+      right: Math.round(box.right),
+      paneTop: Math.round(pane.top),
+      paneLeft: Math.round(pane.left),
+      paneRight: Math.round(pane.right),
+      paneBottom: Math.round(pane.bottom),
+      rowLeft: row ? Math.round(row.left) : null,
+      rowRight: row ? Math.round(row.right) : null,
+      height: Math.round(box.height),
+      line: Number.parseFloat(style.lineHeight),
+      pointerEvents: getComputedStyle(el).pointerEvents,
+      buttons: el.querySelectorAll('button').length,
+      whiteSpace: style.whiteSpace,
+      // The box is boxes not lines: scrollHeight carries the whole text, so
+      // content taller than the box is what the clamp cut away.
+      overflowY: content ? content.scrollHeight - content.clientHeight : 0,
+      // The box's own three readings, plus the fade it paints with — the
+      // gradient is the whole visual difference between a cut box and one
+      // that ends where its text ends.
+      clamped: content ? content.hasAttribute('data-clamped') : false,
+      expanded: content ? !content.classList.contains('collapsed') : false,
+      chip: chip !== null,
+      fade: content ? getComputedStyle(content, '::before').backgroundImage : '',
+      chipText: chip?.textContent?.trim() ?? null,
+      hit: at(box.left + box.width / 2, box.top + box.height / 2),
+      chipHit: chipBox ? at(chipBox.left + chipBox.width / 2, chipBox.top + chipBox.height / 2) : null,
+    }
+  })
+
+const [A, B] = await lastInputs(3)
+
+// P10a: three lines past A, inside B's answer — the float echoes A, word for
+// word (the copy is the string, not a truncation of it).
+const foldA = await foldAt(A, T + 12)
+const shownA = await floatState()
+{
+  const ok = shownA !== null && shownA.text === FLOAT_A && foldA.fold === foldA.want
+  console.log(
+    `phase10 a box past the fold is echoed with its own text ${JSON.stringify({ fold: foldA, text: shownA?.text })} ${ok ? 'PASS' : 'FAIL'}`,
+  )
+  if (!ok) fails++
+}
+
+// P10b: A is one line, so the box is one line — no clamp, no fade, no chip —
+// spanning exactly the row it copies and sitting inside the pane, out of the
+// pointer's way (so the wheel still reaches the scroller and a click lands on
+// what is underneath).  The 18 is the bubble's own 8px padding and 1px border.
+{
+  const f = shownA
+  const ok =
+    f !== null &&
+    Math.abs(f.left - f.rowLeft) <= 1 &&
+    Math.abs(f.right - f.rowRight) <= 1 &&
+    f.top >= f.paneTop &&
+    f.top + f.height <= f.paneBottom &&
+    Math.abs(f.height - (f.line + 18)) <= 1 &&
+    f.overflowY === 0 &&
+    !f.clamped &&
+    !f.chip &&
+    f.buttons === 0 &&
+    f.pointerEvents === 'none' &&
+    // Never the float itself — the point under it belongs to the transcript.
+    f.hit !== true
+  console.log(`phase10 a one-line input is echoed whole, with nothing to open ${JSON.stringify(f)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+
+// P10c: past B, the echo follows.
+await foldAt(B, T + 12)
+const shownB = await floatState()
+{
+  const ok = shownB !== null && shownB.text === FLOAT_B
+  console.log(`phase10 the echo follows the last box above the fold ${JSON.stringify(shownB?.text?.slice(0, 24))} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+// P10d: the echo keeps the four lines B was typed as and stands three of them
+// up, the fourth going under a fade — with a chip, because there is more of B
+// than the box shows.  Its transcript row is the same text with the same
+// `more ▾`, so the chip is the transcript's control, read at the fold.
+{
+  const f = shownB
+  const rowToggles = await page.evaluate(
+    () => document.querySelectorAll('.console-pane .stream-row[data-kind="user"] .message-toggle').length,
+  )
+  const ok =
+    f !== null &&
+    f.whiteSpace === 'pre-wrap' &&
+    Math.abs(f.height - (3 * f.line + 18)) <= 1 &&
+    // A whole line's worth of text is past the cut — which only the breaks
+    // being kept can produce, since B on one line would not fill three.
+    f.overflowY >= f.line &&
+    f.clamped &&
+    !f.expanded &&
+    f.chip &&
+    f.fade.includes('linear-gradient') &&
+    f.chipText === 'more ▾' &&
+    // The chip is the one thing here that takes the pointer.
+    f.chipHit === true &&
+    rowToggles > 0
+  console.log(`phase10 a multi-line input keeps its breaks, fades at three lines, and offers the rest ${JSON.stringify({ whiteSpace: f?.whiteSpace, height: f?.height, line: f?.line, past: f?.overflowY, clamped: f?.clamped, fade: f?.fade?.slice(0, 21), chip: f?.chipText, chipHit: f?.chipHit, transcriptToggles: rowToggles })} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+
+// P10e: the chip opens the whole input, and closes it again — and the fade
+// goes with the clamp, since a box showing everything has nothing to point at.
+await page.click('.console-top-float .message-toggle')
+await page.waitForTimeout(200)
+{
+  const open = await floatState()
+  const okOpen =
+    open !== null &&
+    open.expanded &&
+    !open.clamped &&
+    open.chipText === 'less ▴' &&
+    open.height > 3 * open.line + 18 &&
+    open.fade === 'none'
+  console.log(`phase10 the chip opens the whole input ${JSON.stringify({ expanded: open?.expanded, height: open?.height, chip: open?.chipText, fade: open?.fade })} ${okOpen ? 'PASS' : 'FAIL'}`)
+  if (!okOpen) fails++
+
+  await page.click('.console-top-float .message-toggle')
+  await page.waitForTimeout(200)
+  const shut = await floatState()
+  const okShut =
+    shut !== null &&
+    !shut.expanded &&
+    shut.clamped &&
+    Math.abs(shut.height - (3 * shut.line + 18)) <= 1 &&
+    shut.chipText === 'more ▾'
+  console.log(`phase10 the chip closes it back to three lines ${JSON.stringify({ expanded: shut?.expanded, height: shut?.height, chip: shut?.chipText })} ${okShut ? 'PASS' : 'FAIL'}`)
+  if (!okShut) fails++
+}
+
+// P10f: a box the fold has just cleared is echoed at once.  There is no grace
+// band — 20px of it is enough, where the three-line threshold this replaced
+// would have withheld the echo for another 40.
+const foldJust = await foldAt(A, 20)
+{
+  const f = await floatState()
+  const ok =
+    f !== null && f.text === FLOAT_A && foldJust.fold === foldJust.want
+  console.log(`phase10 a box 20px past the fold is echoed at once ${JSON.stringify({ fold: foldJust, text: f?.text?.slice(0, 16) })} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+
+// P10g: and what ends it is the echo's own room, not a number of lines.  The
+// boundary is its bottom edge, measured off the box that is up: B's top four
+// pixels below that edge and the echo stands, four pixels above it and the
+// echo is gone.
+const edge = (shown) => (shown ? shown.bottom - shown.paneTop : 0)
+{
+  const up = await floatState()
+  const px = edge(up)
+  await foldAt(B, -(B.height + px + 4))
+  const under = await floatState()
+  await foldAt(B, -(B.height + px - 4))
+  const over = await floatState()
+  const ok =
+    up !== null && px > 0 &&
+    under !== null && under.text === FLOAT_A &&
+    over === null
+  console.log(`phase10 the echo ends where the next input reaches its bottom edge ${JSON.stringify({ edge: px, below: under?.text?.slice(0, 16), above: over })} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+
+// P10h: eight pixels into A's own box — the fold has only just reached its
+// top, and the echo is already up naming it.  That is the handover: the echo is
+// the same text at the same width under the same clamp, so it covers what is
+// still showing rather than sitting beside it.  The row's bottom ends up no
+// lower than the echo's, which is what "covers" means here.
+await foldAt(A, 8 - A.height)
+{
+  const f = await floatState()
+  const uncovered = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('.console-pane > .stream-row[data-kind="user"]')]
+    const box = document.querySelector('.console-top-float')?.getBoundingClientRect()
+    if (!box) return null
+    return Math.round(rows[rows.length - 3].getBoundingClientRect().bottom - box.bottom)
+  })
+  const ok = f !== null && f.text === FLOAT_A && uncovered !== null && uncovered <= 1
+  console.log(`phase10 the echo takes over the moment the box's top reaches the fold ${JSON.stringify({ text: f?.text?.slice(0, 16), uncovered })} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+
+// P10i: at the very top there is nothing above the fold to echo.
+await page.evaluate(() => {
+  document.querySelector('.console-pane').scrollTop = 0
+})
+await page.waitForTimeout(150)
+{
+  const f = await floatState()
+  const ok = f === null
+  console.log(`phase10 nothing above the fold at the top of the transcript ${JSON.stringify(f)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+
+// P10j: pinned to the live tail — the far end of C's answer — the echo names
+// C, the turn being answered.  This is the reading the float exists for while
+// a reply streams: the prompt that asked for it is a screen or more off the
+// top, and the answer on screen cannot say which turn it belongs to.
+await page.evaluate(() => {
+  const el = document.querySelector('.console-pane')
+  el.scrollTop = el.scrollHeight
+})
+await page.waitForTimeout(150)
+{
+  const f = await floatState()
+  const ok = f !== null && f.text === FLOAT_C
+  console.log(`phase10 at the live tail the echo names the turn being answered ${JSON.stringify(f?.text?.slice(0, 24))} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+
+// P10k: the transcript's own box — the one the float is a copy of — is read
+// the same way, which is the point of the echo: one box, one reading, whether
+// it sits in a row or over the top edge.  A (one line) is cut nowhere and
+// offers nothing; B (four short lines) is the same three lines and a chip the
+// float showed, in the row this time.
+const rowState = (fromEnd) =>
+  page.evaluate((n) => {
+    const rows = [...document.querySelectorAll('.console-pane > .stream-row[data-kind="user"]')]
+    const content = rows[rows.length - n]?.querySelector('.message-content')
+    if (!content) return null
+    return {
+      height: Math.round(content.getBoundingClientRect().height),
+      line: Number.parseFloat(getComputedStyle(content).lineHeight),
+      whiteSpace: getComputedStyle(content).whiteSpace,
+      past: content.scrollHeight - content.clientHeight,
+      collapsed: content.classList.contains('collapsed'),
+      clamped: content.hasAttribute('data-clamped'),
+      chip: content.querySelector('.message-toggle')?.textContent?.trim() ?? null,
+      fade: getComputedStyle(content, '::before').backgroundImage,
+    }
+  }, fromEnd)
+
+{
+  const short = await rowState(3)
+  const long = await rowState(2)
+  const ok =
+    short !== null &&
+    short.whiteSpace === 'pre-wrap' &&
+    short.collapsed &&
+    !short.clamped &&
+    short.chip === null &&
+    long !== null &&
+    long.whiteSpace === 'pre-wrap' &&
+    long.collapsed &&
+    long.clamped &&
+    Math.abs(long.height - (3 * long.line + 18)) <= 1 &&
+    long.past >= long.line &&
+    long.chip === 'more ▾' &&
+    long.fade.includes('linear-gradient')
+  console.log(`phase10 the transcript's own boxes read exactly as the echo does ${JSON.stringify({ short: { height: short?.height, clamped: short?.clamped, chip: short?.chip }, long: { height: long?.height, line: long?.line, past: long?.past, clamped: long?.clamped, chip: long?.chip } })} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+
+// P10l: a box is read twice — its row in the transcript, and the echo over the
+// fold — and it is one message, so opening it in either place opens it in both.
+// This is the direction the reader meets first: they open a message in the
+// transcript, scroll on, and the echo that takes it over comes up already open.
+{
+  // B's row in view with the echo still naming A above it, so the chip about to
+  // be clicked is the transcript's own and nothing is covering it.
+  const [, parked] = await lastInputs(3)
+  await foldAt(parked, -(parked.height + 60))
+  await page
+    .locator('.console-pane .stream-row[data-kind="user"]', { hasText: 'not on retry' })
+    .locator('.message-toggle')
+    .click()
+  const opened = await rowState(2)
+  // Then B's top crosses the fold: the echo takes it over, and it is open.
+  const [, moved] = await lastInputs(3)
+  await foldAt(moved, 20 - moved.height)
+  const f = await floatState()
+  const ok =
+    opened !== null && opened.collapsed === false &&
+    f !== null && f.expanded && f.chipText === 'less ▴' &&
+    f.height > 3 * f.line + 18
+  console.log(`phase10 opening a message in the transcript opens the echo that takes it over ${JSON.stringify({ rowCollapsed: opened?.collapsed, floatExpanded: f?.expanded, height: f?.height, line: f?.line })} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+
+// P10m: two inputs can read the same, and the echo's state follows the box it
+// *names*, not the one it used to.  The twin is the same text as B and has
+// never been touched, so the two differ in exactly one way — which block is
+// behind them — and nothing in the echo's content can tell them apart.  What
+// each echo should read is taken from its own row, so the assertion holds
+// whichever way the two stand.
+await page.waitForSelector('button:has-text("Send")', { timeout: 8000 })
+await page.fill('textarea.input-bar-textarea', FLOAT_B)
+await page.click('button:has-text("Send")')
+await waitPinned()
+await page.waitForTimeout(400)
+{
+  const rows4 = await lastInputs(4) // A, B, C, and B again
+  const openAt = (n) =>
+    page.evaluate(
+      (i) =>
+        ![...document.querySelectorAll('.console-pane > .stream-row[data-kind="user"]')][i]
+          .querySelector('.message-content')
+          .classList.contains('collapsed'),
+      n,
+    )
+  const open = [await openAt(1), await openAt(3)]
+  await foldAt(rows4[1], 6 - rows4[1].height)
+  const overB = await floatState()
+  await foldAt(rows4[3], 6 - rows4[3].height)
+  const overTwin = await floatState()
+  const ok =
+    open[0] !== open[1] &&
+    overB !== null && overB.expanded === open[0] &&
+    overTwin !== null && overTwin.expanded === open[1]
+  console.log(`phase10 an echo over a second box with the same text reads that box's state ${JSON.stringify({ open, overB: overB && { expanded: overB.expanded, h: overB.height }, overTwin: overTwin && { expanded: overTwin.expanded, h: overTwin.height } })} ${ok ? 'PASS' : 'FAIL'}`)
   if (!ok) fails++
 }
 
