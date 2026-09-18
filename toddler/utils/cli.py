@@ -4,7 +4,63 @@ from __future__ import annotations
 
 import argparse
 
+from toddler.config import defaults
+
 __all__ = ["build_argparser", "build_serve_argparser"]
+
+def _add_common_args(p: argparse.ArgumentParser) -> None:
+    """Add the arguments both entry points accept.
+
+    ``tod`` and ``tod serve`` each own a parser — the CLI has the
+    interactive flags, the server has binding and browser flags — but they
+    drive the same provider, agent loop and logging, so those options are
+    defined once here instead of being duplicated (and left free to drift)
+    in both.
+    """
+    p.add_argument(
+        "--no-stream",
+        action="store_true",
+        help="Disable streaming output.",
+    )
+    p.add_argument(
+        "--model",
+        metavar="MODEL",
+        default=None,
+        help="Override the LLM model name.",
+    )
+    p.add_argument(
+        "--base-url",
+        metavar="URL",
+        default=None,
+        help="Override the API base URL.",
+    )
+    p.add_argument(
+        "--api-key",
+        metavar="KEY",
+        default=None,
+        help="Override the API key.",
+    )
+    p.add_argument(
+        "--max-iterations",
+        type=int,
+        metavar="N",
+        default=None,
+        help="Override the maximum number of agent loop iterations.",
+    )
+    p.add_argument(
+        "--reasoning-effort",
+        choices=defaults.REASONING_EFFORT_TIERS,
+        default=None,
+        help=(
+            "Thinking-effort tier for reasoning models; 'none' disables "
+            "thinking.  Defaults to the endpoint's own."
+        ),
+    )
+    p.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Enable debug logging.",
+    )
 
 
 def build_argparser() -> argparse.ArgumentParser:
@@ -36,39 +92,9 @@ def build_argparser() -> argparse.ArgumentParser:
         help="Start a new session (don't reuse the last one).",
     )
     p.add_argument(
-        "--no-stream",
-        action="store_true",
-        help="Disable streaming output.",
-    )
-    p.add_argument(
         "--list-sessions",
         action="store_true",
         help="List saved sessions and exit.",
-    )
-    p.add_argument(
-        "--model",
-        metavar="MODEL",
-        default=None,
-        help="Override the LLM model name.",
-    )
-    p.add_argument(
-        "--base-url",
-        metavar="URL",
-        default=None,
-        help="Override the API base URL.",
-    )
-    p.add_argument(
-        "--api-key",
-        metavar="KEY",
-        default=None,
-        help="Override the API key.",
-    )
-    p.add_argument(
-        "--max-iterations",
-        type=int,
-        metavar="N",
-        default=None,
-        help="Override the maximum number of agent loop iterations.",
     )
     p.add_argument(
         "--max-output-lines",
@@ -84,11 +110,7 @@ def build_argparser() -> argparse.ArgumentParser:
         default=None,
         help="Fallback panel height when terminal size is unknown (0 = no clipping).",
     )
-    p.add_argument(
-        "--verbose", "-v",
-        action="store_true",
-        help="Enable debug logging.",
-    )
+    _add_common_args(p)
     return p
 
 
@@ -127,39 +149,5 @@ def build_serve_argparser() -> argparse.ArgumentParser:
         action="store_true",
         help="Enable dev-mode CORS for the Vite dev server (:5173).",
     )
-    p.add_argument(
-        "--model",
-        metavar="MODEL",
-        default=None,
-        help="Override the LLM model name.",
-    )
-    p.add_argument(
-        "--base-url",
-        metavar="URL",
-        default=None,
-        help="Override the API base URL.",
-    )
-    p.add_argument(
-        "--api-key",
-        metavar="KEY",
-        default=None,
-        help="Override the API key.",
-    )
-    p.add_argument(
-        "--no-stream",
-        action="store_true",
-        help="Disable streaming output.",
-    )
-    p.add_argument(
-        "--max-iterations",
-        type=int,
-        metavar="N",
-        default=None,
-        help="Override the maximum number of agent loop iterations.",
-    )
-    p.add_argument(
-        "--verbose", "-v",
-        action="store_true",
-        help="Enable debug logging.",
-    )
+    _add_common_args(p)
     return p

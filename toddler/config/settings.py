@@ -122,6 +122,7 @@ class Settings:
             "max_output_lines",
             "max_output_panel_height",
             "session_dir",
+            "reasoning_effort",
         ]
 
 

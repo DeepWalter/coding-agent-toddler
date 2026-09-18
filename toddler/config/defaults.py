@@ -7,6 +7,16 @@ DEFAULT_MODEL = "deepseek-v4-pro"
 DEFAULT_BASE_URL = "https://api.deepseek.com"
 DEFAULT_MAX_CONTEXT_LENGTH = 128_000
 
+# Thinking-effort tiers accepted from the environment and the CLI.  "none"
+# disables thinking outright; the rest are handed to the provider, which
+# collapses the finer ones onto DeepSeek's coarser low/high/max scale.
+# The CLI validates its flag against this list so a typo fails at the
+# parser — a bad tier reaching the provider is silently coerced, which is
+# a costly way to find out.
+REASONING_EFFORT_TIERS = [
+    "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
+]
+
 # --- Agent Loop ---
 DEFAULT_MAX_ITERATIONS = 50
 DEFAULT_MAX_TOKENS_PER_RESPONSE = 8192
