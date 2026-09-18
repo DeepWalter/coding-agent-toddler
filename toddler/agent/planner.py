@@ -654,7 +654,7 @@ class Planner:
             response = await self._llm.generate(
                 [Message.user(prompt)],
                 tools=[],
-                max_tokens=2048,
+                max_completion_tokens=2048,
                 temperature=0.0,
                 stream=False,
             )

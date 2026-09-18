@@ -702,7 +702,8 @@ class MockPlanLLMProvider(BaseLLMProvider):
         self.messages_history: list[list[Message]] = []
 
     async def generate(
-        self, messages, tools, *, max_tokens=4096, temperature=0.0, stream=True,
+        self, messages, tools, *, max_completion_tokens=4096,
+        response_format=None, temperature=0.0, stream=True,
     ):
         self.messages_history.append(messages)
         self.call_count += 1

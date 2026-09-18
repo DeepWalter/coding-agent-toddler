@@ -155,7 +155,9 @@ class TestContextManagerRecordUsage:
             @property
             def model(self) -> str:
                 return "gpt-4"
-            async def generate(self, messages, tools, *, max_tokens=4096,
+            async def generate(self, messages, tools, *,
+                               max_completion_tokens=4096,
+                               response_format=None,
                                temperature=0.0, stream=True):
                 raise NotImplementedError
             async def generate_compact(self, prompt: str) -> str:
@@ -260,7 +262,9 @@ class TestAgentLoopRecordUsageIntegration:
             def model(self) -> str:
                 return "gpt-4"
 
-            async def generate(self, messages, tools, *, max_tokens=4096,
+            async def generate(self, messages, tools, *,
+                               max_completion_tokens=4096,
+                               response_format=None,
                                temperature=0.0, stream=True):
                 return LLMResponse(
                     messages=[Message.assistant([
@@ -313,7 +317,9 @@ class TestAgentLoopRecordUsageIntegration:
                 super().__init__()
                 self._call = 0
 
-            async def generate(self, messages, tools, *, max_tokens=4096,
+            async def generate(self, messages, tools, *,
+                               max_completion_tokens=4096,
+                               response_format=None,
                                temperature=0.0, stream=True):
                 self._call += 1
                 if self._call == 1:

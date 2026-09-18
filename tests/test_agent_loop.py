@@ -71,7 +71,8 @@ class MockLLMProvider(BaseLLMProvider):
         messages: list[Message],
         tools: list[dict],
         *,
-        max_tokens: int = 4096,
+        max_completion_tokens: int = 4096,
+        response_format: dict | None = None,
         temperature: float = 0.0,
         stream: bool = True,
     ) -> AsyncIterator[StreamEvent] | LLMResponse:
@@ -482,7 +483,10 @@ class TestErrorRecovery:
         """When the LLM call itself raises, RecoverableAgentError + AgentFinished are yielded."""
 
         class FailingLLM(MockLLMProvider):
-            async def generate(self, messages, tools, *, max_tokens=4096, temperature=0.0, stream=True):
+            async def generate(
+                self, messages, tools, *, max_completion_tokens=4096,
+                response_format=None, temperature=0.0, stream=True,
+            ):
                 raise RuntimeError("API connection lost")
 
         loop = AgentLoop(FailingLLM(), registry, executor, settings, context=conv_ctx, permission_manager=PermissionManager())

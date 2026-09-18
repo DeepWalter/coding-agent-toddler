@@ -32,9 +32,11 @@ class BaseLLMProvider(ABC):
         messages: list[Message],
         tools: list[dict],
         *,
-        max_tokens: int = 4096,
-        temperature: float = 0.0,
+        max_completion_tokens: int = 4096,
+        reasoning_effort: str | None = None,
+        response_format: dict | None = None,
         stream: bool = True,
+        temperature: float = 0.0,
     ) -> AsyncIterator[StreamEvent] | LLMResponse:
         """Send messages to the LLM and return the response.
 
@@ -55,13 +57,26 @@ class BaseLLMProvider(ABC):
             :meth:`BaseTool.to_api_schema()
             <toddler.tools.base.BaseTool.to_api_schema>`.  An empty list
             means no tools are available for this call.
-        max_tokens:
+        max_completion_tokens:
             Maximum tokens the model is allowed to produce in its response.
-        temperature:
-            Sampling temperature (0.0 = deterministic).
+            Named for the budget itself, not the wire field — providers pick
+            the name their endpoint expects (``max_tokens`` vs
+            ``max_completion_tokens``).
+        reasoning_effort:
+            How much thinking the model may spend before answering, on a
+            shared tier scale (``"minimal"`` … ``"max"``); ``"none"``
+            disables thinking.  Providers map it onto their own scale, and
+            ``None`` leaves the endpoint's default in place.
+        response_format:
+            Requested output format, e.g. ``{"type": "json_object"}``.
+            Providers without a matching mode drop the hint (and warn when
+            the type is unrecognised) rather than failing the call.
         stream:
             When ``True`` yields :class:`StreamEvent` items; when
             ``False`` awaits and returns a single :class:`LLMResponse`.
+        temperature:
+            Sampling temperature (0.0 = deterministic).  Ignored by
+            endpoints that fix it in thinking mode.
         """
         ...
 

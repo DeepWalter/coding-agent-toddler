@@ -324,7 +324,7 @@ class AgentLoop:
             response = await self._llm.generate(
                 messages,
                 tools,
-                max_tokens=self._settings.max_tokens_per_response,
+                max_completion_tokens=self._settings.max_tokens_per_response,
                 temperature=self._settings.temperature,
                 stream=stream,
             )

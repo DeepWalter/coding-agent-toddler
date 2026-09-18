@@ -58,7 +58,8 @@ class MockLLMProvider(BaseLLMProvider):
         messages: list[Message],
         tools: list[dict],
         *,
-        max_tokens: int = 4096,
+        max_completion_tokens: int = 4096,
+        response_format: dict | None = None,
         temperature: float = 0.0,
         stream: bool = True,
     ) -> AsyncIterator[StreamEvent] | LLMResponse:

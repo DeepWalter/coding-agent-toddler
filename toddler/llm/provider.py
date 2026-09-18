@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import httpx
 from openai import NOT_GIVEN, NotGiven
@@ -36,6 +36,20 @@ if TYPE_CHECKING:
     from toddler.config.settings import Settings
 
 logger = logging.getLogger(__name__)
+
+
+# Thinking-effort tiers → DeepSeek's coarser scale.  DeepSeek accepts only
+# ``low`` / ``high`` / ``max`` (its own default is ``high``); callers speak a
+# wider scale, so the finer tiers collapse onto the nearest DeepSeek one.
+_DEEPSEEK_REASON_EFFORT_MAP: dict[str, str] = {
+    "minimal": "low",
+    "low": "low",
+    "medium": "high",
+    "high": "high",
+    "xhigh": "high",
+    "max": "max",
+    "ultra": "max",
+}
 
 # ---------------------------------------------------------------------------
 # Finish-reason mapping: OpenAI → internal
@@ -81,6 +95,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
     ) -> None:
         self._settings = settings
         self._model = settings.model
+        self._effort = settings.reasoning_effort
         self._client = AsyncOpenAI(
             base_url=settings.base_url,
             api_key=settings.api_key,
@@ -96,6 +111,15 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         """The model name string."""
         return self._model
 
+    @property
+    def effort(self) -> str | None:
+        """Configured thinking-effort tier; ``None`` = endpoint default."""
+        return self._effort
+
+    @effort.setter
+    def effort(self, value: str | None) -> None:
+        self._effort = value
+
     # ------------------------------------------------------------------
     # generate — the core API
     # ------------------------------------------------------------------
@@ -105,19 +129,43 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         messages: list[Message],
         tools: list[dict],
         *,
-        max_tokens: int = 4096,
-        temperature: float = 0.0,
+        max_completion_tokens: int = 4096,
+        reasoning_effort: str | None = None,
+        response_format: dict | None = None,
         stream: bool = True,
+        temperature: float = 0.0,
     ) -> AsyncIterator[StreamEvent] | LLMResponse:
+        """Send one chat-completion request — streaming by default.
+
+        ``reasoning_effort`` falls back to the provider's configured
+        :attr:`effort`; ``None`` leaves the endpoint's own default in place.
+        The model family decides the final wire shape — see
+        :meth:`_parse_params`.
+        """
+        model = self.model
         openai_messages = self._messages_to_openai(messages)
         openai_tools = self._tools_param(tools)
 
+        kwargs = self._parse_params(
+            model,
+            max_completion_tokens=max_completion_tokens,
+            reasoning_effort=reasoning_effort or self.effort,
+            response_format=response_format,
+            temperature=temperature,
+        )
+
         if stream:
+            kwargs.update({
+                "stream": True,
+                "stream_options": {"include_usage": True},
+            })
             return self._generate_streaming(
-                openai_messages, openai_tools, max_tokens, temperature
+                openai_messages, openai_tools, **kwargs
             )
+
+        kwargs["stream"] = False
         return await self._generate_non_streaming(
-            openai_messages, openai_tools, max_tokens, temperature
+            openai_messages, openai_tools, **kwargs
         )
 
     # ------------------------------------------------------------------
@@ -125,12 +173,22 @@ class OpenAICompatibleProvider(BaseLLMProvider):
     # ------------------------------------------------------------------
 
     async def generate_compact(self, prompt: str) -> str:
+        # Deliberately bare: no thinking-effort directive (compaction wants
+        # the shortest path to an answer) and no response format.  It still
+        # routes through _parse_params so the token-budget key matches the
+        # model family — a non-DeepSeek reasoning model rejects max_tokens.
+        kwargs = self._parse_params(
+            self._model,
+            max_completion_tokens=1024,
+            reasoning_effort=None,
+            response_format=None,
+            temperature=0.0,
+        )
         response = await self._client.chat.completions.create(
             model=self._model,
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=1024,
-            temperature=0.0,
             stream=False,
+            **kwargs,
         )
         content = response.choices[0].message.content
         return content or ""
@@ -143,8 +201,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         self,
         openai_messages: list[dict],
         openai_tools: list[dict] | NotGiven,
-        max_tokens: int,
-        temperature: float,
+        **kwargs: Any,
     ) -> AsyncIterator[StreamEvent]:
         """Yield :class:`StreamEvent` items from an SSE stream."""
         yield StreamEvent(type="message_start", data={})
@@ -154,10 +211,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
                 model=self._model,
                 messages=openai_messages,
                 tools=openai_tools,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                stream=True,
-                stream_options={"include_usage": True},
+                **kwargs
             )
         except Exception as exc:
             logger.exception("Failed to start streaming call")
@@ -253,8 +307,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         self,
         openai_messages: list[dict],
         openai_tools: list[dict] | NotGiven,
-        max_tokens: int,
-        temperature: float,
+        **kwargs: Any,
     ) -> LLMResponse:
         """Return a single :class:`LLMResponse` (no streaming)."""
 
@@ -263,9 +316,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
                 model=self._model,
                 messages=openai_messages,
                 tools=openai_tools,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                stream=False,
+                **kwargs
             )
         except Exception:
             logger.exception("Non-streaming call failed")
@@ -458,6 +509,64 @@ class OpenAICompatibleProvider(BaseLLMProvider):
     # ==================================================================
     # Helpers
     # ==================================================================
+    @staticmethod
+    def _parse_params(
+        model: str,
+        *,
+        max_completion_tokens: int,
+        reasoning_effort: str | None,
+        response_format: dict | None,
+        temperature: float,
+    ) -> dict:
+        """Translate our parameter names into *model*'s wire format.
+
+        The two API families disagree on both the token-budget key and the
+        thinking knob, so the shape is resolved here instead of at the call
+        sites:
+
+        * ``deepseek-*`` — the older ``max_tokens``, and
+          ``reasoning_effort`` collapsed onto DeepSeek's ``low``/``high``/
+          ``max`` tiers (``"none"`` disables thinking outright, which is a
+          separate ``thinking`` field rather than an effort tier).
+        * everything else — ``max_completion_tokens``, which the OpenAI
+          reasoning models require; ``max_tokens`` is rejected there.
+          ``reasoning_effort`` passes through untranslated.
+
+        A ``None`` ``reasoning_effort`` or ``response_format`` omits the
+        field, leaving the endpoint's own default in place.
+        """
+        kwargs: dict = {"temperature": temperature}
+        if model.lower().startswith("deepseek-"):
+            kwargs["max_tokens"] = max_completion_tokens
+            if reasoning_effort is not None:
+                if reasoning_effort == "none":
+                    kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+                else:
+                    tier = reasoning_effort.lower()
+                    kwargs["reasoning_effort"] = (
+                        _DEEPSEEK_REASON_EFFORT_MAP.get(tier, "max")
+                    )
+            if response_format is not None:
+                rf_type = response_format.get("type", "")
+                if rf_type == "json_schema":
+                    # No guided-decoding mode — ask for any JSON object and
+                    # let the caller validate it against the schema.
+                    kwargs["response_format"] = {"type": "json_object"}
+                elif rf_type in ("text", "json_object"):
+                    kwargs["response_format"] = {"type": rf_type}
+                else:
+                    logger.warning(
+                        "Ignoring unsupported response_format type %r for "
+                        "%s — sending the request without a format hint",
+                        rf_type, model,
+                    )
+        else:
+            kwargs["max_completion_tokens"] = max_completion_tokens
+            if reasoning_effort is not None:
+                kwargs["reasoning_effort"] = reasoning_effort
+            if response_format is not None:
+                kwargs["response_format"] = response_format
+        return kwargs
 
     @staticmethod
     def _tools_param(tools: list[dict]) -> list[dict] | NotGiven:

@@ -60,8 +60,12 @@ if _TEST == "cli":
                     model,
                     messages,
                     tools=None,
-                    max_tokens=4096,
+                    max_tokens=None,
+                    max_completion_tokens=None,
                     temperature=0.0,
+                    reasoning_effort=None,
+                    response_format=None,
+                    extra_body=None,
                     stream=False,
                     stream_options=None,
                 ):
@@ -78,6 +82,10 @@ if _TEST == "cli":
                       ``~/.toddler/test_write.py``.
                     * ``role == "tool"`` — stream a short acknowledgment and
                       finish.
+
+                    The request-shaping parameters (token budget, effort,
+                    format) are accepted and ignored — the canned responses
+                    do not vary with them.
                     """
                     if not stream:
                         raise NotImplementedError(

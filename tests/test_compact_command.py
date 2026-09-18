@@ -34,7 +34,8 @@ class _StubLLM(BaseLLMProvider):
         return "test-model"
 
     async def generate(
-        self, messages, tools, *, max_tokens=4096, temperature=0.0, stream=True,
+        self, messages, tools, *, max_completion_tokens=4096,
+        response_format=None, temperature=0.0, stream=True,
     ):
         raise NotImplementedError
 

@@ -67,6 +67,10 @@ class Settings:
     temperature: float = float(
         _env("TODDLER_TEMPERATURE", str(defaults.DEFAULT_TEMPERATURE))
     )
+    # Thinking-effort tier: "none" disables thinking, otherwise one of
+    # minimal / low / medium / high / xhigh / max / ultra.  ``None`` omits
+    # the field and leaves the endpoint's own default in place.
+    reasoning_effort: str | None = _env("TODDLER_REASONING_EFFORT")
 
     # --- Streaming ---
     streaming_enabled: bool = field(
