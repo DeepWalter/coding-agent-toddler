@@ -39,7 +39,13 @@ if TYPE_CHECKING:
     from toddler.context.manager import ContextManager
     from toddler.llm.base import BaseLLMProvider
 
-__all__ = ["Plan", "PlanStep", "Planner", "plan_proposal_prompt"]
+__all__ = [
+    "PLAN_RESPONSE_FORMAT",
+    "Plan",
+    "PlanStep",
+    "Planner",
+    "plan_proposal_prompt",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -292,8 +298,72 @@ class Plan:
 
 
 # ============================================================================
-# Plan proposal prompt
+# Plan proposal prompt & response format
 # ============================================================================
+
+
+# The proposal call's structured-output request.  DeepSeek has no guided
+# decoding, so the provider downgrades this to a plain ``json_object``
+# request there; every other endpoint receives the schema and is held to it.
+#
+# Mirrors the example in :func:`plan_proposal_prompt` and the fields
+# :meth:`Plan.from_json` reads — ``id`` is absent on purpose, as both plan
+# and step ids are canonical and assigned at parse time.  Strict mode
+# requires every property be listed in ``required`` and every object be
+# closed, so optional-looking fields arrive as empty values instead of
+# being omitted.
+PLAN_RESPONSE_FORMAT: dict = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "execution_plan",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": [
+                "title",
+                "summary",
+                "steps",
+                "rationale",
+                "risks",
+                "estimated_files_touched",
+            ],
+            "properties": {
+                "title": {"type": "string"},
+                "summary": {"type": "string"},
+                "steps": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": [
+                            "description",
+                            "tool_calls_expected",
+                            "files_affected",
+                        ],
+                        "properties": {
+                            "description": {"type": "string"},
+                            "tool_calls_expected": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
+                            "files_affected": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
+                        },
+                    },
+                },
+                "rationale": {"type": "string"},
+                "risks": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+                "estimated_files_touched": {"type": "integer"},
+            },
+        },
+    },
+}
 
 
 def plan_proposal_prompt(
@@ -655,6 +725,11 @@ class Planner:
                 [Message.user(prompt)],
                 tools=[],
                 max_completion_tokens=2048,
+                # Structured output — see PLAN_RESPONSE_FORMAT.  The prompt
+                # still spells the shape out: JSON mode demands the word
+                # "JSON" in the prompt, and a model that fences the object
+                # anyway is fine, since Plan.from_json strips fences.
+                response_format=PLAN_RESPONSE_FORMAT,
                 temperature=0.0,
                 stream=False,
             )

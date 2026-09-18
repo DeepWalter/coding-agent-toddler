@@ -19,6 +19,7 @@ from toddler.agent.events import (
     RecoverableAgentError,
 )
 from toddler.agent.planner import (
+    PLAN_RESPONSE_FORMAT,
     Plan,
     PlanStep,
     plan_proposal_prompt,
@@ -31,6 +32,7 @@ from toddler.agent.state_machine import (
 from toddler.cli.renderer import ConfirmResult
 from toddler.llm import LLMResponse, Message, MessageBlock, TokenUsage
 from toddler.llm.base import BaseLLMProvider
+from toddler.llm.provider import OpenAICompatibleProvider
 from toddler.tools.base import Permission, PermissionMode
 from toddler.tools.plan import PlanState, PlanUpdateTool
 
@@ -468,6 +470,81 @@ class TestPlanProposalPrompt:
         assert "Context gathered" not in prompt
 
 
+class TestPlanResponseFormat:
+    """The structured-output request sent with the proposal call."""
+
+    def test_asks_for_the_plan_schema(self):
+        assert PLAN_RESPONSE_FORMAT["type"] == "json_schema"
+        js = PLAN_RESPONSE_FORMAT["json_schema"]
+        assert js["name"] == "execution_plan"
+        assert js["strict"] is True
+
+    def test_objects_are_closed_and_fully_required(self):
+        """Strict mode rejects a schema whose objects allow extra keys or
+        declare a property that is not required — the API 400s on the
+        request itself, so this has to hold before anything is sent."""
+        schema = PLAN_RESPONSE_FORMAT["json_schema"]["schema"]
+        step = schema["properties"]["steps"]["items"]
+        for obj in (schema, step):
+            assert obj["additionalProperties"] is False
+            assert sorted(obj["required"]) == sorted(obj["properties"])
+
+    def test_properties_cover_the_plan_shape(self):
+        """Drift guard: the schema, the prompt example and ``to_json``
+        describe one shape.  ``id`` is absent on purpose — both plan and
+        step ids are canonical and assigned at parse time."""
+        schema = PLAN_RESPONSE_FORMAT["json_schema"]["schema"]
+        plan_keys = set(json.loads(Plan.create("T", "S").to_json()))
+        assert set(schema["properties"]) == plan_keys - {"id"}
+
+        step_schema = schema["properties"]["steps"]["items"]
+        step_keys = set(PlanStep("step-1", "Do it").to_dict())
+        assert set(step_schema["properties"]) == step_keys - {"id"}
+
+    def test_schema_shaped_payload_parses(self):
+        """A payload built to the schema is what the parser expects."""
+        payload = {
+            "title": "Fix auth",
+            "summary": "Repair the login flow.",
+            "steps": [{
+                "description": "Read auth.py",
+                "tool_calls_expected": ["read_file"],
+                "files_affected": ["auth.py"],
+            }],
+            "rationale": "Smallest change that works.",
+            "risks": [],
+            "estimated_files_touched": 1,
+        }
+        plan = Plan.from_json(json.dumps(payload))
+        assert plan is not None
+        assert plan.title == "Fix auth"
+        assert [s.id for s in plan.steps] == ["step-1"]
+        assert plan.steps[0].tool_calls_expected == ["read_file"]
+
+
+class TestPlanSchemaOnTheWire:
+    """What each API family actually receives — an unknown response_format
+    type is a 400, so the DeepSeek downgrade has to hold on the request."""
+
+    @staticmethod
+    def _parse(model: str) -> dict:
+        return OpenAICompatibleProvider._parse_params(
+            model,
+            max_completion_tokens=2048,
+            reasoning_effort=None,
+            response_format=PLAN_RESPONSE_FORMAT,
+            temperature=0.0,
+        )
+
+    def test_deepseek_gets_the_downgraded_request(self):
+        rf = self._parse("deepseek-v4-pro")["response_format"]
+        assert rf == {"type": "json_object"}
+
+    def test_other_endpoints_get_the_schema_verbatim(self):
+        rf = self._parse("gpt-5")["response_format"]
+        assert rf is PLAN_RESPONSE_FORMAT
+
+
 # ============================================================================
 # ============================================================================
 # Plan step progress tracking
@@ -700,6 +777,8 @@ class MockPlanLLMProvider(BaseLLMProvider):
         self._seq_index = 0
         self.call_count = 0
         self.messages_history: list[list[Message]] = []
+        # response_format of each plan-proposal call, in order.
+        self.plan_response_formats: list[dict | None] = []
 
     async def generate(
         self, messages, tools, *, max_completion_tokens=4096,
@@ -710,6 +789,7 @@ class MockPlanLLMProvider(BaseLLMProvider):
 
         # Empty tools → plan proposal call (non-streaming).
         if not tools:
+            self.plan_response_formats.append(response_format)
             return LLMResponse(
                 messages=[Message.assistant([
                     MessageBlock.content_block(json.dumps(self._plan_json)),
@@ -803,6 +883,17 @@ class TestSessionManagerPlanWorkflow:
         plan_events = [e for e in events if isinstance(e, PlanProposed)]
         assert len(plan_events) == 1
         assert plan_events[0].plan.title == "Mock Plan"
+
+    @pytest.mark.asyncio
+    async def test_proposal_call_requests_the_plan_schema(self, session_mgr, llm):
+        """The proposal call asks for structured output — the schema object
+        itself, which the provider downgrades for endpoints without guided
+        decoding."""
+        gen = session_mgr.process_turn("refactor the database layer")
+        async for event in gen:
+            if isinstance(event, PlanProposed):
+                break
+        assert llm.plan_response_formats == [PLAN_RESPONSE_FORMAT]
 
     @pytest.mark.asyncio
     async def test_plan_generation_failure(self, session_mgr, llm):
