@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 # Current schema version (integer — increments on every schema change)
 # ---------------------------------------------------------------------------
 
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 
 # ---------------------------------------------------------------------------
 # SQL
@@ -98,7 +98,8 @@ CREATE TABLE IF NOT EXISTS conversations (
     updated_at TEXT NOT NULL,
     message_count INTEGER NOT NULL DEFAULT 0,
     total_tokens INTEGER NOT NULL DEFAULT 0,
-    model TEXT
+    model TEXT,
+    reasoning_effort TEXT
 );
 """
 
@@ -385,8 +386,9 @@ class SQLiteDatabase:
                 """INSERT INTO conversations
                    (id, session_id, title, sequence_num, status,
                     compacted_summary, compacted_at_seq, created_at,
-                    updated_at, message_count, total_tokens, model)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    updated_at, message_count, total_tokens, model,
+                    reasoning_effort)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     conv.id,
                     conv.session_id,
@@ -400,6 +402,7 @@ class SQLiteDatabase:
                     conv.message_count,
                     conv.total_tokens,
                     conv.model,
+                    conv.reasoning_effort,
                 ),
             )
             conn.commit()
@@ -491,7 +494,8 @@ class SQLiteDatabase:
                 """UPDATE conversations
                    SET title = ?, status = ?, compacted_summary = ?,
                        compacted_at_seq = ?, updated_at = ?,
-                       message_count = ?, total_tokens = ?, model = ?
+                       message_count = ?, total_tokens = ?, model = ?,
+                       reasoning_effort = ?
                    WHERE id = ?""",
                 (
                     conv.title,
@@ -502,6 +506,7 @@ class SQLiteDatabase:
                     conv.message_count,
                     conv.total_tokens,
                     conv.model,
+                    conv.reasoning_effort,
                     conv.id,
                 ),
             )
@@ -780,6 +785,20 @@ class SQLiteDatabase:
             conn.commit()
             current = 3
 
+        if current < 4:
+            logger.info(
+                "Migrating to schema v4 — conversation reasoning effort."
+            )
+            _add_column_if_missing(
+                conn, "conversations", "reasoning_effort",
+                "TEXT",
+            )
+            conn.execute(
+                "UPDATE _schema_version SET version = 4"
+            )
+            conn.commit()
+            current = 4
+
         if current != CURRENT_SCHEMA_VERSION:
             logger.warning(
                 f"Database schema is at v{current}, but code expects "
@@ -829,6 +848,7 @@ class SQLiteDatabase:
             message_count=row["message_count"],
             total_tokens=row["total_tokens"],
             model=row["model"],
+            reasoning_effort=row["reasoning_effort"],
         )
 
     @staticmethod

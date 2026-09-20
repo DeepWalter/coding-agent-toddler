@@ -222,7 +222,8 @@ class TestConversationDatabaseRoundTrip:
 
 
 class TestV2ToV3Migration:
-    """Schema v2 databases get total_tokens / model columns on open()."""
+    """A schema v2 database climbs the ladder: total_tokens / model / then
+    reasoning_effort, ending at the current version."""
 
     @pytest.fixture
     def v2_db_path(self, tmp_path):
@@ -276,14 +277,15 @@ class TestV2ToV3Migration:
 
         assert "total_tokens" in cols
         assert "model" in cols
+        assert "reasoning_effort" in cols
         # Old columns stay (not dropped — SQLite table-recreate would be
         # overkill for harmless dead columns).
         assert "total_input_tokens" in cols
         assert "total_output_tokens" in cols
 
-    def test_migration_sets_schema_version_3(self, v2_db_path):
-        """After migration, _schema_version is 3."""
-        from toddler.session.database import SQLiteDatabase
+    def test_migration_sets_the_current_schema_version(self, v2_db_path):
+        """After migrating, the ladder ends at what the code expects."""
+        from toddler.session.database import CURRENT_SCHEMA_VERSION, SQLiteDatabase
 
         db = SQLiteDatabase(v2_db_path)
         db.open()
@@ -293,4 +295,4 @@ class TestV2ToV3Migration:
             "SELECT version FROM _schema_version"
         ).fetchone()[0]
         conn.close()
-        assert version == 3
+        assert version == CURRENT_SCHEMA_VERSION == 4

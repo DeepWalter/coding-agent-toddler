@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from pathlib import Path
 
 from toddler.agent.events import (
@@ -28,7 +29,7 @@ from toddler.checkpoint.models import (
     Checkpoint,
     RollbackResult,
 )
-from toddler.config.models import TurnConfig
+from toddler.config.models import TurnConfig, resolve_slot
 from toddler.config.settings import Settings
 from toddler.context.manager import CompactionResult, ContextManager
 from toddler.llm import BaseLLMProvider, Message, TokenUsage
@@ -119,6 +120,13 @@ class SessionManager:
         self._conv: Conversation | None = None
         self._ctx: ContextManager | None = None
         self._agent_impl: AgentLoop | None = None
+
+        # The model + effort this conversation runs with, resolved from its
+        # row — or from the settings' slot when the row names none.  A turn
+        # pins a copy of it; the selection itself is what the *next* turn
+        # reads, which is why the switch methods replace it rather than
+        # mutate it.
+        self._selection: TurnConfig | None = None
 
         # Persistence tracking (manager owns this, not the context).
         self._base_seq: int = 0
@@ -211,6 +219,46 @@ class SessionManager:
     # Model selection
     # ==================================================================
 
+    @property
+    def model(self) -> str:
+        """The model spec this conversation runs with, for display."""
+        return self._current_selection().spec
+
+    @property
+    def effort(self) -> str | None:
+        """The thinking-effort tier this conversation runs with."""
+        return self._current_selection().reasoning_effort
+
+    @property
+    def model_slots(self) -> dict[str, str]:
+        """The named model slots, as the settings value them."""
+        return self._settings.model_slots
+
+    def set_model(self, slot: str) -> TurnConfig:
+        """Select the model slot this conversation runs with.
+
+        Write-through: the row is stamped and the token accounting re-keyed
+        at once, so the next turn reads the new model from memory and a
+        reload reads it from disk.
+
+        Raises :class:`ValueError` when *slot* names no configured slot.
+        """
+        return self._apply_selection(
+            replace(
+                self._current_selection(),
+                spec=resolve_slot(slot, self._settings.model_slots),
+            ),
+        )
+
+    def set_effort(self, effort: str | None) -> TurnConfig:
+        """Select the thinking-effort tier this conversation runs with.
+
+        *None* leaves the endpoint's own default in place.
+        """
+        return self._apply_selection(
+            replace(self._current_selection(), reasoning_effort=effort),
+        )
+
     def _settings_config(self) -> TurnConfig:
         """Build the turn config the settings slots describe.
 
@@ -221,6 +269,30 @@ class SessionManager:
             spec=self._settings.model_spec,
             reasoning_effort=self._settings.reasoning_effort,
         )
+
+    def _current_selection(self) -> TurnConfig:
+        """The live selection, falling back to the settings' slot."""
+        if self._selection is None:
+            self._selection = self._settings_config()
+        return self._selection
+
+    def _apply_selection(self, config: TurnConfig) -> TurnConfig:
+        """Adopt *config*: re-key the context, stamp the row, persist it.
+
+        The token count is zeroed when the model changes — it was computed
+        by the old encoding, and ``model`` is the key it is valid for.
+        """
+        rekeyed = config.spec != self._current_selection().spec
+        self._selection = config
+        if self._ctx is not None:
+            self._ctx.set_config(config)
+        if self._conv is not None:
+            self._conv.model = config.spec
+            self._conv.reasoning_effort = config.reasoning_effort
+            if rekeyed:
+                self._conv.total_tokens = 0
+            self._storage_mgr.update_conversation(self._conv)
+        return config
 
     # ==================================================================
     # Turn execution
@@ -250,7 +322,7 @@ class SessionManager:
         # this turn makes — exploration, the plan proposal, every execution
         # round — carries this same pair, so a selection change mid-turn
         # cannot split one turn across two models.
-        config = self._settings_config()
+        config = self._current_selection()
 
         # --- Conversation-start checkpoint (first turn only) ---
         self._create_conversation_start_checkpoint()
@@ -447,6 +519,19 @@ class SessionManager:
         if self._conv is None or self._ctx is None:
             return
 
+        # The conversation's own selection wins; a row that names none (fresh,
+        # or written before the column existed) falls back to the slot the
+        # settings select.
+        self._selection = (
+            TurnConfig(
+                spec=self._conv.model,
+                reasoning_effort=self._conv.reasoning_effort,
+            )
+            if self._conv.model
+            else self._settings_config()
+        )
+        self._ctx.set_config(self._selection)
+
         after_seq = self._conv.compacted_at_seq or -1
         recent = self._storage_mgr.get_messages(
             session_id=self._conv.session_id,
@@ -639,8 +724,13 @@ class SessionManager:
 
         # Always create a fresh conversation — never reuse a stale "active"
         # conversation that may have been left behind by a bug or crash.
+        # The selection rides along: /clear starts a new conversation, not a
+        # new model.
+        selection = self._current_selection()
         self._conv = self._storage_mgr.create_conversation(
             self._session.id,
+            model=selection.spec,
+            reasoning_effort=selection.reasoning_effort,
         )
         await self._activate_context()
 
@@ -737,8 +827,10 @@ class SessionManager:
         )
         await self._activate_context()
 
-        # Reset the agent so it captures the new context.
+        # Reset the agent and the planner so they capture the new context —
+        # both hold the one they were built with.
         self._agent_impl = None
+        self._planner = None
 
         if self._ckpt_mgr is not None:
             self._ckpt_mgr.set_session(self._session.id)
@@ -807,10 +899,13 @@ class SessionManager:
 
         # Snapshot the current context size so a future reload can seed the
         # baseline and skip a full tiktoken re-estimate.  The count is only
-        # comparable across loads when the model is unchanged, so persist it
-        # too.
+        # comparable across loads when the model is unchanged, so persist the
+        # selection that produced it — the *spec*, not the slot, so that
+        # retargeting a slot cannot re-point this row at a model that never
+        # ran it.
         self._conv.total_tokens = self._ctx.count_tokens()
         self._conv.model = self._ctx.model
+        self._conv.reasoning_effort = self._current_selection().reasoning_effort
 
         # Persist conversation metadata.
         self._storage_mgr.update_conversation(self._conv)

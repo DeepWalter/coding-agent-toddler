@@ -50,15 +50,25 @@ class CLIApp:
         Resolved settings from env vars + CLI args.
     session:
         The session manager that owns all agent/context/tools wiring.
+    model_slot / effort:
+        The raw ``--model`` / ``--reasoning-effort`` values, or *None* when
+        the flag was not passed.  Kept here because "was it explicit" is
+        only knowable from the parsed arguments: the settings carry a value
+        either way, from the environment or from a default.
     """
 
     def __init__(
         self,
         settings: Settings,
         session: SessionManager,
+        *,
+        model_slot: str | None = None,
+        effort: str | None = None,
     ) -> None:
         self._settings = settings
         self._session_mgr = session
+        self._model_slot = model_slot
+        self._effort = effort
         self._renderer = create_renderer(
             streaming=self._settings.streaming_enabled,
             max_output_lines=self._settings.max_output_lines,
@@ -80,6 +90,19 @@ class CLIApp:
     # Entry points
     # ==================================================================
 
+    async def _resolve_session(self, session_id: str | None) -> None:
+        """Resolve the session, then apply an explicit CLI selection.
+
+        A conversation's own model normally wins on resume — but a flag the
+        user typed is intent, so it is applied *after* the row has been
+        restored rather than being swallowed by it.
+        """
+        await self._session_mgr.resolve(session_id)
+        if self._model_slot is not None:
+            self._session_mgr.set_model(self._model_slot)
+        if self._effort is not None:
+            self._session_mgr.set_effort(self._effort)
+
     async def run_repl(self, *, session_id: str | None = None) -> None:
         """Start the interactive REPL loop.
 
@@ -89,14 +112,14 @@ class CLIApp:
             When set, resume the session with this ID.  When *None*,
             a fresh session is created.
         """
-        await self._session_mgr.resolve(session_id)
+        await self._resolve_session(session_id)
         self._renderer.info(
             f"Session: {self._session_mgr.session.id[:12]}..."
         )
 
         self._renderer.banner()
         self._renderer.info(
-            f"Model: {self._settings.model_spec} │ "
+            f"Model: {self._session_mgr.model} │ "
             f"Streaming: {'on' if self._settings.streaming_enabled else 'off'}"
         )
         self._renderer.info('Type /help for commands, /quit to exit.')
@@ -104,7 +127,7 @@ class CLIApp:
         while True:
             self._renderer.prompt_header(
                 mode_label=self._session_mgr.mode_label,
-                model=self._settings.model_spec,
+                model=self._session_mgr.model,
                 context_usage_pct=self._session_mgr.context_usage_pct,
             )
             try:
@@ -147,7 +170,7 @@ class CLIApp:
         When a session manager is available, the turn is persisted so the
         interaction can be resumed later via ``--session``.
         """
-        await self._session_mgr.resolve(session_id)
+        await self._resolve_session(session_id)
 
         await self._run_agent_turn(query, force_plan=force_plan)
 

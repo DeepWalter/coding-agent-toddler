@@ -55,8 +55,11 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def session_payload(mgr: SessionManager, model: str, cwd: str) -> dict:
+def session_payload(mgr: SessionManager, cwd: str) -> dict:
     """Session fields shared by the ``hello`` and ``session_info`` frames.
+
+    Everything here is read from the manager rather than captured at
+    startup, so a frame cannot carry a model the session has moved off.
 
     ``gating_editable`` is False while a plan is explored, proposed, or
     awaiting approval — gating is pinned to manual until the plan is
@@ -73,7 +76,7 @@ def session_payload(mgr: SessionManager, model: str, cwd: str) -> dict:
             sm.current_mode.is_plan_related and not sm.is_plan_executing
         ),
         "context_usage_pct": mgr.context_usage_pct,
-        "model": model,
+        "model": mgr.model,
         "cwd": cwd,
     }
 
@@ -89,7 +92,7 @@ def conversation_payload(mgr: SessionManager) -> dict:
     }
 
 
-def session_info_frame(mgr: SessionManager, model: str, cwd: str) -> dict:
+def session_info_frame(mgr: SessionManager, cwd: str) -> dict:
     """Session/conversation metadata update without a transcript replay.
 
     Broadcast after slash commands that mutate session state but keep
@@ -99,7 +102,7 @@ def session_info_frame(mgr: SessionManager, model: str, cwd: str) -> dict:
     """
     return {
         "type": "session_info",
-        "session": session_payload(mgr, model, cwd),
+        "session": session_payload(mgr, cwd),
         "conversation": conversation_payload(mgr),
     }
 
@@ -113,11 +116,9 @@ class TurnRunner:
         self,
         session_mgr: SessionManager,
         *,
-        model: str,
         cwd: str,
     ) -> None:
         self._session_mgr = session_mgr
-        self._model = model
         self._cwd = cwd
 
         # The busy gate: acquired synchronously in start() and released in
@@ -280,9 +281,7 @@ class TurnRunner:
         their pill, badge, and frozen-gating state without a transcript
         replay.  No-op for the CLI, where nobody subscribes.
         """
-        self.broadcast(session_info_frame(
-            self._session_mgr, self._model, self._cwd,
-        ))
+        self.broadcast(session_info_frame(self._session_mgr, self._cwd))
 
     async def _run(self, user_input: str, *, force_plan: bool) -> None:
         """Consume the ``process_turn`` generator and broadcast its events.

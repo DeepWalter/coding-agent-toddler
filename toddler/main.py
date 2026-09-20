@@ -86,7 +86,15 @@ def main() -> None:
     )
 
     # --- CLI (thin display + input layer) ---
-    app = CLIApp(settings, session)
+    # The raw flag values go in as well: the settings carry a model and an
+    # effort whether or not the user asked for one, so "explicit" is only
+    # knowable here.
+    app = CLIApp(
+        settings,
+        session,
+        model_slot=args.model,
+        effort=args.reasoning_effort,
+    )
 
     # --- Resolve session for --session flag ---
     session_id = args.session

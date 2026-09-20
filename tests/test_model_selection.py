@@ -11,6 +11,8 @@ from dataclasses import replace
 
 import pytest
 
+from tests.mocks import MockLLMProvider, text_response, tool_use_response
+from toddler.agent.events import ToolCallEnd
 from toddler.config import defaults
 from toddler.config.models import (
     TurnConfig,
@@ -21,6 +23,9 @@ from toddler.config.models import (
     wire_model,
 )
 from toddler.config.settings import Settings
+from toddler.session.database import SQLiteDatabase
+from toddler.session.manager import SessionManager
+from toddler.session.storage import StorageManager
 
 _MODEL_ENV_VARS = (
     "TODDLER_MODEL",
@@ -196,3 +201,151 @@ class TestSlots:
         """A literal vendor id is not a selection."""
         with pytest.raises(ValueError, match="gpt-4o"):
             resolve_slot("gpt-4o", {"default": "a", "pro": "b", "flash": "c"})
+
+
+# ============================================================================
+# The conversation's selection
+# ============================================================================
+
+
+@pytest.fixture
+def settings(tmp_path) -> Settings:
+    """Three distinguishable slots, so a test can tell which one is live."""
+    return Settings(
+        session_dir=tmp_path,
+        streaming_enabled=False,
+        model="default",
+        model_default="default-model",
+        model_pro="pro-model",
+        model_flash="flash-model[1m]",
+        reasoning_effort="high",
+    )
+
+
+@pytest.fixture
+def storage_mgr(tmp_path) -> StorageManager:
+    db = SQLiteDatabase(tmp_path / "selection.db")
+    db.open()
+    return StorageManager(db)
+
+
+@pytest.fixture
+def llm() -> MockLLMProvider:
+    return MockLLMProvider()
+
+
+@pytest.fixture
+async def mgr(settings, storage_mgr, llm, tmp_path) -> SessionManager:
+    mgr = SessionManager(settings, storage_mgr, llm, repo_root=tmp_path)
+    await mgr.resolve()
+    return mgr
+
+
+async def _run_turn(mgr: SessionManager) -> None:
+    """Drive one complete turn and persist it (the mock answers "Done.")."""
+    async for _ in mgr.process_turn("say hi"):
+        pass
+    await mgr.save()
+
+
+class TestSelection:
+
+    async def test_a_fresh_conversation_runs_the_selected_slot(self, mgr):
+        assert mgr.model == "default-model"
+        assert mgr.effort == "high"
+
+    async def test_a_row_without_a_model_falls_back_to_the_slot(self, mgr):
+        """A fresh row names none until the first save; pre-v4 rows never do."""
+        assert mgr.conversation.model is None
+        assert mgr.model == "default-model"
+
+    async def test_the_window_follows_the_selection(self, mgr):
+        """The notation picks the window, the wire id is stripped from it."""
+        mgr.set_model("flash")
+
+        config = mgr.context.config
+        assert config.spec == "flash-model[1m]"
+        assert config.model == "flash-model"
+        assert config.max_context_tokens == 1_000_000
+
+    async def test_switching_the_model_stamps_the_row_and_drops_the_count(
+        self, mgr, storage_mgr,
+    ):
+        """The count was computed by the old encoding, so it goes with the
+        model that produced it."""
+        conv = mgr.conversation
+        conv.total_tokens = 1234
+        storage_mgr.update_conversation(conv)
+
+        mgr.set_model("pro")
+
+        reloaded = storage_mgr.get_conversation(conv.id)
+        assert reloaded.model == "pro-model"
+        assert reloaded.total_tokens == 0
+        assert reloaded.reasoning_effort == "high"
+
+    async def test_switching_the_effort_keeps_the_count(self, mgr, storage_mgr):
+        conv = mgr.conversation
+        conv.total_tokens = 1234
+        storage_mgr.update_conversation(conv)
+
+        mgr.set_effort("none")
+
+        reloaded = storage_mgr.get_conversation(conv.id)
+        assert reloaded.reasoning_effort == "none"
+        assert reloaded.model == "default-model"
+        assert reloaded.total_tokens == 1234
+
+    async def test_an_unknown_slot_is_refused(self, mgr):
+        with pytest.raises(ValueError, match="gpt-4o"):
+            mgr.set_model("gpt-4o")
+        assert mgr.model == "default-model"
+
+    async def test_clear_carries_the_selection_forward(self, mgr):
+        """``/clear`` starts a new conversation, not a new model."""
+        await _run_turn(mgr)
+        mgr.set_model("flash")
+
+        await mgr.new_conversation()
+
+        assert mgr.model == "flash-model[1m]"
+        assert mgr.conversation.model == "flash-model[1m]"
+
+    async def test_a_reload_restores_the_pair(
+        self, mgr, settings, storage_mgr, tmp_path,
+    ):
+        """What a restart does: a second manager over the same database."""
+        await _run_turn(mgr)
+        mgr.set_model("pro")
+        mgr.set_effort("low")
+        session_id = mgr.session.id
+
+        reloaded = SessionManager(
+            settings, storage_mgr, MockLLMProvider(), repo_root=tmp_path,
+        )
+        await reloaded.resolve(session_id=session_id)
+
+        assert (reloaded.model, reloaded.effort) == ("pro-model", "low")
+
+    async def test_a_turn_keeps_its_model_when_the_selection_changes(
+        self, settings, storage_mgr, tmp_path,
+    ):
+        """The pin: switching mid-turn re-keys the accounting but must not
+        move the model underneath the requests still to come."""
+        llm = MockLLMProvider([
+            tool_use_response("no_such_tool", {}, tool_id="call_x"),
+            text_response("done"),
+        ])
+        mgr = SessionManager(settings, storage_mgr, llm, repo_root=tmp_path)
+        await mgr.resolve()
+
+        async for event in mgr.process_turn("go"):
+            if isinstance(event, ToolCallEnd):
+                mgr.set_model("pro")
+
+        assert len(llm.call_configs) == 2
+        assert llm.call_configs[0] == llm.call_configs[1] == (
+            "default-model", "high",
+        )
+        # The selection is the new one — it is what the *next* turn reads.
+        assert mgr.model == "pro-model"

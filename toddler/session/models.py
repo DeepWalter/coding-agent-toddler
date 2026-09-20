@@ -156,11 +156,16 @@ class Conversation:
         Token count of the conversation's current messages (a snapshot
         of the in-memory context at the last ``save()``).  Used on reload
         to seed the context-window baseline and skip a full tiktoken
-        re-estimate.  Invalidated when ``model`` changes.
+        re-estimate.  Valid only for the ``model`` it was computed with.
     model:
-        The model the ``total_tokens`` snapshot was computed with.
-        *None* for old / fresh rows.  When the current model differs, the
-        stored count is treated as stale and re-estimated.
+        The model this conversation runs with, and the key ``total_tokens``
+        is valid for.  A spec in Toddler's notation
+        (``"deepseek-v4-pro[1m]"``) — the id sent on the wire is derived
+        from it.  *None* for old / fresh rows, which fall back to the
+        slot the settings select.
+    reasoning_effort:
+        The thinking-effort tier this conversation runs at.  *None*
+        leaves the endpoint's own default in place.
     """
 
     id: str
@@ -175,6 +180,7 @@ class Conversation:
     message_count: int = 0
     total_tokens: int = 0
     model: str | None = None
+    reasoning_effort: str | None = None
 
     @property
     def display_title(self) -> str:
