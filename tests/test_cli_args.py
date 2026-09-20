@@ -23,7 +23,7 @@ from toddler.utils.cli import build_argparser, build_serve_argparser
 # value is one the flag must accept — None for the boolean ones.
 _SHARED_FLAGS = [
     ("--no-stream", None),
-    ("--model", "m"),
+    ("--model", "pro"),
     ("--base-url", "http://x"),
     ("--api-key", "k"),
     ("--max-iterations", "7"),
@@ -51,7 +51,7 @@ class TestSharedFlags:
     @pytest.mark.parametrize(
         ("argv", "field", "expected"),
         [
-            (["--model", "m"], "model", "m"),
+            (["--model", "pro"], "model", "pro"),
             (["--base-url", "http://x"], "base_url", "http://x"),
             (["--api-key", "k"], "api_key", "k"),
             (["--max-iterations", "7"], "max_iterations", 7),
@@ -118,7 +118,7 @@ class TestReasoningEffortFlag:
         assert Settings.from_cli(args).reasoning_effort == "medium"
 
     def test_flag_overrides_the_environment(self, monkeypatch):
-        monkeypatch.setenv("TODDLER_REASONING_EFFORT", "low")
+        monkeypatch.setenv("TODDLER_EFFORT_LEVEL", "low")
         args = build_argparser().parse_args(
             ["--reasoning-effort", "max", "do the thing"]
         )
@@ -137,11 +137,35 @@ class TestReasoningEffortFlag:
         them together, so a model override must not drop the effort."""
         args = build_argparser().parse_args([
             "--reasoning-effort", "ultra",
-            "--model", "deepseek-v4-pro",
+            "--model", "pro",
             "do the thing",
         ])
 
         settings = Settings.from_cli(args)
         assert (settings.model, settings.reasoning_effort) == (
-            "deepseek-v4-pro", "ultra",
+            "pro", "ultra",
         )
+
+
+# ============================================================================
+# --model — the flag names a slot, not a model
+# ============================================================================
+
+
+class TestModelSlotFlag:
+    """The flag carries a *slot name*: the specs behind the slots come from
+    the environment, so a vendor id is not something it can accept."""
+
+    def test_flag_lands_on_the_slot(self):
+        args = build_argparser().parse_args(
+            ["--model", "flash", "do the thing"]
+        )
+        assert Settings.from_cli(args).model == "flash"
+
+    def test_unknown_slot_is_rejected_at_the_parser(self):
+        """A typo fails at the parser — naming a model that does not exist
+        would otherwise only surface as an API error mid-turn."""
+        with pytest.raises(SystemExit):
+            build_argparser().parse_args(
+                ["--model", "flash-2", "do the thing"]
+            )

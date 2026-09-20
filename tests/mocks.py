@@ -41,7 +41,7 @@ __all__ = [
 # The model a test turn runs with.  Distinct from any Settings default so a
 # test that accidentally reads settings instead of the turn config fails.
 TEST_MODEL = "test-model"
-TEST_TURN_CONFIG = TurnConfig(model=TEST_MODEL)
+TEST_TURN_CONFIG = TurnConfig(spec=TEST_MODEL)
 
 # Reasoning fragments per chunk in MockLLMProvider._stream — small enough
 # that a short canned reasoning string still arrives as several deltas.

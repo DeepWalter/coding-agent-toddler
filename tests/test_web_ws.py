@@ -42,7 +42,9 @@ def _app(tmp_path, llm):
     turn config, so an ambient ``DEEPSEEK_MODEL`` would otherwise decide
     what the frames assert against.
     """
-    settings = Settings(session_dir=tmp_path, model="test-model")
+    settings = Settings(
+        session_dir=tmp_path, model="pro", model_pro="test-model",
+    )
     return create_app(settings, repo_root=tmp_path, llm=llm)
 
 

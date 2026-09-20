@@ -2,10 +2,19 @@
 
 from pathlib import Path
 
-# --- LLM Provider ---
-DEFAULT_MODEL = "deepseek-v4-pro"
+# --- Models ---
+# A slot is a name for a model spec, not a spec itself.  All three ship
+# pointing at the same model, so a fresh install works with one id and
+# retargeting a slot is an env var away.
+DEFAULT_MODEL = "deepseek-flash"
+MODEL_SLOTS = ("default", "pro", "flash")
+DEFAULT_SLOT = "default"
 DEFAULT_BASE_URL = "https://api.deepseek.com"
-DEFAULT_MAX_CONTEXT_LENGTH = 128_000
+
+# Context windows.  A model spec may carry a local "[1m]" suffix naming its
+# window; without one it is accounted for at the default.
+DEFAULT_MAX_CONTEXT_LENGTH = 200_000
+CONTEXT_SUFFIXES = {"1m": 1_000_000}
 
 # Thinking-effort tiers accepted from the environment and the CLI.  "none"
 # disables thinking outright; the rest are handed to the provider, which
@@ -16,10 +25,17 @@ DEFAULT_MAX_CONTEXT_LENGTH = 128_000
 REASONING_EFFORT_TIERS = [
     "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
 ]
+DEFAULT_EFFORT_LEVEL = "high"
+
+# Output budgets, by effort.  Thinking is paid for out of the same budget as
+# the answer, so the ends of the scale need different rooms: no thinking at
+# all is a short reply, while the top tiers must reason and still answer.
+DEFAULT_MAX_COMPLETION_TOKENS = 32_768
+TOP_EFFORT_MAX_COMPLETION_TOKENS = 65_536
+NO_THINKING_MAX_COMPLETION_TOKENS = 4_096
 
 # --- Agent Loop ---
 DEFAULT_MAX_ITERATIONS = 50
-DEFAULT_MAX_TOKENS_PER_RESPONSE = 8192
 DEFAULT_TEMPERATURE = 0.0
 
 # --- Context Management ---

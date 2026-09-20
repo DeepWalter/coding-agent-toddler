@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 
 from tests.mocks import TEST_TURN_CONFIG
+from toddler.config.models import TurnConfig
 from toddler.context.manager import ContextManager
 from toddler.context.window import ContextWindowManager
 from toddler.llm import LLMResponse, Message, MessageBlock, TokenUsage
@@ -151,7 +152,6 @@ class TestContextManagerRecordUsage:
 
     @pytest.fixture
     def ctx(self) -> ContextManager:
-        from toddler.config.settings import Settings
         class _CtxMockProvider(BaseLLMProvider):
             async def generate(self, messages, tools, *,
                                model: str, reasoning_effort=None,
@@ -162,7 +162,7 @@ class TestContextManagerRecordUsage:
             async def generate_compact(self, prompt: str, *, model: str) -> str:
                 raise NotImplementedError
 
-        return ContextManager(Settings(), _CtxMockProvider(), model="gpt-4")
+        return ContextManager(_CtxMockProvider(), config=TurnConfig(spec="gpt-4"))
 
     def test_record_usage_sets_baseline(self, ctx):
         """After record_usage, the window manager has a baseline."""
@@ -275,7 +275,7 @@ class TestAgentLoopRecordUsageIntegration:
 
         settings = Settings()
         provider = SingleResponseProvider()
-        ctx = ContextManager(settings, provider, model="gpt-4")
+        ctx = ContextManager(provider, config=TurnConfig(spec="gpt-4"))
         loop = AgentLoop(
             provider, ToolRegistry(), ToolExecutor(ToolRegistry()),
             settings, context=ctx,
@@ -359,7 +359,7 @@ class TestAgentLoopRecordUsageIntegration:
 
         settings = Settings()
         provider = MultiTurnProvider()
-        ctx = ContextManager(settings, provider, model="gpt-4")
+        ctx = ContextManager(provider, config=TurnConfig(spec="gpt-4"))
         loop = AgentLoop(
             provider, registry, ToolExecutor(registry), settings, context=ctx,
             permission_manager=PermissionManager(),

@@ -267,10 +267,7 @@ def executor(registry) -> ToolExecutor:
 @pytest.fixture
 def conv_ctx() -> ContextManager:
     """Bare ContextManager for tests (no backing session)."""
-    from toddler.config.settings import Settings
-    ctx = ContextManager(
-        Settings(), MockLLMProvider(), model=TEST_TURN_CONFIG.model,
-    )
+    ctx = ContextManager(MockLLMProvider(), config=TEST_TURN_CONFIG)
     ctx.load([])
     return ctx
 

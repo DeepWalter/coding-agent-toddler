@@ -15,16 +15,27 @@ Set your API key and optional base URL via environment variables (or a `.env` fi
 ```bash
 export DEEPSEEK_API_KEY="your-key"      # defaults to DeepSeek
 export DEEPSEEK_BASE_URL="https://api.deepseek.com"
-export DEEPSEEK_MODEL="deepseek-v4-pro"
+export TODDLER_DEFAULT_MODEL="deepseek-flash"
 ```
 
 OpenAI-compatible providers work too — use the `OPENAI_*` env prefix as a fallback.
 
-**Troubleshooting:** DeepSeek thinking mode consumes the `max_tokens` budget
-(`TODDLER_MAX_TOKENS`, default 8192).  A thinking-heavy turn can exhaust it,
-ending with `finish_reason="length"` and empty output — raise
-`TODDLER_MAX_TOKENS`.  `reasoning_tokens` in the recorded usage shows the
-reasoning/output split.
+**Models:** three slots — `default`, `pro`, `flash` — are selected with
+`--model`, and valued from `TODDLER_DEFAULT_MODEL`, `TODDLER_PRO_MODEL` and
+`TODDLER_FLASH_MODEL` (all three ship as `deepseek-flash`).  A slot value may
+carry a `[1m]` suffix (`deepseek-v4-pro[1m]`) naming a 1,000K-token context
+window; without one the model is accounted for at 200K.  The suffix is
+Toddler's own notation and is stripped from the request.
+
+Thinking effort is selected with `--reasoning-effort` (`TODDLER_EFFORT_LEVEL`,
+default `high`), and it sets the output budget: 4K with thinking off, 64K at
+`max` or above, 32K otherwise.
+
+**Troubleshooting:** thinking is paid for out of the same budget as the answer,
+so a thinking-heavy turn can exhaust `max_tokens`, ending with
+`finish_reason="length"` and empty output — raise the effort.  The budget
+follows it.  `reasoning_tokens` in the recorded usage shows the reasoning/output
+split.
 
 ## Usage
 

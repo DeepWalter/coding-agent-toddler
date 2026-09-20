@@ -17,7 +17,7 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-from toddler.config.settings import Settings
+from toddler.config.models import TurnConfig
 from toddler.context.builder import SystemPromptBuilder
 from toddler.context.summarizer import ConversationCompactor
 from toddler.context.window import ContextWindowManager
@@ -81,30 +81,23 @@ class ContextManager:
 
     def __init__(
         self,
-        settings: Settings,
         llm_provider: BaseLLMProvider,
         *,
-        model: str,
+        config: TurnConfig,
         project_root: Path | None = None,
         memory_dir: Path | None = None,
     ) -> None:
         # Build sub-components internally from raw ingredients.  The model
-        # comes from the caller (the session owns the selection) — it keys
-        # the tokenizer and the window, so it cannot be sniffed off the
-        # provider, which no longer has one.
+        # config comes from the caller (the session owns the selection), so
+        # the tokenizer and the window cannot be sniffed off the provider,
+        # which no longer has a model.
         self._prompt_builder = SystemPromptBuilder(
             project_root=project_root,
             memory_dir=memory_dir,
         )
-        self._model = model
-        self._window_mgr = ContextWindowManager(
-            model,
-            max_context_length=settings.max_context_length,
-        )
+        self._config = config
+        self._window_mgr = self._build_window(config)
         self._compactor = ConversationCompactor(llm_provider)
-
-        # Kept so a re-key keeps the configured window size.
-        self._settings = settings
 
         # Message buffer state — reset on each load().
         self._messages: list[Message] = []
@@ -182,14 +175,31 @@ class ContextManager:
         return self._window_mgr.usage_ratio(self._messages)
 
     @property
+    def config(self) -> TurnConfig:
+        """The model config the tokenizer and context window are keyed to."""
+        return self._config
+
+    @property
     def model(self) -> str:
-        """The model the tokenizer and context window are keyed to.
+        """The model spec the tokenizer and context window are keyed to.
 
         The session layer compares this against a conversation's stored
         token baseline: a count is only reusable when it was produced by
         the encoding this key names.
         """
-        return self._model
+        return self._config.spec
+
+    def set_config(self, config: TurnConfig) -> None:
+        """Re-key the window to *config*, dropping the token baseline.
+
+        A fresh window manager is exactly "re-key with the baseline
+        dropped".  The messages and the compaction bookkeeping
+        (``_has_compacted``, ``_last_compaction``, the persistence
+        baseline) all stay, because ``save()`` still has to persist them —
+        routing this through :meth:`load` would reset them instead.
+        """
+        self._config = config
+        self._window_mgr = self._build_window(config)
 
     def set_token_baseline(
         self, *, total_tokens: int, message_count: int,
@@ -301,7 +311,7 @@ class ContextManager:
         """
         try:
             compacted = await self._compactor.compact(
-                self._messages, model=self._model,
+                self._messages, model=self._config.model,
             )
 
             # Nothing was summarised (short conversation or LLM failure /
@@ -477,6 +487,22 @@ class ContextManager:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _build_window(config: TurnConfig) -> ContextWindowManager:
+        """Build the window manager for *config*.
+
+        The output headroom is the turn's own output budget: a response is
+        written into the same window it was read from, so the room reserved
+        for it has to match what the request may actually produce.  The
+        *wire* model keys the tokenizer — the spec's notation is local to
+        Toddler, and would only have to be stripped again on the way in.
+        """
+        return ContextWindowManager(
+            config.model,
+            max_context_length=config.max_context_tokens,
+            output_headroom=config.max_completion_tokens,
+        )
 
     @staticmethod
     def _extract_summary(compacted: list[Message]) -> str:

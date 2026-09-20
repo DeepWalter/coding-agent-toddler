@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -35,6 +36,9 @@ def _env_bool(key: str, default: bool) -> bool:
     return val.lower() in ("1", "true", "yes", "on")
 
 
+logger = logging.getLogger(__name__)
+
+
 @dataclass
 class Settings:
     """Resolved configuration — defaults ← env vars ← CLI args.
@@ -43,9 +47,30 @@ class Settings:
     take highest precedence.
     """
 
-    # --- LLM ---
+    # --- Models ---
+    # A slot is a name for a model spec, not a spec itself.  This is the slot
+    # a new conversation starts on — what --model and /model select, and what
+    # a conversation resolves once and then keeps.
     model: str = field(
-        default_factory=lambda: _env("DEEPSEEK_MODEL", defaults.DEFAULT_MODEL)
+        default_factory=lambda: _env("TODDLER_MODEL", defaults.DEFAULT_SLOT)
+    )
+    # The slot values.  All three ship pointing at the same model, so a fresh
+    # install works with one id and retargeting one is an env var away.
+    # DEEPSEEK_MODEL is the pre-slot spelling of "the model to use", honored
+    # here so that upgrading an install does not silently move it onto
+    # something else.
+    model_default: str = field(
+        default_factory=lambda: (
+            _env("TODDLER_DEFAULT_MODEL")
+            or _env("DEEPSEEK_MODEL")
+            or defaults.DEFAULT_MODEL
+        )
+    )
+    model_pro: str = field(
+        default_factory=lambda: _env("TODDLER_PRO_MODEL", defaults.DEFAULT_MODEL)
+    )
+    model_flash: str = field(
+        default_factory=lambda: _env("TODDLER_FLASH_MODEL", defaults.DEFAULT_MODEL)
     )
     base_url: str = field(
         default_factory=lambda: _env("DEEPSEEK_BASE_URL", defaults.DEFAULT_BASE_URL)
@@ -53,16 +78,10 @@ class Settings:
     api_key: str = field(
         default_factory=lambda: _env("DEEPSEEK_API_KEY", "")
     )
-    max_context_length: int = field(
-        default_factory=lambda: _env_int("TODDLER_MAX_CONTEXT_LENGTH", defaults.DEFAULT_MAX_CONTEXT_LENGTH)
-    )
 
     # --- Agent ---
     max_iterations: int = field(
         default_factory=lambda: _env_int("TODDLER_MAX_ITERATIONS", defaults.DEFAULT_MAX_ITERATIONS)
-    )
-    max_tokens_per_response: int = field(
-        default_factory=lambda: _env_int("TODDLER_MAX_TOKENS", defaults.DEFAULT_MAX_TOKENS_PER_RESPONSE)
     )
     temperature: float = float(
         _env("TODDLER_TEMPERATURE", str(defaults.DEFAULT_TEMPERATURE))
@@ -70,7 +89,11 @@ class Settings:
     # Thinking-effort tier: "none" disables thinking, otherwise one of
     # minimal / low / medium / high / xhigh / max / ultra.  ``None`` omits
     # the field and leaves the endpoint's own default in place.
-    reasoning_effort: str | None = _env("TODDLER_REASONING_EFFORT")
+    reasoning_effort: str | None = field(
+        default_factory=lambda: _env(
+            "TODDLER_EFFORT_LEVEL", defaults.DEFAULT_EFFORT_LEVEL
+        )
+    )
 
     # --- Streaming ---
     streaming_enabled: bool = field(
@@ -94,6 +117,43 @@ class Settings:
     shell_timeout: int = field(
         default_factory=lambda: _env_int("TODDLER_SHELL_TIMEOUT", defaults.SHELL_DEFAULT_TIMEOUT)
     )
+
+    # ------------------------------------------------------------------
+    # Model selection
+    # ------------------------------------------------------------------
+
+    def __post_init__(self) -> None:
+        """Normalize the selected slot, falling back when it names nothing.
+
+        Settings are constructed at import time (``config.settings.settings``),
+        so a stale or misspelled ``TODDLER_MODEL`` must not take the process
+        down: warn, and carry the default slot from here on.
+        """
+        self.model = self.model.strip().lower()
+        if self.model not in self.model_slots:
+            logger.warning(
+                "Unknown model slot %r — falling back to %r (known: %s).",
+                self.model, defaults.DEFAULT_SLOT, ", ".join(self.model_slots),
+            )
+            self.model = defaults.DEFAULT_SLOT
+
+    @property
+    def model_slots(self) -> dict[str, str]:
+        """The named slots a model selection resolves through."""
+        return {
+            "default": self.model_default,
+            "pro": self.model_pro,
+            "flash": self.model_flash,
+        }
+
+    @property
+    def model_spec(self) -> str:
+        """The model spec the selected slot names.
+
+        The spec, not the slot, is the identity: it is what a new
+        conversation runs, what the header shows, and what is persisted.
+        """
+        return self.model_slots[self.model]
 
     # ------------------------------------------------------------------
     @classmethod

@@ -24,9 +24,9 @@ def _add_common_args(p: argparse.ArgumentParser) -> None:
     )
     p.add_argument(
         "--model",
-        metavar="MODEL",
+        choices=defaults.MODEL_SLOTS,
         default=None,
-        help="Override the LLM model name.",
+        help="Model slot to run with (retarget one with TODDLER_<SLOT>_MODEL).",
     )
     p.add_argument(
         "--base-url",

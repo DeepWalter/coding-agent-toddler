@@ -121,7 +121,7 @@ async def meta(state: WebAppState = _GetState) -> dict:
     """Server identity — repo root, model, and dev mode."""
     return {
         "repo_root": str(state.repo_root),
-        "model": state.settings.model,
+        "model": state.settings.model_spec,
         "dev": state.dev,
     }
 

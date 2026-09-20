@@ -333,7 +333,7 @@ class AgentLoop:
                 tools,
                 model=config.model,
                 reasoning_effort=config.reasoning_effort,
-                max_completion_tokens=self._settings.max_tokens_per_response,
+                max_completion_tokens=config.max_completion_tokens,
                 temperature=self._settings.temperature,
                 stream=stream,
             )

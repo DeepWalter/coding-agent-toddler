@@ -20,7 +20,7 @@ class TestCreateApp:
         assert resp.status_code == 200
         data = resp.json()
         assert data["repo_root"] == str(tmp_path)
-        assert data["model"] == settings.model
+        assert data["model"] == settings.model_spec
         assert data["dev"] is True
 
     def test_dev_mode_adds_cors_for_vite(self, tmp_path):

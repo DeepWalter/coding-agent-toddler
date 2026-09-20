@@ -12,6 +12,7 @@ import sqlite3
 
 import pytest
 
+from toddler.config.models import TurnConfig
 from toddler.context.manager import ContextManager
 from toddler.llm import Message, MessageBlock, TokenUsage
 from toddler.llm.base import BaseLLMProvider
@@ -50,8 +51,6 @@ class TestContextManagerTokenCount:
 
     @pytest.fixture
     def ctx(self) -> ContextManager:
-        from toddler.config.settings import Settings
-
         class _MockProvider(BaseLLMProvider):
             async def generate(self, messages, tools, *,
                                model: str, reasoning_effort=None,
@@ -63,7 +62,7 @@ class TestContextManagerTokenCount:
             async def generate_compact(self, prompt: str, *, model: str) -> str:
                 raise NotImplementedError
 
-        return ContextManager(Settings(), _MockProvider(), model="gpt-4")
+        return ContextManager(_MockProvider(), config=TurnConfig(spec="gpt-4"))
 
     def test_count_tokens_matches_full_estimate(self, ctx):
         """count_tokens() returns the window manager's estimate for the buffer."""

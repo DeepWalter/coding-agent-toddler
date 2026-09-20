@@ -131,10 +131,10 @@ changed from that draft is listed at the end.
   endpoint will actually do.
 - **The window and its headroom come from the turn config.**
   `ContextWindowManager` receives `max_context_length=config.max_context_tokens`
-  and `output_headroom=config.max_completion_tokens`, retiring the stale
-  `_DEFAULT_OUTPUT_HEADROOM = 4096` (`context/window.py:23`). With a 32K/64K
-  budget the headroom is the difference between compacting in time and
-  overflowing the window.
+  and `output_headroom=config.max_completion_tokens`, so the hardcoded
+  `_DEFAULT_OUTPUT_HEADROOM = 4096` (`context/window.py:23`) stops being what
+  the agent reserves. With a 32K/64K budget the headroom is the difference
+  between compacting in time and overflowing the window.
 - **Two knobs retire.** `TODDLER_MAX_TOKENS` and `TODDLER_MAX_CONTEXT_LENGTH`
   (with `Settings.max_tokens_per_response` and `Settings.max_context_length`)
   are deleted: the effort level and the `[1m]` suffix are the levers, and one

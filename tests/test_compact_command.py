@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from toddler.cli.commands import SlashCommandDispatcher
+from toddler.config.models import TurnConfig
 from toddler.context.manager import ContextManager
 from toddler.llm import Message, MessageBlock
 from toddler.llm.base import BaseLLMProvider
@@ -72,9 +73,7 @@ class TestCompact:
 
     @pytest.fixture
     def ctx(self, llm: _StubLLM) -> ContextManager:
-        from toddler.config.settings import Settings
-
-        return ContextManager(Settings(), llm, model="test-model")
+        return ContextManager(llm, config=TurnConfig(spec="test-model"))
 
     @pytest.mark.asyncio
     async def test_compacts_long_conversation(self, ctx, llm):

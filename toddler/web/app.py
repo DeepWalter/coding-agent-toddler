@@ -81,7 +81,7 @@ def create_app(
             # model/cwd feed the session-info frames the runner broadcasts
             # on state-machine changes.
             runner=TurnRunner(
-                session_mgr, model=settings.model, cwd=str(root),
+                session_mgr, model=settings.model_spec, cwd=str(root),
             ),
             repo_root=root,
             dev=dev,

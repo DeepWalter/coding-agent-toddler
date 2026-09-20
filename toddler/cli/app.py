@@ -96,7 +96,7 @@ class CLIApp:
 
         self._renderer.banner()
         self._renderer.info(
-            f"Model: {self._settings.model} │ "
+            f"Model: {self._settings.model_spec} │ "
             f"Streaming: {'on' if self._settings.streaming_enabled else 'off'}"
         )
         self._renderer.info('Type /help for commands, /quit to exit.')
@@ -104,7 +104,7 @@ class CLIApp:
         while True:
             self._renderer.prompt_header(
                 mode_label=self._session_mgr.mode_label,
-                model=self._settings.model,
+                model=self._settings.model_spec,
                 context_usage_pct=self._session_mgr.context_usage_pct,
             )
             try:

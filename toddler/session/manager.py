@@ -142,9 +142,8 @@ class SessionManager:
         self._session = self._storage_mgr.get_or_create(session_id)
 
         self._ctx = ContextManager(
-            self._settings,
             self._llm,
-            model=self._settings.model,
+            config=self._settings_config(),
             project_root=self._repo_root,
             memory_dir=self._settings.session_dir,
         )
@@ -209,6 +208,21 @@ class SessionManager:
         return round(self._ctx.usage_ratio * 100)
 
     # ==================================================================
+    # Model selection
+    # ==================================================================
+
+    def _settings_config(self) -> TurnConfig:
+        """Build the turn config the settings slots describe.
+
+        What a conversation starts on.  Only the settings know a slot's
+        value, so the spec is resolved here rather than stored as one.
+        """
+        return TurnConfig(
+            spec=self._settings.model_spec,
+            reasoning_effort=self._settings.reasoning_effort,
+        )
+
+    # ==================================================================
     # Turn execution
     # ==================================================================
 
@@ -236,10 +250,7 @@ class SessionManager:
         # this turn makes — exploration, the plan proposal, every execution
         # round — carries this same pair, so a selection change mid-turn
         # cannot split one turn across two models.
-        config = TurnConfig(
-            model=self._settings.model,
-            reasoning_effort=self._settings.reasoning_effort,
-        )
+        config = self._settings_config()
 
         # --- Conversation-start checkpoint (first turn only) ---
         self._create_conversation_start_checkpoint()
@@ -716,9 +727,8 @@ class SessionManager:
         self._session = session
         # Create new context and load active conversation.
         self._ctx = ContextManager(
-            self._settings,
             self._llm,
-            model=self._settings.model,
+            config=self._settings_config(),
             project_root=self._repo_root,
             memory_dir=self._settings.session_dir,
         )
