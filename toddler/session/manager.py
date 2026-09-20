@@ -235,6 +235,25 @@ class SessionManager:
         return self._current_selection().reasoning_effort
 
     @property
+    def model_slot(self) -> str:
+        """The slot this conversation's model was selected by, for display.
+
+        The row's own slot wins; a row that names none (fresh, or written
+        before the column existed) reports the slot the settings select —
+        which is what :meth:`_activate_context` resolves its model from in
+        that case, so the answer is the truth rather than a guess.
+
+        Provenance, not identity, and callers must treat it as a claim to
+        check rather than a fact: a slot retargeted since the conversation
+        was created names a model this conversation does not run, so a
+        reader showing "which row is selected" has to confirm the slot
+        still resolves to :attr:`model` first.
+        """
+        if self._conv is not None and self._conv.model_slot:
+            return self._conv.model_slot
+        return self._settings.model
+
+    @property
     def model_slots(self) -> dict[str, str]:
         """The named model slots, as the settings value them."""
         return self._settings.model_slots
@@ -244,15 +263,22 @@ class SessionManager:
 
         Write-through: the row is stamped and the token accounting re-keyed
         at once, so the next turn reads the new model from memory and a
-        reload reads it from disk.
+        reload reads it from disk.  The slot *name* is stamped alongside the
+        spec it resolves to — provenance for a picker, never identity: two
+        slots can name the same model, and which row the user pointed at is
+        not recoverable from the spec.
 
         Raises :class:`ValueError` when *slot* names no configured slot.
         """
+        # The stored name is canonical (lowercase), so a surface comparing a
+        # picker row against it cannot miss on casing alone.
+        name = slot.strip().lower()
         return self._apply_selection(
             replace(
                 self._current_selection(),
-                spec=resolve_slot(slot, self._settings.model_slots),
+                spec=resolve_slot(name, self._settings.model_slots),
             ),
+            slot=name,
         )
 
     def set_effort(self, effort: str | None) -> TurnConfig:
@@ -281,11 +307,19 @@ class SessionManager:
             self._selection = self._settings_config()
         return self._selection
 
-    def _apply_selection(self, config: TurnConfig) -> TurnConfig:
+    def _apply_selection(
+        self, config: TurnConfig, slot: str | None = None,
+    ) -> TurnConfig:
         """Adopt *config*: re-key the context, stamp the row, persist it.
 
         The token count is zeroed when the model changes — it was computed
         by the old encoding, and ``model`` is the key it is valid for.
+
+        *slot* names the model slot the selection came from, stamped on the
+        conversation as provenance (see
+        :meth:`set_model`).  Only a model switch passes one: an effort
+        switch leaves the stored slot alone, since it says nothing about
+        which model the conversation runs.
         """
         rekeyed = config.spec != self._current_selection().spec
         self._selection = config
@@ -294,6 +328,8 @@ class SessionManager:
         if self._conv is not None:
             self._conv.model = config.spec
             self._conv.reasoning_effort = config.reasoning_effort
+            if slot is not None:
+                self._conv.model_slot = slot
             if rekeyed:
                 self._conv.total_tokens = 0
             self._storage_mgr.update_conversation(self._conv)
@@ -730,12 +766,17 @@ class SessionManager:
         # Always create a fresh conversation — never reuse a stale "active"
         # conversation that may have been left behind by a bug or crash.
         # The selection rides along: /clear starts a new conversation, not a
-        # new model.
+        # new model.  So does the slot it was picked by, or /clear would
+        # reset the picker to reporting the settings' slot.
         selection = self._current_selection()
+        # Read the outgoing conversation's slot before the assignment below
+        # replaces it — the property reads the *current* row.
+        slot = self.model_slot
         self._conv = self._storage_mgr.create_conversation(
             self._session.id,
             model=selection.spec,
             reasoning_effort=selection.reasoning_effort,
+            model_slot=slot,
         )
         await self._activate_context()
 

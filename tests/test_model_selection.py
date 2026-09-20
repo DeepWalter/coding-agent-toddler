@@ -366,6 +366,108 @@ class TestSelection:
 
 
 # ============================================================================
+# The slot a model was picked by — provenance, not identity
+# ============================================================================
+
+
+class TestModelSlotProvenance:
+    """``model_slot`` records which slot row the user pointed at.
+
+    The spec cannot answer that: two slots routinely name the same model,
+    and on a fresh install all three do.  A picker highlighting "the row
+    you picked" needs the name, so it is stored beside the spec — while the
+    spec stays what runs.
+    """
+
+    async def test_a_fresh_conversation_reports_the_settings_slot(self, mgr):
+        assert mgr.conversation.model is None
+        assert mgr.model_slot == "default"
+
+    async def test_the_picked_slot_is_stamped_and_survives_a_reload(
+        self, mgr, settings, storage_mgr, tmp_path,
+    ):
+        await _run_turn(mgr)
+        mgr.set_model("pro")
+        assert mgr.conversation.model_slot == "pro"
+        session_id = mgr.session.id
+
+        reloaded = SessionManager(
+            settings, storage_mgr, MockLLMProvider(), repo_root=tmp_path,
+        )
+        await reloaded.resolve(session_id=session_id)
+
+        assert reloaded.model_slot == "pro"
+
+    async def test_a_slot_reached_by_a_different_casing_is_stored_canonical(
+        self, mgr,
+    ):
+        """A picker compares a row's name against this, so a stray casing
+        must not make the stored slot unmatchable."""
+        mgr.set_model("  PRO  ")
+
+        assert mgr.conversation.model_slot == "pro"
+
+    async def test_two_slots_naming_one_model_are_told_apart(
+        self, storage_mgr, llm, tmp_path,
+    ):
+        """The whole reason the field exists: switching between slots that
+        resolve to the same spec changes nothing about the model — and the
+        stored slot still follows the pick."""
+        settings = Settings(
+            session_dir=tmp_path,
+            streaming_enabled=False,
+            model="default",
+            model_default="same-model",
+            model_pro="same-model",
+            model_flash="other-model",
+            reasoning_effort="high",
+        )
+        mgr = SessionManager(settings, storage_mgr, llm, repo_root=tmp_path)
+        await mgr.resolve()
+        await _run_turn(mgr)
+
+        mgr.set_model("pro")
+
+        assert mgr.model == "same-model"
+        assert mgr.model_slot == "pro"
+        assert storage_mgr.get_conversation(
+            mgr.conversation.id,
+        ).model_slot == "pro"
+
+    async def test_an_effort_switch_leaves_the_slot_alone(self, mgr):
+        await _run_turn(mgr)
+        mgr.set_model("flash")
+        before = mgr.conversation.total_tokens
+
+        mgr.set_effort("low")
+
+        assert mgr.conversation.model_slot == "flash"
+        # And it did not re-key the accounting on the way past.
+        assert mgr.conversation.total_tokens == before
+
+    async def test_clear_carries_the_slot_forward(self, mgr):
+        await _run_turn(mgr)
+        mgr.set_model("flash")
+
+        await mgr.new_conversation()
+
+        assert mgr.model_slot == "flash"
+        assert mgr.conversation.model_slot == "flash"
+
+    async def test_a_row_without_a_slot_reports_the_settings_slot(
+        self, mgr, storage_mgr,
+    ):
+        """A pre-v5 row names none — the slot is unknowable, so the answer
+        is the slot the row's *absence* of a model already falls back to."""
+        await _run_turn(mgr)
+        conv = mgr.conversation
+        conv.model_slot = None
+        storage_mgr.update_conversation(conv)
+
+        assert mgr.model_slot == "default"
+
+
+# ============================================================================
 # Startup — what this build admits to serving
 # ============================================================================
 

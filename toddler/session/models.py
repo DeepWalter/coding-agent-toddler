@@ -166,6 +166,15 @@ class Conversation:
     reasoning_effort:
         The thinking-effort tier this conversation runs at.  *None*
         leaves the endpoint's own default in place.
+    model_slot:
+        The slot this conversation's model was last selected by, or *None*
+        for a row that names none (fresh, or written before the column
+        existed).  Provenance, not identity: ``model`` is what runs and
+        what ``total_tokens`` is valid for, while this only records which
+        row of the slot table the user pointed at — so a retargeted slot
+        cannot change what an old conversation runs.  A reader must check
+        that the named slot *still* resolves to ``model`` before showing it
+        as the selection.
     """
 
     id: str
@@ -181,6 +190,7 @@ class Conversation:
     total_tokens: int = 0
     model: str | None = None
     reasoning_effort: str | None = None
+    model_slot: str | None = None
 
     @property
     def display_title(self) -> str:

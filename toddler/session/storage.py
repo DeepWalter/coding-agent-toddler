@@ -263,13 +263,14 @@ class StorageManager:
         status: str = "active",
         model: str | None = None,
         reasoning_effort: str | None = None,
+        model_slot: str | None = None,
     ) -> Conversation:
         """Create a new conversation within *session_id*.
 
-        *model* / *reasoning_effort* seed the conversation's own selection.
-        A new conversation is normally created to carry the live selection
-        forward, so that ``/clear`` cannot silently revert it to the slot
-        the settings select.
+        *model* / *reasoning_effort* / *model_slot* seed the conversation's
+        own selection.  A new conversation is normally created to carry the
+        live selection forward, so that ``/clear`` cannot silently revert it
+        to the slot the settings select.
 
         Returns the new :class:`Conversation`.
         """
@@ -283,6 +284,7 @@ class StorageManager:
             status=status,
             model=model,
             reasoning_effort=reasoning_effort,
+            model_slot=model_slot,
         )
         self._db.create_conversation(conv)
         logger.info(

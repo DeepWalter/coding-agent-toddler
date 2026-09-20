@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 # Current schema version (integer — increments on every schema change)
 # ---------------------------------------------------------------------------
 
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
 
 # ---------------------------------------------------------------------------
 # SQL
@@ -99,7 +99,8 @@ CREATE TABLE IF NOT EXISTS conversations (
     message_count INTEGER NOT NULL DEFAULT 0,
     total_tokens INTEGER NOT NULL DEFAULT 0,
     model TEXT,
-    reasoning_effort TEXT
+    reasoning_effort TEXT,
+    model_slot TEXT
 );
 """
 
@@ -387,8 +388,8 @@ class SQLiteDatabase:
                    (id, session_id, title, sequence_num, status,
                     compacted_summary, compacted_at_seq, created_at,
                     updated_at, message_count, total_tokens, model,
-                    reasoning_effort)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    reasoning_effort, model_slot)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     conv.id,
                     conv.session_id,
@@ -403,6 +404,7 @@ class SQLiteDatabase:
                     conv.total_tokens,
                     conv.model,
                     conv.reasoning_effort,
+                    conv.model_slot,
                 ),
             )
             conn.commit()
@@ -495,7 +497,7 @@ class SQLiteDatabase:
                    SET title = ?, status = ?, compacted_summary = ?,
                        compacted_at_seq = ?, updated_at = ?,
                        message_count = ?, total_tokens = ?, model = ?,
-                       reasoning_effort = ?
+                       reasoning_effort = ?, model_slot = ?
                    WHERE id = ?""",
                 (
                     conv.title,
@@ -507,6 +509,7 @@ class SQLiteDatabase:
                     conv.total_tokens,
                     conv.model,
                     conv.reasoning_effort,
+                    conv.model_slot,
                     conv.id,
                 ),
             )
@@ -799,6 +802,25 @@ class SQLiteDatabase:
             conn.commit()
             current = 4
 
+        if current < 5:
+            logger.info(
+                "Migrating to schema v5 — the slot a conversation's model "
+                "was selected by."
+            )
+            # Deliberately not backfilled: the slot an existing row was
+            # selected by is not recorded anywhere, and guessing one from
+            # the settings would claim a provenance the row never had.  A
+            # reader falls back to matching specs while this is NULL.
+            _add_column_if_missing(
+                conn, "conversations", "model_slot",
+                "TEXT",
+            )
+            conn.execute(
+                "UPDATE _schema_version SET version = 5"
+            )
+            conn.commit()
+            current = 5
+
         if current != CURRENT_SCHEMA_VERSION:
             logger.warning(
                 f"Database schema is at v{current}, but code expects "
@@ -849,6 +871,7 @@ class SQLiteDatabase:
             total_tokens=row["total_tokens"],
             model=row["model"],
             reasoning_effort=row["reasoning_effort"],
+            model_slot=row["model_slot"],
         )
 
     @staticmethod

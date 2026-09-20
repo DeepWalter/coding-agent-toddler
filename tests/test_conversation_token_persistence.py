@@ -278,6 +278,7 @@ class TestV2ToV3Migration:
         assert "total_tokens" in cols
         assert "model" in cols
         assert "reasoning_effort" in cols
+        assert "model_slot" in cols
         # Old columns stay (not dropped — SQLite table-recreate would be
         # overkill for harmless dead columns).
         assert "total_input_tokens" in cols
@@ -295,4 +296,4 @@ class TestV2ToV3Migration:
             "SELECT version FROM _schema_version"
         ).fetchone()[0]
         conn.close()
-        assert version == CURRENT_SCHEMA_VERSION == 4
+        assert version == CURRENT_SCHEMA_VERSION == 5
