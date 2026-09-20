@@ -3,8 +3,8 @@
 > **Status.** Implemented, in the commits listed below: the pin and the
 > provider interface flip first, then the slots, the `[1m]` notation, the
 > effort budgets, the conversation's own selection, and the `/model` and
-> `/effort` commands. The one piece still outstanding is the echo window rule
-> (see `_messages_to_openai` below).
+> `/effort` commands. An echo rule that an earlier draft specified as a
+> follow-up was dropped instead — see "What the echo actually requires".
 
 ## Motivation
 
@@ -141,15 +141,16 @@ changed from that draft is listed at the end.
   (with `Settings.max_tokens_per_response` and `Settings.max_context_length`)
   are deleted: the effort level and the `[1m]` suffix are the levers, and one
   source of truth beats a field that can contradict a derived value.
-- **The reasoning dialect is read off the turn's own config.** The echo branch
-  asks whether thinking is on (`reasoning_effort != "none"`) and whether the
-  model is a `deepseek-` family one — the same family test `_parse_params`
-  applies to the token-budget key. No third setting: the config the turn already
-  carries decides it, and a second dialect extends the test at the branch. A
-  dialect we cannot echo to is *not* handled by dropping the key: seeing another
-  model's reasoning is a mismatch (the endpoint would reject the key or absorb
-  reasoning it never wrote), so the branch logs the model and raises
-  `NotImplementedError`.
+- **The reasoning dialect is read off the request's model.** The echo branch asks
+  only whether the model is a `deepseek-` family one — the same family test
+  `_parse_params` applies to the token-budget key. No third setting: the config
+  the turn already carries decides it, and a second dialect extends the test at
+  the branch. A dialect we cannot echo to is *not* handled by dropping the key:
+  seeing another model's reasoning is a mismatch (the endpoint would reject the
+  key or absorb reasoning it never wrote), so the branch logs the model and
+  raises `NotImplementedError`. That is affordable precisely because every slot
+  ships `deepseek-` family; a non-DeepSeek slot is a change to the provider, not
+  just to the environment — see "What the echo actually requires" below.
 
 ## Implementation
 
@@ -253,26 +254,48 @@ The notation's single owner plus the config itself:
 - `main.py`: an explicitly passed `--model` / `--reasoning-effort` is applied
   after `resolve()`, so the flag keeps its meaning on resume.
 
-### `_messages_to_openai` — echo only the in-flight round
+### What the echo actually requires
 
-```python
-last_user = max((i for i, m in enumerate(messages) if m.role == "user"), default=-1)
-...
-if reasoning and reasoning_effort != "none" and i > last_user:
-    if model.lower().startswith("deepseek-"):
-        openai_msg["reasoning_content"] = reasoning
-    else:
-        logger.error("No reasoning echo dialect for model %r ...", model)
-        raise NotImplementedError(...)
-```
+The requirement attaches to the request carrying the `tools` parameter, not to
+round boundaries and not to the thinking toggle:
 
-DeepSeek requires the echo only within a tool round and ignores completed-round
-reasoning, so for DeepSeek this is a no-op on the wire. For every other endpoint
-it removes a key it does not define — and the pin guarantees the in-flight round
-came from the endpoint now serving the request, so no per-message provenance and
-no name sniffing are needed. Round boundaries line up: the compaction summary is
-a user message and the cancel repair appends a user marker. **Not implemented
-yet** — the dialect branch it narrows is in place; the window rule is not.
+> Please note that for requests carrying the `tools` parameter, the
+> `reasoning_content` must be fully passed back to the API in all subsequent
+> requests — even for turns where the model did not perform a tool call. If your
+> code does not correctly pass back `reasoning_content`, the API will return a
+> 400 error. — `api-docs.deepseek.com/guides/thinking_mode`
+
+and, from the same page, for requests that do *not* carry it: "`reasoning_content`
+does not need to be passed back; even if passed to the API, it will be ignored".
+
+So the rule the code implements is: **echo whenever a reasoning block is present
+and the model is a `deepseek-` family one.** No window over the message list, and
+no consultation of `reasoning_effort` — a request running with thinking off still
+owes the history's reasoning back. The agent loop always sends tools; the calls
+that do not (the plan proposal, compaction) have the key ignored, so one rule
+covers both regimes.
+
+An earlier draft of this record specified the opposite — echo only the in-flight
+round, `i > last_user`, on the theory that completed-round reasoning is ignored.
+That is the no-tools rule generalised to a tool loop, and it is wrong: it would
+drop the key from the history on the second request of any tool-using
+conversation, which is the shape the 400 is documented for. It was dropped before
+being implemented.
+
+**The 400 could not be reproduced.** A probe against both models this account
+serves (`deepseek-flash`, `deepseek-v4-pro`) sent ~20 requests across the shapes
+most likely to trigger it — the documented case (thinking on, echo missing),
+streamed and not, cold and warmed prefix, single- and two-round histories, a
+mixed per-round echo, and through `OpenAICompatibleProvider.generate` with
+`reasoning_effort="none"` — and every one was accepted. The documented case was
+among them, so the probe cannot detect this class of error at all: the result is
+*inconclusive*, not evidence of safety. The echo stays where the documentation
+puts it, on the asymmetry that a redundant key is inert while an omitted one is a
+documented failure. Recorded so the next reader neither re-derives the rule from
+the page alone nor over-trusts a probe that cannot fail. (The same probe sent
+histories carrying no `reasoning_content` whatsoever — the shape of pre-capture
+rows — and those were accepted too, which is the empirical half of the "no
+backfill obligation" claim in `reasoning-content-capture.md`.)
 
 ## Commits
 
@@ -307,8 +330,9 @@ Each one green (`.venv/bin/python -m pytest -q`, `.venv/bin/python -m ruff check
   reload; `/effort low` changes effort without disturbing the model.
 - Window: a `[1m]` spec yields a 1M window and a 200K spec does not; the
   effective limit reflects the turn's own output budget.
-- Echo: a completed round before a later user message drops the key; an
-  in-flight tool round keeps it on every assistant message.
+- Echo: every assistant message carrying a reasoning block keeps the key,
+  including with `reasoning_effort="none"`; a history carrying none is accepted
+  by the endpoint (probed live — see "What the echo actually requires").
 - Migration: a pre-v4 DB gains `reasoning_effort` and `_schema_version == 4`
   (extends `TestV2ToV3Migration`).
 - Manual: `TODDLER_PRO_MODEL='deepseek-v4-pro[1m]' .venv/bin/tod --model pro

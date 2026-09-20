@@ -11,13 +11,19 @@ tokens are itemized separately in `usage.completion_tokens_details.reasoning_tok
 Toddler currently **drops reasoning entirely**: the provider only reads `content` and
 `tool_calls`.  Two forces make capture necessary rather than nice-to-have:
 
-1. **API echo-back requirement.**  Between two user messages, when tool calls are in
-   play, DeepSeek requires the tool-round assistant messages' `reasoning_content` to be
-   passed back on *every* subsequent request, or the API returns HTTP 400
-   (`reasoning_content in thinking mode must be passed back to the API`).  Toddler is a
-   tool-calling loop, so missing the echo fails mid-turn.  Reasoning from *completed*
-   rounds (after a later user message) is ignored by the API, so old sessions stored
-   without reasoning stay valid — there is no backfill obligation.
+1. **API echo-back requirement.**  For requests carrying the `tools` parameter,
+   DeepSeek requires the `reasoning_content` of *all previous turns* to be passed back
+   — "even for turns where the model did not perform a tool call" — or the API returns
+   HTTP 400.  Toddler is a tool-calling loop, so missing the echo fails mid-turn.
+
+   The scope is the `tools` parameter, not round boundaries.  This paragraph originally
+   went on to say that reasoning from *completed* rounds "is ignored by the API" — that
+   is the rule for requests that do *not* carry tools, and reading it as general is what
+   a later draft built an (unimplemented) echo window on.  Corrected in the
+   model-slots work: see `docs/plans/model-selection.md`, which also records that the
+   documented 400 could not be reproduced against either available model, and that a
+   history carrying no reasoning at all — this project's pre-capture rows — is accepted,
+   so there is still no backfill obligation.
 
 2. **User visibility.**  Reasoning should appear in the transcript as a
    collapsed/expandable "thinking" disclosure (Claude Code-style), in **both**
@@ -83,6 +89,12 @@ Two related defects surfaced during exploration and are in scope:
    request messages are plain dicts, so the extra key rides through the OpenAI SDK
    unvalidated.  Residual risk: a strict third-party validator rejecting unknown keys
    — accepted, with a code comment.
+
+   *Later:* the model became a per-turn choice, so the branch now tests the model's
+   `deepseek-` family and raises `NotImplementedError` for a dialect it cannot echo to.
+   That reintroduces exactly the renamed-server hazard this decision avoided — the
+   failure is loud rather than silent, and the fix is to extend the family test, but it
+   is a change of stance from "no guard".  See `docs/plans/model-selection.md`.
 
 4. **Storage: no schema change, one read-time alias.**  Persistence stores per-block
    whitelist dicts in the existing `content_json` TEXT column; reasoning blocks
