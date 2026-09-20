@@ -1521,9 +1521,14 @@ body {
 }
 
 /* Padding only — the rail inside is the measured element, so its 0%…100%
-   span is exactly the four stops and the knob may overhang the ends. */
+   span is exactly the stops, and whatever overhangs the rail's ends (the
+   bar, then the knob) draws into this.  Sized to the overhang: half the
+   bar's height, since the bar reaches a cap radius past the rail at each
+   end.  It is the bar and not the knob that sets the number — 8px against
+   the knob's 6px — so a taller bar means a wider padding here, or the ends
+   spill into the row's own. */
 .effort-track {
-  padding: 0 7px;
+  padding: 0 8px;
 }
 
 .effort-rail {
@@ -1568,26 +1573,29 @@ body {
   transform: translateY(-50%);
 }
 
-/* 6px past the rail at each end — half the bar's height, i.e. exactly the
-   cap radius.  The stops keep the rail as their coordinate system (they are
-   its 0%…100%), so this parks the first and last of them at the *centres*
-   of the two round caps: the markers stay put and the bar grows to cover
-   them, rather than the markers being nudged in to fit.  The 6px sits in
-   .effort-track's 7px padding, so the row's width is unchanged. */
+/* 8px past the rail at each end — half the bar's height, i.e. exactly the
+   cap radius, which is what parks the first and last stops at the *centres*
+   of the two round caps: the markers keep the rail as their coordinate
+   system (its 0%…100%) and the bar grows to cover them, rather than the
+   markers being nudged in to fit.  Being absolutely positioned, the overhang
+   costs the row no width and shifts no layout; .effort-track's padding is
+   what reserves room for it. */
 .effort-line {
   left: -8px;
   right: -8px;
   background: var(--editor-border);
 }
 
-/* --t (0…1) is the knob's position, set inline from the live stop.  The
-   fill reaches the knob's far edge, so the knob is *inside* it: the +12px
-   is the knob's diameter (6px to its centre, 6px past it), which also makes
-   the fill's right cap concentric with the knob's disc — the accent hugs
-   the handle's left half instead of stopping short of it and leaving the
-   unfilled track in the corners.  The two extremes fall out of the same
-   number: at `none` the fill is a knob-sized stub hidden under the knob
-   (not a bare 6px), and at the top it is exactly the whole bar. */
+/* --t (0…1) is the knob's position, set inline from the live stop.  Both
+   offsets are the bar's own height: the -8px left (half of it) starts the
+   fill where the bar starts, and the +16px carries its right cap past the
+   knob, which lands that cap concentric with the knob's disc and one cap
+   radius (8px) wide.  The knob is 12px against that radius, so the 2px it
+   falls short by is what shows as accent around the handle — the knob sits
+   in the bar with 2px of it on every side, filled side included.  The
+   extremes fall out of the same numbers: at `none` the fill is a bar-high
+   stub with the knob centred in it, and at the top it is exactly the whole
+   bar. */
 .effort-fill {
   left: -8px;
   width: calc(var(--t, 0) * 100% + 16px);
