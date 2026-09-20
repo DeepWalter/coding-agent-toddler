@@ -268,6 +268,17 @@ class TestSelection:
         assert config.model == "flash-model"
         assert config.max_context_tokens == 1_000_000
 
+    async def test_the_turn_sends_the_wire_id_not_the_spec(self, mgr, llm):
+        """The notation is local: the endpoint is asked for the stripped id
+        while the header and the row keep the spec."""
+        mgr.set_model("flash")
+
+        await _run_turn(mgr)
+
+        assert llm.call_configs == [("flash-model", "high")]
+        assert mgr.model == "flash-model[1m]"
+        assert mgr.conversation.model == "flash-model[1m]"
+
     async def test_switching_the_model_stamps_the_row_and_drops_the_count(
         self, mgr, storage_mgr,
     ):
