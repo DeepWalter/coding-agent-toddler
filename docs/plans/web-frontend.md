@@ -104,6 +104,8 @@ distribution matters).
 | `approve_plan` | `plan_id`, `mode: "manual"\|"auto"` | yes |
 | `reject_plan` | `plan_id`, `feedback` | yes |
 | `set_mode` | `mode: "manual"\|"auto"` | yes |
+| `set_model` | `slot` | no |
+| `set_effort` | `tier` | no |
 | `new_conversation` | `title` | no |
 | `rename_conversation` | `title` | yes |
 | `switch_session` | `session_id` | no |
@@ -120,10 +122,25 @@ first user input; an empty one is refused with
 `{"type":"error","code":"invalid_title"}`, and an unknown/not-yet-active
 conversation with `code: "no_conversation"`.
 
+`set_model` and `set_effort` are the input bar's picker: the same two
+mutations `/model <slot>` and `/effort <tier>` perform, reached as values
+rather than as a command line.  They are busy-gated for the same reason —
+the selection is persisted to the conversation row and the token accounting
+is re-keyed, neither of which may happen under a turn already reading the
+old pair — but they answer with an `ack` and a `session_info` broadcast and
+**no notice**: the pill is the feedback, and a click must not write a line
+into the console.  A slot outside `MODEL_SLOTS` is refused with
+`code: "invalid_slot"`, a tier outside the eight is `code:
+"invalid_effort"` (the endpoint coerces an unknown tier to `max`, so a typo
+has to fail here).  Both normalize their argument the way the CLI does —
+trimmed and lowercased — before validating.
+
 ### Server → client (JSON `{"type": ...}`)
 
 ```
-hello              {session: {id, title, mode_label, permission_mode, context_usage_pct, model, cwd},
+hello              {session: {id, title, mode_label, permission_mode, context_usage_pct,
+                              model, model_slot, effort,
+                              model_slots: [{name, spec, context_tokens}], cwd},
                      conversation: {id, sequence_num, title},
                      busy, paused, plan, messages: [replay from storage_mgr.get_messages()]}
 session_info       {session, conversation}   # the hello metadata without the replay
@@ -147,12 +164,25 @@ earlier `conversation_switched {conversation}` frame was dropped from
 the protocol: it carried no session info and no replay, so it couldn't
 fulfill "session switch replays history" on its own.
 
+`session.model` is the *spec* the conversation runs with (`[1m]` notation
+included) and `session.model_slot` names the slot it was picked by — the row
+a picker highlights.  The slot is provenance, not identity: it is trusted
+only while the slot it names still resolves to `model` (a retargeted slot
+underneath a live conversation names a model it does not run), and a reader
+falls back to matching specs when it does not.  `session.model_slots` lists
+every slot the conversation could switch to, each with the context window its
+spec is accounted for — computed server-side because `[1m]` is Toddler's own
+notation and its suffix table is not on the wire.  `session.effort` is the
+stored tier verbatim (a collapsed one such as `xhigh` keeps its name); `null`
+means the conversation names none, leaving the endpoint's own default.
+
 `session_info` is the metadata-only sibling: the same `session` +
 `conversation` payloads, no transcript, so every tab relabels its header
 and keeps its console scroll-back.  Broadcast by `set_mode`, by
-`rename_conversation`, and by the runner on every state-machine transition
-(mode label, plan phase); the slash commands that mutate session metadata
-but keep the transcript (`/mode`, `/plan`) answer with it too.
+`set_model`/`set_effort`, by `rename_conversation`, and by the runner on
+every state-machine transition (mode label, plan phase); the slash commands
+that mutate session metadata but keep the transcript (`/mode`, `/plan`,
+`/model`, `/effort`) answer with it too.
 plan_proposed      {plan: {id, title, summary, steps, rationale, risks, estimated_files_touched}}
 plan_step_update   {steps: [[id, description, status], ...]}   # complete snapshot — replace, don't diff
 

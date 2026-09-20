@@ -90,6 +90,14 @@ Slash commands work in the input bar too (`/help`, `/mode`, `/clear`,
 `/session`, …) — they dispatch server-side and never reach the LLM.
 `/quit` and `/view` are not available in the browser.
 
+The model and the thinking effort are also switchable from the pill beside
+the input box: it reads `deepseek-flash high` and opens onto the three
+slots and an eight-stop effort slider — the same tiers `/effort` and
+`TODDLER_EFFORT_LEVEL` take, in the same order.  Note that the endpoint
+collapses some of them (`minimal`/`low` are both `low` to DeepSeek,
+`medium`/`high`/`xhigh` are all `high`, `max`/`ultra` are both `max`), so
+moving between those pairs changes the label and not the request.
+
 Development workflow:
 
 ```bash

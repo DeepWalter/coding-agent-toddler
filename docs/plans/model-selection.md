@@ -109,6 +109,13 @@ changed from that draft is listed at the end.
   `TODDLER_PRO_MODEL` later does not re-point an old conversation at a model
   that never produced its history or its token baseline. The corollary, accepted:
   a retired id has no recovery path but `/model`.
+  **Later addition (schema v5):** the row also records `model_slot` — the *name*
+  of the slot a pick came from — because the spec cannot tell two slots that
+  name one model apart, and the browser's picker highlights the row the user
+  pointed at. This does not weaken the rule above: `model` is still what runs
+  and what `total_tokens` is valid for, the slot is display provenance beside
+  it, and a reader must confirm the named slot still resolves to the running
+  model before showing it as the selection. See `web-model-picker.md`.
 - **The effort scale is shared.** `"none"` disables thinking outright; the
   tiers above it are handed to the provider, which collapses the finer ones onto
   DeepSeek's coarser low/high/max scale.
