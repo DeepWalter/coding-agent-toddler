@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
-import type { Block, Mode, Paused } from '../types'
+import type { Block, Mode, ModelSlotInfo, Paused } from '../types'
 import InputBar from './InputBar.vue'
 import PausePrompt from './PausePrompt.vue'
 import PlanAsk from './PlanAsk.vue'
@@ -18,6 +18,9 @@ defineProps<{
   gatingEditable: boolean
   inPlan: boolean
   model: string
+  modelSlot: string
+  effort: string | null
+  slots: ModelSlotInfo[]
   contextPct: number
 }>()
 
@@ -25,6 +28,8 @@ const emit = defineEmits<{
   send: [text: string]
   cancel: []
   'set-mode': [mode: Mode]
+  'set-model': [slot: string]
+  'set-effort': [tier: string]
   compact: []
   'approve-tool': []
   'deny-tool': []
@@ -83,10 +88,15 @@ onBeforeUnmount(() => dockObserver?.disconnect())
       :gating-editable="gatingEditable"
       :in-plan="inPlan"
       :model="model"
+      :model-slot="modelSlot"
+      :effort="effort"
+      :slots="slots"
       :context-pct="contextPct"
       @send="(text) => emit('send', text)"
       @cancel="emit('cancel')"
       @set-mode="(m) => emit('set-mode', m)"
+      @set-model="(slot) => emit('set-model', slot)"
+      @set-effort="(tier) => emit('set-effort', tier)"
       @compact="emit('compact')"
     />
   </div>

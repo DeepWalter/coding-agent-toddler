@@ -19,8 +19,31 @@ export interface SessionInfo {
    *  gating is pinned to manual until the plan is approved. */
   gating_editable: boolean
   context_usage_pct: number
+  /** The model the conversation runs with — the resolved *spec*, notation
+   *  included. */
   model: string
+  /** The slot that spec was picked by.  Provenance, not identity: a slot
+   *  retargeted since can name a model this conversation does not run, so
+   *  a reader highlights the row named here only after checking it still
+   *  resolves to `model`. */
+  model_slot: string
+  /** The thinking-effort tier verbatim (a collapsed one like "xhigh" keeps
+   *  its name); null when the conversation names none, leaving the
+   *  endpoint's own default — which is "high". */
+  effort: string | null
+  /** Every slot the conversation can be switched to, in menu order. */
+  model_slots: ModelSlotInfo[]
   cwd: string
+}
+
+/** One named model slot, as the picker lists it.  ``spec`` is what a switch
+ *  to this slot would select; ``context_tokens`` is the window the server
+ *  accounts that spec for — computed there, because ``[1m]`` is Toddler's
+ *  own notation and its suffix table is not on the wire. */
+export interface ModelSlotInfo {
+  name: string
+  spec: string
+  context_tokens: number
 }
 
 /** Workflow/gating mode — the input-bar pill cycles manual → auto → plan.
@@ -185,6 +208,8 @@ export type Command =
   | { cmd: 'approve_plan'; plan_id: string; mode: 'manual' | 'auto' }
   | { cmd: 'reject_plan'; plan_id: string; feedback?: string }
   | { cmd: 'set_mode'; mode: Mode }
+  | { cmd: 'set_model'; slot: string }
+  | { cmd: 'set_effort'; tier: string }
   | { cmd: 'new_conversation'; title?: string }
   | { cmd: 'rename_conversation'; title: string }
   | { cmd: 'switch_session'; session_id: string }

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import type { Mode } from '../types'
+import type { Mode, ModelSlotInfo } from '../types'
+import ModelPicker from './ModelPicker.vue'
+import { usePicker } from '../composables/usePicker'
 
 const props = defineProps<{
   busy: boolean
@@ -14,6 +16,13 @@ const props = defineProps<{
    *  reads "plan" instead of the gating mode (plan is not a gating mode). */
   inPlan: boolean
   model: string
+  /** The slot the model was picked by — which row the picker highlights. */
+  modelSlot: string
+  /** The thinking-effort tier, verbatim; null means the endpoint's own
+   *  default.  Rendered by the model picker, next to the spec. */
+  effort: string | null
+  /** The model slots the picker offers, in menu order. */
+  slots: ModelSlotInfo[]
   contextPct: number
 }>()
 
@@ -21,6 +30,8 @@ const emit = defineEmits<{
   send: [text: string]
   cancel: []
   'set-mode': [mode: Mode]
+  'set-model': [slot: string]
+  'set-effort': [tier: string]
   compact: []
 }>()
 
@@ -123,17 +134,15 @@ const currentOption = computed(() =>
   MODE_OPTIONS.find((opt) => opt.value === displayMode.value),
 )
 
-const open = ref(false)
+// Shared with the model picker, so the two popups cannot both be open —
+// see usePicker.  This one's gate is gating_editable; the model picker's
+// is busy/connected.
+const { open, toggle, close } = usePicker('mode')
 const pickerEl = ref<HTMLElement | null>(null)
 const pillEl = ref<HTMLButtonElement | null>(null)
 
-function toggle() {
-  if (!props.connected || !props.gatingEditable) return
-  open.value = !open.value
-}
-
 function choose(mode: Mode) {
-  open.value = false
+  close()
   // A native select only fires change on an actual change — same here.
   // The comparison is against the entry the dropdown shows selected, not
   // the gate: while an armed plan reads "plan", picking manual must fire
@@ -143,7 +152,7 @@ function choose(mode: Mode) {
 
 function onPickerKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape' && open.value) {
-    open.value = false
+    close()
     pillEl.value?.focus()
   }
 }
@@ -152,7 +161,7 @@ function onPointerDown(event: PointerEvent) {
   // Close when the click lands outside the picker — a click on a menu
   // entry lands inside and is handled by choose().
   if (open.value && pickerEl.value && !pickerEl.value.contains(event.target as Node)) {
-    open.value = false
+    close()
   }
 }
 
@@ -231,7 +240,7 @@ onMounted(() => {
             aria-haspopup="menu"
             :aria-expanded="open"
             title="mode — manual / auto / plan"
-            @click="toggle"
+            @click="toggle(connected && gatingEditable)"
           >
             <svg
               class="mode-toggle-icon"
@@ -285,7 +294,16 @@ onMounted(() => {
         </div>
         <template v-if="model">
           <span class="input-bar-meta-sep">·</span>
-          <span class="input-bar-model">{{ model }}</span>
+          <ModelPicker
+            :model="model"
+            :model-slot="modelSlot"
+            :effort="effort"
+            :slots="slots"
+            :busy="busy"
+            :connected="connected"
+            @set-model="(slot) => emit('set-model', slot)"
+            @set-effort="(tier) => emit('set-effort', tier)"
+          />
           <span class="input-bar-meta-sep">·</span>
           <!-- The wrap owns the hover text: a native title on a disabled
                button is not shown by Chromium — and the disabled-state

@@ -30,6 +30,8 @@ const {
   approvePlan,
   rejectPlan,
   setMode,
+  setModel,
+  setEffort,
   newConversation,
   renameConversation,
   switchSession,
@@ -559,10 +561,15 @@ function onDividerUp(event: PointerEvent) {
           :gating-editable="state.session?.gating_editable ?? false"
           :in-plan="inPlan"
           :model="state.session?.model ?? ''"
+          :model-slot="state.session?.model_slot ?? ''"
+          :effort="state.session?.effort ?? null"
+          :slots="state.session?.model_slots ?? []"
           :context-pct="state.session?.context_usage_pct ?? 0"
           @send="sendTurn"
           @cancel="cancelTurn"
           @set-mode="setMode"
+          @set-model="setModel"
+          @set-effort="setEffort"
           @compact="sendCompact"
           @approve-tool="approveTool"
           @deny-tool="denyTool"

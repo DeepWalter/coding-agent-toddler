@@ -482,6 +482,24 @@ export function useConsole(send: (cmd: Command) => void) {
     send({ cmd: 'set_mode', mode })
   }
 
+  /** Model/effort switches from the input bar's picker.
+   *
+   *  Deliberately not optimistic, unlike setMode: the pill shows the SPEC,
+   *  and only the server holds the slot table that maps a slot name to one
+   *  — predicting it locally would be a guess.  The effort slider is its
+   *  own feedback while the drag is in flight, and a refused switch leaves
+   *  nothing to undo (the reducer consults acks for plan decisions only).
+   */
+  function setModel(slot: string) {
+    if (state.busy) return
+    send({ cmd: 'set_model', slot })
+  }
+
+  function setEffort(tier: string) {
+    if (state.busy) return
+    send({ cmd: 'set_effort', tier })
+  }
+
   function newConversation() {
     send({ cmd: 'new_conversation' })
   }
@@ -510,6 +528,8 @@ export function useConsole(send: (cmd: Command) => void) {
     approvePlan,
     rejectPlan,
     setMode,
+    setModel,
+    setEffort,
     newConversation,
     renameConversation,
     switchSession,

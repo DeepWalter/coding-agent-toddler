@@ -336,7 +336,11 @@ body {
   display: inline-flex;
 }
 
-.mode-menu {
+/* The mode picker's popup and the model picker's share one surface: both
+   open from .input-bar-meta, at the same level (the context tooltip below
+   is deliberately one surface up, lifting off the dock card). */
+.mode-menu,
+.model-menu {
   position: absolute;
   left: 0;
   bottom: calc(100% + 6px);
@@ -352,11 +356,16 @@ body {
   box-shadow: 0 4px 16px rgb(0 0 0 / 0.25);
 }
 
-.mode-menu-item {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
+/* Wider than the mode menu: a row carries a slot name, the spec it names
+   and that spec's window. */
+.model-menu {
+  min-width: 252px;
+}
+
+/* The row chrome both menus share; the layouts below diverge (the mode
+   rows stack a name over a description, the model rows run across). */
+.mode-menu-item,
+.model-menu-item {
   padding: 6px 10px;
   border: 0;
   border-radius: 6px;
@@ -367,22 +376,34 @@ body {
   cursor: pointer;
 }
 
+.mode-menu-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
 .mode-menu-item:hover:not(:disabled),
-.mode-menu-item:focus-visible {
+.mode-menu-item:focus-visible,
+.model-menu-item:hover:not(:disabled),
+.model-menu-item:focus-visible {
   background: var(--editor-surface-3);
 }
 
-.mode-menu-item:disabled {
+.mode-menu-item:disabled,
+.model-menu-item:disabled {
   opacity: 0.5;
   cursor: default;
 }
 
-.mode-menu-item:focus-visible {
+.mode-menu-item:focus-visible,
+.model-menu-item:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: -1px;
 }
 
-.mode-menu-item.selected {
+.mode-menu-item.selected,
+.model-menu-item.selected {
   background: var(--editor-surface-3);
 }
 
@@ -1382,9 +1403,222 @@ body {
   opacity: 0.6;
 }
 
-.input-bar-model {
+/* ------------------------------------------------------------------ */
+/* Model + effort picker (in the input bar's meta row)                 */
+/* ------------------------------------------------------------------ */
+
+.model-picker {
+  position: relative;
+  display: inline-flex;
+  /* The popup is a child, and the row's name ellipsizes inside the pill —
+     so the shrink has to stop here, not at .input-bar-meta. */
+  min-width: 0;
+}
+
+/* Ellipsized as one line rather than a flex row: a narrow console pane
+   leaves the meta row only so much, and the whole pill truncating reads
+   the way the model text it replaced did — where an unshrinkable part
+   would spill past the border. */
+.model-toggle {
+  min-width: 0;
+  overflow: hidden;
+  padding: 3px 10px;
+  border: 1px solid var(--editor-border);
+  border-radius: 999px;
+  background-color: var(--editor-surface-2);
+  color: var(--text-subtle);
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.model-toggle:hover:not(:disabled) {
+  background-color: var(--editor-surface-3);
+}
+
+.model-toggle:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.model-toggle-effort {
+  color: var(--text-muted);
+}
+
+/* A row: the slot's name, the spec it names, and that spec's window. */
+.model-menu-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.model-menu-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.model-menu-spec {
+  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.model-menu-window {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-subtle);
+}
+
+/* The fourth row: a label that cycles, over the four-stop rail.  It is a
+   group rather than a menuitemradio — the rail is one control, not one
+   more radio — so it gets its own separator above it. */
+.effort-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 2px;
+  padding: 6px 10px 4px;
+  border-top: 1px solid var(--editor-border);
+}
+
+.effort-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* A plain button, not a menu item: clicking it steps the tier. */
+.effort-label {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.effort-label:hover:not(:disabled) {
+  color: var(--accent-hover);
+}
+
+.effort-label:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.effort-value {
+  font-size: 11px;
+  color: var(--accent);
+}
+
+/* Padding only — the rail inside is the measured element, so its 0%…100%
+   span is exactly the four stops and the knob may overhang the ends. */
+.effort-track {
+  padding: 0 7px;
+}
+
+.effort-rail {
+  position: relative;
+  height: 18px;
+  cursor: pointer;
+  /* A drag must not scroll the console behind the dock, and must not
+     select the menu's text on the way across. */
+  touch-action: none;
+  user-select: none;
+}
+
+.effort-rail[aria-disabled='true'] {
+  cursor: default;
+}
+
+.effort-rail:focus-visible {
+  border-radius: 4px;
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Every decoration is inert to the pointer: a hit must land on the rail
+   itself (which is the drag's capture target), never on the knob that
+   happens to be under the cursor. */
+.effort-line,
+.effort-fill,
+.effort-stop,
+.effort-knob {
+  position: absolute;
+  pointer-events: none;
+}
+
+/* A pill, so both of the bar's ends are round: 999px clamps to half the
+   height, and the fill shares the radius so its left end lands exactly on
+   the bar's instead of squaring off the corner it covers. */
+.effort-line,
+.effort-fill {
+  top: 50%;
+  height: 16px;
+  border-radius: 999px;
+  transform: translateY(-50%);
+}
+
+/* 6px past the rail at each end — half the bar's height, i.e. exactly the
+   cap radius.  The stops keep the rail as their coordinate system (they are
+   its 0%…100%), so this parks the first and last of them at the *centres*
+   of the two round caps: the markers stay put and the bar grows to cover
+   them, rather than the markers being nudged in to fit.  The 6px sits in
+   .effort-track's 7px padding, so the row's width is unchanged. */
+.effort-line {
+  left: -8px;
+  right: -8px;
+  background: var(--editor-border);
+}
+
+/* --t (0…1) is the knob's position, set inline from the live stop.  The
+   fill reaches the knob's far edge, so the knob is *inside* it: the +12px
+   is the knob's diameter (6px to its centre, 6px past it), which also makes
+   the fill's right cap concentric with the knob's disc — the accent hugs
+   the handle's left half instead of stopping short of it and leaving the
+   unfilled track in the corners.  The two extremes fall out of the same
+   number: at `none` the fill is a knob-sized stub hidden under the knob
+   (not a bare 6px), and at the top it is exactly the whole bar. */
+.effort-fill {
+  left: -8px;
+  width: calc(var(--t, 0) * 100% + 16px);
+  background: var(--accent);
+}
+
+/* Each stop carries its own --t fraction, the same one the knob and the
+   fill use — so the count is the component's business, not the sheet's.
+   Centred on its stop, which at the two ends is the rail's own edge: that
+   is the seam the bar reaches across, above. */
+.effort-stop {
+  left: calc(var(--t, 0) * 100%);
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  opacity: 0.55;
+  transform: translate(-50%, -50%);
+}
+
+.effort-knob {
+  left: calc(var(--t, 0) * 100%);
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  /* No transition: the knob tracks a drag, and easing it would leave it
+     lagging behind the pointer for the length of the gesture. */
+  transform: translate(-50%, -50%);
 }
 
 /* The "context N%" pill: a muted label until usage passes half the window,
