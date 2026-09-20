@@ -215,19 +215,41 @@ class TestMessagesToOpenaiEcho:
         assert "gpt-5" in str(excinfo.value)
         assert "gpt-5" in caplog.text
 
-    def test_dropped_when_thinking_is_disabled(self):
-        """``"none"`` turns thinking off, and a request that is not
-        thinking has no use for a prior round's reasoning."""
+    @pytest.mark.asyncio
+    async def test_echoed_even_when_this_request_does_not_think(
+        self, monkeypatch,
+    ):
+        """The requirement attaches to the request carrying ``tools``, not
+        to the thinking toggle: DeepSeek wants every previous turn's
+        reasoning back either way, so the echo does not consult the effort.
+
+        Staying on the safe side of that asymmetry is deliberate — a
+        redundant key is inert, an omitted one is a documented 400."""
+        response = SimpleNamespace(
+            choices=[SimpleNamespace(
+                message=SimpleNamespace(
+                    content="ok", tool_calls=None, reasoning_content=None,
+                ),
+                finish_reason="stop",
+            )],
+            usage=_usage(),
+        )
+        calls = _install_stub(monkeypatch, response=response)
+        provider = _make_provider()
         msg = Message.assistant([
             MessageBlock.reasoning_block(_REASONING),
             MessageBlock.content_block(_ANSWER),
         ])
 
-        out = OpenAICompatibleProvider._messages_to_openai(
-            [msg], model=_DEEPSEEK, reasoning_effort="none",
-        )[0]
+        await provider.generate(
+            [msg], [{"type": "function"}], model=_DEEPSEEK,
+            reasoning_effort="none", stream=False,
+        )
 
-        assert "reasoning_content" not in out
+        sent = calls.calls[0]
+        assert sent["messages"][0]["reasoning_content"] == _REASONING
+        # The request really is a non-thinking one.
+        assert sent["extra_body"] == {"thinking": {"type": "disabled"}}
 
 
 # ============================================================================

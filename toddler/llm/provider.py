@@ -121,14 +121,11 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         *model* and *reasoning_effort* are the caller's, not the
         provider's: one agent turn names the same model on every call it
         makes.  A ``None`` *reasoning_effort* omits the field, leaving the
-        endpoint's own default in place.  Together they also decide
-        whether the request owes DeepSeek its prior reasoning — see
-        :func:`_needs_reasoning_echo`.  The model family decides the final
-        wire shape — see :meth:`_parse_params`.
+        endpoint's own default in place.  The model family decides the
+        final wire shape — see :meth:`_parse_params` — including whether
+        prior reasoning is echoed back, see :meth:`_messages_to_openai`.
         """
-        openai_messages = self._messages_to_openai(
-            messages, model=model, reasoning_effort=reasoning_effort,
-        )
+        openai_messages = self._messages_to_openai(messages, model=model)
         openai_tools = self._tools_param(tools)
 
         kwargs = self._parse_params(
@@ -330,14 +327,13 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         messages: list[Message],
         *,
         model: str,
-        reasoning_effort: str | None = None,
     ) -> list[dict]:
         """Convert a list of internal :class:`Message` objects to the
         list-of-dicts expected by the OpenAI chat-completion endpoint.
 
-        *model* and *reasoning_effort* identify the request's dialect —
-        whether it owes DeepSeek the tool round's prior reasoning, see the
-        echo-back note on the assistant branch.
+        *model* identifies the request's dialect — whether the endpoint
+        wants prior reasoning echoed back, see the note on the assistant
+        branch.
         """
 
         openai_msgs: list[dict] = []
@@ -380,21 +376,31 @@ class OpenAICompatibleProvider(BaseLLMProvider):
                 else:
                     openai_msg["content"] = content or ""
 
-                # DeepSeek echo-back requirement: in thinking mode the
-                # tool-round assistant messages' reasoning_content must be
-                # passed back, or the API returns HTTP 400 mid-turn.  Both
-                # halves come from the turn's config — thinking being on
-                # (``"none"`` disables it, and a request that is not
-                # thinking has no use for a prior round's reasoning), and
-                # the same ``deepseek-`` family test :meth:`_parse_params`
-                # uses to pick the token-budget key.  Another endpoint with
-                # its own dialect would extend the family test here.
-                # Self-scoping in the ordinary case: only a dialect that
-                # emits reasoning_content ever produces a block to replay,
-                # and the plain dict rides through the OpenAI SDK
+                # DeepSeek echo-back requirement: the reasoning_content of
+                # *all previous turns* must be passed back — "even for
+                # turns where the model did not perform a tool call" — or
+                # the API returns HTTP 400.  It attaches to the request
+                # carrying ``tools``, not to the thinking toggle of the
+                # current request, so this consults neither: the agent loop
+                # always sends tools, and the calls that do not (the plan
+                # proposal, compaction) have the key ignored, so one rule
+                # covers both regimes.
+                #
+                # A documented 400 that could not be reproduced against
+                # either available model is recorded in
+                # ``docs/plans/model-selection.md``; the echo stays because
+                # a redundant key is inert while an omitted one is a
+                # documented failure.
+                #
+                # The dialect test is the same ``deepseek-`` family test
+                # :meth:`_parse_params` applies to the token-budget key.
+                # Another endpoint with its own dialect would extend it
+                # here.  Self-scoping in the ordinary case: only a dialect
+                # that emits reasoning_content ever produces a block to
+                # replay, and the plain dict rides through the OpenAI SDK
                 # unvalidated.
                 reasoning = msg.reasoning
-                if reasoning and reasoning_effort != "none":
+                if reasoning:
                     if model.lower().startswith("deepseek-"):
                         openai_msg["reasoning_content"] = reasoning
                     else:
