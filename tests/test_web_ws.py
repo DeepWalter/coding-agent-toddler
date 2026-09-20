@@ -1638,3 +1638,83 @@ class TestReasoningTurn:
             b.type == "tool_use" and b.tool_id == "call_read"
             for m in assistants for b in m.blocks
         )
+
+
+# ============================================================================
+# Model selection commands
+# ============================================================================
+
+
+class TestModelSelectionCommands:
+    """/model and /effort over the browser.
+
+    The input bar sends any slash command, so both arrive here for free —
+    what they need is classification as session mutations, which is what
+    makes them busy-gated and gives them a session_info broadcast.
+    """
+
+    def test_model_shows_the_current_selection(self, tmp_path):
+        llm = make_mock_llm()
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "turn", "input": "/model"})
+            notice = _wait_for(ws, "notice")
+            assert "**Model:** test-model" in notice["message"]
+            assert "**Slots:**" in notice["message"]
+            assert llm.call_count == 0
+
+    def test_model_switch_broadcasts_session_info(self, tmp_path):
+        llm = make_mock_llm()
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "turn", "input": "/model flash"})
+            # A session_info frame (header update), not a hello replay.
+            frame = ws.receive_json()
+            assert frame["type"] == "session_info"
+            assert frame["session"]["model"] == "deepseek-flash"
+            notice = _wait_for(ws, "notice")
+            assert "**Model:** deepseek-flash" in notice["message"]
+            assert client.app.state.web.session_mgr.model == "deepseek-flash"
+
+    def test_unknown_slot_is_a_notice_not_a_switch(self, tmp_path):
+        llm = make_mock_llm()
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "turn", "input": "/model gpt-4o"})
+            notice = _wait_for(ws, "notice")
+            assert "unknown model slot" in notice["message"]
+            assert client.app.state.web.session_mgr.model == "test-model"
+
+    def test_effort_switch_broadcasts_session_info(self, tmp_path):
+        llm = make_mock_llm()
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "turn", "input": "/effort low"})
+            frame = ws.receive_json()
+            assert frame["type"] == "session_info"
+            notice = _wait_for(ws, "notice")
+            assert "**Effort:** low" in notice["message"]
+            assert "**Output budget:** 32,768" in notice["message"]
+            assert client.app.state.web.session_mgr.effort == "low"
+
+    def test_model_switch_while_busy_rejected(self, tmp_path):
+        llm = make_mock_llm(pause_on_write(str(tmp_path / "out.txt")))
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "turn", "input": "write"})
+            _wait_for(ws, "agent_paused")
+
+            ws.send_json({"cmd": "turn", "input": "/model flash"})
+            error = ws.receive_json()
+            assert error == {
+                "type": "error",
+                "code": "busy",
+                "message": "A turn is already running.",
+            }
+            ws.send_json({"cmd": "cancel"})
+            _wait_for(ws, "turn_cancelled")

@@ -6,6 +6,8 @@ Phase 10: Structured slash-command handling extracted from the inline
 Commands:
     ``/plan``                    — Flag the next message for plan mode.
     ``/mode [plan|manual|auto]`` — Show or switch workflow and gating mode.
+    ``/model [slot]``            — Show or switch the model slot.
+    ``/effort [tier]``           — Show or switch the thinking-effort tier.
     ``/clear [title]``           — Archive conversation and start fresh.
     ``/compact``                 — Manually compact conversation history.
     ``/resume <conversation_id>``— Resume an archived conversation.
@@ -26,6 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from toddler.config import defaults
 from toddler.tools.base import PermissionMode
 
 if TYPE_CHECKING:
@@ -332,6 +335,98 @@ class SlashCommandDispatcher:
         )
 
     def _clear_plan_pending(self) -> None:
+        """Clear any pending plan flag so the next turn runs in execute mode.
+
+        The complexity heuristic may still trigger plan mode for complex
+        requests — this just cancels an explicit ``/plan``.
+        """
+        self._session_mgr.state_machine.clear_plan_pending()
+
+    async def _cmd_model(self, args: str) -> CommandResult:
+        """``/model [slot]`` — show or switch the model slot.
+
+        Without arguments, reports the model the conversation runs with,
+        the window it is accounted for, and the output budget that
+        follows.  A slot name switches, and the change is persisted on the
+        conversation, so it survives a reload.
+        """
+        slot = args.strip().lower()
+        if not slot:
+            return CommandResult(
+                continue_repl=True,
+                message=self._format_model_status(),
+            )
+
+        try:
+            self._session_mgr.set_model(slot)
+        except ValueError as exc:
+            return CommandResult(continue_repl=True, message=str(exc))
+
+        return CommandResult(
+            continue_repl=True,
+            changed=True,
+            message=self._format_model_status(),
+        )
+
+    async def _cmd_effort(self, args: str) -> CommandResult:
+        """``/effort [tier]`` — show or switch the thinking-effort tier.
+
+        The tier sets the output budget — thinking is paid for out of the
+        same allowance as the answer — so the report shows both.
+        """
+        tier = args.strip().lower()
+        if not tier:
+            return CommandResult(
+                continue_repl=True,
+                message=self._format_effort_status(),
+            )
+
+        if tier not in defaults.REASONING_EFFORT_TIERS:
+            return CommandResult(
+                continue_repl=True,
+                message=(
+                    f"Unknown effort tier '{tier}'.  Available: "
+                    f"{', '.join(defaults.REASONING_EFFORT_TIERS)}."
+                ),
+            )
+
+        self._session_mgr.set_effort(tier)
+        return CommandResult(
+            continue_repl=True,
+            changed=True,
+            message=self._format_effort_status(),
+        )
+
+    def _format_model_status(self) -> str:
+        """Build the model summary ``/model`` reports.
+
+        Every slot whose value is the live spec is emphasized: the
+        conversation stores the *spec*, not the slot it came from, so two
+        slots that ship the same model are genuinely indistinguishable
+        here.
+        """
+        config = self._session_mgr.selection
+        slots = "  ·  ".join(
+            f"**{name} → {spec}**" if spec == config.spec else f"{name} → {spec}"
+            for name, spec in self._session_mgr.model_slots.items()
+        )
+        return (
+            f"**Model:** {config.spec}  •  "
+            f"**Window:** {config.max_context_tokens:,}  •  "
+            f"**Output budget:** {config.max_completion_tokens:,}\n\n"
+            f"**Slots:** {slots}"
+        )
+
+    def _format_effort_status(self) -> str:
+        """Build the one-line effort summary ``/effort`` reports."""
+        config = self._session_mgr.selection
+        return (
+            f"**Effort:** {config.reasoning_effort or 'endpoint default'}"
+            f"  •  **Output budget:** {config.max_completion_tokens:,}\n\n"
+            f"**Tiers:** {', '.join(defaults.REASONING_EFFORT_TIERS)}"
+        )
+
+    def _format_mode_status(self) -> str:
         """Clear any pending plan flag so the next turn runs in execute mode.
 
         The complexity heuristic may still trigger plan mode for complex
@@ -668,6 +763,8 @@ _COMMAND_TABLE: dict[str, _Handler] = {
     "/view": SlashCommandDispatcher._cmd_view,
     "/plan": SlashCommandDispatcher._cmd_plan,
     "/mode": SlashCommandDispatcher._cmd_mode,
+    "/model": SlashCommandDispatcher._cmd_model,
+    "/effort": SlashCommandDispatcher._cmd_effort,
     "/resume": SlashCommandDispatcher._cmd_resume,
     "/conversations": SlashCommandDispatcher._cmd_conversations,
     "/rollback": SlashCommandDispatcher._cmd_rollback,
@@ -687,6 +784,8 @@ HELP_TEXT = """\
 |---------|-------------|
 | `/plan` | Flag the next message for plan mode (research → propose → execute) |
 | `/mode [plan / manual / auto]` | Show or switch workflow mode and permission gating |
+| `/model [default / pro / flash]` | Show or switch the model slot |
+| `/effort [none … ultra]` | Show or switch the thinking-effort tier |
 | `/view <N>` | View full output from turn N in a pager |
 | `/clear [title]` | Archive current conversation and start a fresh one |
 | `/compact` | Compact conversation history into a summary to free context space |

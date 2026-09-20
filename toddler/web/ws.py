@@ -130,10 +130,10 @@ _CONVERSATION_CHANGING_SLASH = {
 }
 
 # Slash commands that mutate session metadata but keep the transcript —
-# workflow / gating changes.  Also busy-gated, but they broadcast a
-# lightweight session_info frame (header labels only) instead of a
-# hello replay so the console scroll-back survives.
-_SESSION_MUTATING_SLASH = {"/mode", "/plan"}
+# workflow / gating changes and the model selection.  Also busy-gated, but
+# they broadcast a lightweight session_info frame (header labels only)
+# instead of a hello replay so the console scroll-back survives.
+_SESSION_MUTATING_SLASH = {"/mode", "/plan", "/model", "/effort"}
 
 # Slash commands that make no sense in the browser — they would quit the
 # server or open a pager.  Answered with a notice instead.

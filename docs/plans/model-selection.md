@@ -1,8 +1,10 @@
 # Model Selection & the Turn Pin
 
-> **Status.** The pin and the provider interface flip (commits 1–2 below) are
-> written and green in the working tree. The slots, the `[1m]` notation, the
-> effort budgets, and the switching commands are not implemented yet.
+> **Status.** Implemented, in the commits listed below: the pin and the
+> provider interface flip first, then the slots, the `[1m]` notation, the
+> effort budgets, the conversation's own selection, and the `/model` and
+> `/effort` commands. The one piece still outstanding is the echo window rule
+> (see `_messages_to_openai` below).
 
 ## Motivation
 

@@ -220,6 +220,11 @@ class SessionManager:
     # ==================================================================
 
     @property
+    def selection(self) -> TurnConfig:
+        """The model + effort this conversation runs with."""
+        return self._current_selection()
+
+    @property
     def model(self) -> str:
         """The model spec this conversation runs with, for display."""
         return self._current_selection().spec
