@@ -7,6 +7,8 @@ resolves to, what a spec means, and what a turn's config derives from the two.
 
 from __future__ import annotations
 
+import logging
+import sys
 from dataclasses import replace
 
 import pytest
@@ -23,6 +25,7 @@ from toddler.config.models import (
     wire_model,
 )
 from toddler.config.settings import Settings
+from toddler.main import is_supported_model, main, require_supported_models
 from toddler.session.database import SQLiteDatabase
 from toddler.session.manager import SessionManager
 from toddler.session.storage import StorageManager
@@ -360,3 +363,86 @@ class TestSelection:
         )
         # The selection is the new one — it is what the *next* turn reads.
         assert mgr.model == "pro-model"
+
+
+# ============================================================================
+# Startup — what this build admits to serving
+# ============================================================================
+
+
+class TestServedFamilies:
+    """Only DeepSeek-family models get past startup.
+
+    The wire shape has an OpenAI branch, but the reasoning echo-back is
+    DeepSeek's requirement and knows no other dialect: a foreign model would
+    run until the first turn whose history carries reasoning, then die
+    mid-turn with a half-written conversation behind it.
+    """
+
+    def test_deepseek_slots_pass(self):
+        require_supported_models({
+            "default": "deepseek-v4-flash",
+            "pro": "deepseek-v4-pro[1m]",
+            "flash": "deepseek-flash",
+        })
+
+    def test_the_notation_does_not_hide_the_family(self):
+        assert is_supported_model("deepseek-v4-pro[1m]") is True
+        assert is_supported_model("gpt-5[1m]") is False
+
+    def test_a_foreign_slot_is_refused(self):
+        with pytest.raises(ValueError, match="gpt-5"):
+            require_supported_models({"pro": "gpt-5"})
+
+    def test_every_offending_slot_is_named(self):
+        """The message has to say which slot to fix, not merely that one is
+        wrong — all three are checked, since /model can reach any of them."""
+        with pytest.raises(ValueError) as excinfo:
+            require_supported_models({
+                "default": "gpt-5",
+                "pro": "claude-sonnet-5",
+                "flash": "deepseek-flash",
+            })
+
+        message = str(excinfo.value)
+        assert "default=gpt-5" in message
+        assert "pro=claude-sonnet-5" in message
+        assert "flash" not in message
+
+
+class TestStartup:
+    """The refusal happens on the way in, not on the request that needs it."""
+
+    @pytest.fixture
+    def quiet_logging(self, monkeypatch):
+        """Keep ``main()`` from installing handlers on the root logger —
+        they would outlive this process's capture and follow every later
+        test."""
+        monkeypatch.setattr("toddler.main.setup_logging", lambda **_: None)
+
+    @pytest.mark.parametrize("argv", [["tod", "hi"], ["tod", "serve"]])
+    def test_a_foreign_slot_stops_startup(
+        self, monkeypatch, tmp_path, caplog, quiet_logging, argv,
+    ):
+        """Both entry points — the check sits ahead of the dispatch, so the
+        serve branch cannot start a server around it."""
+        for var in _MODEL_ENV_VARS:
+            monkeypatch.delenv(var, raising=False)
+        monkeypatch.setenv("TODDLER_SESSION_DIR", str(tmp_path))
+        monkeypatch.setenv("TODDLER_PRO_MODEL", "gpt-5")
+        monkeypatch.setattr(sys, "argv", argv)
+        caplog.set_level(logging.ERROR)
+
+        # If the gate ever moves below the dispatch, fail loudly rather than
+        # block the suite on a real server or a real API call.
+        import toddler.web.server as server
+
+        monkeypatch.setattr(
+            server, "run_server", lambda *a, **k: pytest.fail("serve started"),
+        )
+
+        with pytest.raises(SystemExit) as excinfo:
+            main()
+
+        assert excinfo.value.code == 2
+        assert "pro=gpt-5" in caplog.text

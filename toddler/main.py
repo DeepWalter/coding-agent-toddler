@@ -12,10 +12,13 @@ Usage::
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 from toddler.cli.app import CLIApp
+from toddler.config.models import wire_model
 from toddler.config.settings import Settings
 from toddler.llm import OpenAICompatibleProvider
 from toddler.session import (
@@ -29,6 +32,58 @@ from toddler.utils import (
     build_serve_argparser,
     setup_logging,
 )
+
+logger = logging.getLogger(__name__)
+
+# The model families this build can serve.  The provider has a branch for
+# OpenAI-compatible endpoints — it picks a different token-budget key — but
+# the reasoning echo-back is DeepSeek's requirement and knows no other
+# dialect: a foreign model runs happily until the first turn whose history
+# carries reasoning, then dies mid-turn, with the conversation already
+# written to disk.  ``_parse_params`` and the echo branch apply the same
+# family test inline; the three move together.
+_SUPPORTED_MODEL_PREFIXES = ("deepseek-",)
+
+
+def is_supported_model(spec: str) -> bool:
+    """Whether *spec* names a model this build can serve.
+
+    The ``[1m]`` notation is stripped first: ``"deepseek-v4-pro[1m]"`` is a
+    DeepSeek model carrying a local window suffix, not another family.
+    """
+    return wire_model(spec).lower().startswith(_SUPPORTED_MODEL_PREFIXES)
+
+
+def require_supported_models(slots: Mapping[str, str]) -> None:
+    """Fail when a model slot names something this build cannot serve.
+
+    Every slot is checked, not just the selected one: ``/model`` can switch
+    to any of them, and the failure a foreign model produces is not at
+    startup but mid-turn — the reasoning echo-back knows no dialect but
+    DeepSeek's, so a tool round dies once the history carries reasoning,
+    after the conversation has been written to disk.
+
+    Raises
+    ------
+    ValueError
+        Naming each offending slot and the model it holds.
+    """
+    unsupported = {
+        name: spec for name, spec in slots.items()
+        if not is_supported_model(spec)
+    }
+    if not unsupported:
+        return
+
+    listed = ", ".join(
+        f"{name}={spec}" for name, spec in sorted(unsupported.items())
+    )
+    raise ValueError(
+        f"unsupported model slot(s): {listed}.  This build serves only "
+        f"DeepSeek-family models — the reasoning echo-back has no dialect "
+        f"for anything else, so a tool round would fail once the "
+        f"conversation carried reasoning."
+    )
 
 
 def main() -> None:
@@ -49,6 +104,15 @@ def main() -> None:
     settings = Settings.from_cli(cli_ns)
 
     setup_logging(verbose=args.verbose, log_dir=settings.session_dir)
+
+    # --- Refuse a model this build cannot serve, before anything starts ---
+    # Ahead of the serve branch, so both entry points fail identically, and
+    # ahead of any DB or LLM wiring, so nothing is half-built when it does.
+    try:
+        require_supported_models(settings.model_slots)
+    except ValueError as exc:
+        logger.error("%s", exc)
+        raise SystemExit(2) from exc
 
     # --- Web server (owns its own DB/LLM wiring via the app factory) ---
     if args.command == "serve":

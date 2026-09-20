@@ -12,9 +12,9 @@ Works with any OpenAI-compatible endpoint:
 Note on ``max_tokens`` and thinking mode — DeepSeek v4 runs in thinking
 mode by default; its reasoning tokens (``reasoning_content``) consume the
 ``max_tokens`` budget.  A thinking-heavy run can exhaust it, ending with
-``finish_reason="length"`` and empty ``content`` — raise ``TODDLER_MAX_TOKENS``
-(default 8192).  ``TokenUsage.reasoning_tokens`` shows the reasoning/output
-split.
+``finish_reason="length"`` and empty ``content`` — raise the effort level,
+which is what sets the budget.  ``TokenUsage.reasoning_tokens`` shows the
+reasoning/output split.
 """
 
 from __future__ import annotations
