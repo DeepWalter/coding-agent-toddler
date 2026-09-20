@@ -148,9 +148,10 @@ changed from that draft is listed at the end.
   the branch. A dialect we cannot echo to is *not* handled by dropping the key:
   seeing another model's reasoning is a mismatch (the endpoint would reject the
   key or absorb reasoning it never wrote), so the branch logs the model and
-  raises `NotImplementedError`. That is affordable precisely because every slot
-  ships `deepseek-` family; a non-DeepSeek slot is a change to the provider, not
-  just to the environment — see "What the echo actually requires" below.
+  raises `NotImplementedError`. That is affordable precisely because a
+  non-DeepSeek slot cannot start: `main` refuses one on the way in (see "What
+  the echo actually requires"), so the raise is a tripwire for a state that
+  should be unreachable rather than a routine path.
 
 ## Implementation
 
@@ -252,7 +253,9 @@ The notation's single owner plus the config itself:
   a `session_info_frame` — which is also why the browser input bar gets them for
   free.
 - `main.py`: an explicitly passed `--model` / `--reasoning-effort` is applied
-  after `resolve()`, so the flag keeps its meaning on resume.
+  after `resolve()`, so the flag keeps its meaning on resume; and
+  `require_supported_models` refuses an unservable slot before either entry
+  point starts (see "What the echo actually requires").
 
 ### What the echo actually requires
 
@@ -274,6 +277,17 @@ no consultation of `reasoning_effort` — a request running with thinking off st
 owes the history's reasoning back. The agent loop always sends tools; the calls
 that do not (the plan proposal, compaction) have the key ignored, so one rule
 covers both regimes.
+
+**A slot naming anything else is refused at startup.** `require_supported_models`
+lives in `toddler/main.py` and is called ahead of the serve branch, so both entry
+points fail the same way, and ahead of any DB or LLM wiring, so nothing is
+half-built when they do. All three slots are checked, not just the selected one —
+`/model` can reach any of them. What that prevents is not the echo itself but
+where its absence lands: mid-turn, once the history carries reasoning, with the
+conversation already written to disk. The predicate (a `deepseek-` prefix on the
+notation-stripped spec) sits beside the gate; the provider applies the same test
+inline in `_parse_params` and at the echo branch, and the three are meant to move
+together.
 
 An earlier draft of this record specified the opposite — echo only the in-flight
 round, `i > last_user`, on the theory that completed-round reasoning is ignored.

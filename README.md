@@ -28,6 +28,10 @@ three ship as `deepseek-flash`).  A slot value may carry a `[1m]` suffix
 model is accounted for at 200K.  The suffix is Toddler's own notation and is
 stripped from the request.
 
+Every slot must name a `deepseek-` family model.  The reasoning echo-back is
+DeepSeek-specific, so a foreign model is refused at startup rather than left to
+fail mid-turn.
+
 Thinking effort is selected with `--reasoning-effort`, or switched with
 `/effort` (`TODDLER_EFFORT_LEVEL`, default `high`), and it sets the output
 budget: 4K with thinking off, 64K at `max` or above, 32K otherwise.
