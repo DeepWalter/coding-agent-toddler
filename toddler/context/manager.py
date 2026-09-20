@@ -84,19 +84,27 @@ class ContextManager:
         settings: Settings,
         llm_provider: BaseLLMProvider,
         *,
+        model: str,
         project_root: Path | None = None,
         memory_dir: Path | None = None,
     ) -> None:
-        # Build sub-components internally from raw ingredients.
+        # Build sub-components internally from raw ingredients.  The model
+        # comes from the caller (the session owns the selection) — it keys
+        # the tokenizer and the window, so it cannot be sniffed off the
+        # provider, which no longer has one.
         self._prompt_builder = SystemPromptBuilder(
             project_root=project_root,
             memory_dir=memory_dir,
         )
+        self._model = model
         self._window_mgr = ContextWindowManager(
-            llm_provider.model,
+            model,
             max_context_length=settings.max_context_length,
         )
         self._compactor = ConversationCompactor(llm_provider)
+
+        # Kept so a re-key keeps the configured window size.
+        self._settings = settings
 
         # Message buffer state — reset on each load().
         self._messages: list[Message] = []
@@ -172,6 +180,16 @@ class ContextManager:
     def usage_ratio(self) -> float:
         """Current context usage as a fraction of the effective limit (0.0–1.0+)."""  # noqa: E501
         return self._window_mgr.usage_ratio(self._messages)
+
+    @property
+    def model(self) -> str:
+        """The model the tokenizer and context window are keyed to.
+
+        The session layer compares this against a conversation's stored
+        token baseline: a count is only reusable when it was produced by
+        the encoding this key names.
+        """
+        return self._model
 
     def set_token_baseline(
         self, *, total_tokens: int, message_count: int,
@@ -282,7 +300,9 @@ class ContextManager:
         path, so the identity check below reliably detects a no-op.
         """
         try:
-            compacted = await self._compactor.compact(self._messages)
+            compacted = await self._compactor.compact(
+                self._messages, model=self._model,
+            )
 
             # Nothing was summarised (short conversation or LLM failure /
             # empty output) — do not record an empty compaction or swap

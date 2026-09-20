@@ -32,6 +32,7 @@ class BaseLLMProvider(ABC):
         messages: list[Message],
         tools: list[dict],
         *,
+        model: str,
         max_completion_tokens: int = 4096,
         reasoning_effort: str | None = None,
         response_format: dict | None = None,
@@ -57,6 +58,11 @@ class BaseLLMProvider(ABC):
             :meth:`BaseTool.to_api_schema()
             <toddler.tools.base.BaseTool.to_api_schema>`.  An empty list
             means no tools are available for this call.
+        model:
+            The model to serve this request.  Required: the provider has no
+            identity of its own, so a missing model is a programming error
+            rather than a silent fall back to a configured default.  One
+            agent turn passes the same model on every call it makes.
         max_completion_tokens:
             Maximum tokens the model is allowed to produce in its response.
             Named for the budget itself, not the wire field — providers pick
@@ -81,21 +87,11 @@ class BaseLLMProvider(ABC):
         ...
 
     # ------------------------------------------------------------------
-    # Model identity
-    # ------------------------------------------------------------------
-
-    @property
-    @abstractmethod
-    def model(self) -> str:
-        """The model name string (e.g. ``"deepseek-v4-pro"``)."""
-        ...
-
-    # ------------------------------------------------------------------
     # Compaction helper
     # ------------------------------------------------------------------
 
     @abstractmethod
-    async def generate_compact(self, prompt: str) -> str:
+    async def generate_compact(self, prompt: str, *, model: str) -> str:
         """Generate a compaction summary — non-streaming, single-turn.
 
         Parameters
@@ -104,6 +100,10 @@ class BaseLLMProvider(ABC):
             A pre-formatted prompt that asks the model to summarize
             conversation history.  The provider wraps it as a user
             message and returns the model's text response.
+        model:
+            The model to summarize with — the conversation's own model,
+            so the summary is counted by the same encoding that produced
+            its messages.
 
         Returns
         -------

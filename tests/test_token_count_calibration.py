@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import pytest
 
+from tests.mocks import TEST_TURN_CONFIG
 from toddler.context.manager import ContextManager
 from toddler.context.window import ContextWindowManager
 from toddler.llm import LLMResponse, Message, MessageBlock, TokenUsage
@@ -152,18 +153,16 @@ class TestContextManagerRecordUsage:
     def ctx(self) -> ContextManager:
         from toddler.config.settings import Settings
         class _CtxMockProvider(BaseLLMProvider):
-            @property
-            def model(self) -> str:
-                return "gpt-4"
             async def generate(self, messages, tools, *,
+                               model: str, reasoning_effort=None,
                                max_completion_tokens=4096,
                                response_format=None,
                                temperature=0.0, stream=True):
                 raise NotImplementedError
-            async def generate_compact(self, prompt: str) -> str:
+            async def generate_compact(self, prompt: str, *, model: str) -> str:
                 raise NotImplementedError
 
-        return ContextManager(Settings(), _CtxMockProvider())
+        return ContextManager(Settings(), _CtxMockProvider(), model="gpt-4")
 
     def test_record_usage_sets_baseline(self, ctx):
         """After record_usage, the window manager has a baseline."""
@@ -258,11 +257,8 @@ class TestAgentLoopRecordUsageIntegration:
 
         # Mock LLM that returns a single text response.
         class SingleResponseProvider(BaseLLMProvider):
-            @property
-            def model(self) -> str:
-                return "gpt-4"
-
             async def generate(self, messages, tools, *,
+                               model: str, reasoning_effort=None,
                                max_completion_tokens=4096,
                                response_format=None,
                                temperature=0.0, stream=True):
@@ -274,12 +270,12 @@ class TestAgentLoopRecordUsageIntegration:
                     usage=TokenUsage(input_tokens=100, output_tokens=10),
                 )
 
-            async def generate_compact(self, prompt: str) -> str:
+            async def generate_compact(self, prompt: str, *, model: str) -> str:
                 raise NotImplementedError
 
         settings = Settings()
         provider = SingleResponseProvider()
-        ctx = ContextManager(settings, provider)
+        ctx = ContextManager(settings, provider, model="gpt-4")
         loop = AgentLoop(
             provider, ToolRegistry(), ToolExecutor(ToolRegistry()),
             settings, context=ctx,
@@ -288,7 +284,7 @@ class TestAgentLoopRecordUsageIntegration:
 
         # Drain the run.
         events = []
-        async for event in loop.run("Hi!", max_iterations=1):
+        async for event in loop.run("Hi!", config=TEST_TURN_CONFIG, max_iterations=1):
             events.append(event)
 
         # The context should have a baseline set.
@@ -306,11 +302,7 @@ class TestAgentLoopRecordUsageIntegration:
 
         # Simulates: first call tool_use → second call end_turn.
         class MultiTurnProvider(BaseLLMProvider):
-            @property
-            def model(self) -> str:
-                return "gpt-4"
-
-            async def generate_compact(self, prompt: str) -> str:
+            async def generate_compact(self, prompt: str, *, model: str) -> str:
                 raise NotImplementedError
 
             def __init__(self):
@@ -318,6 +310,7 @@ class TestAgentLoopRecordUsageIntegration:
                 self._call = 0
 
             async def generate(self, messages, tools, *,
+                               model: str, reasoning_effort=None,
                                max_completion_tokens=4096,
                                response_format=None,
                                temperature=0.0, stream=True):
@@ -366,14 +359,14 @@ class TestAgentLoopRecordUsageIntegration:
 
         settings = Settings()
         provider = MultiTurnProvider()
-        ctx = ContextManager(settings, provider)
+        ctx = ContextManager(settings, provider, model="gpt-4")
         loop = AgentLoop(
             provider, registry, ToolExecutor(registry), settings, context=ctx,
             permission_manager=PermissionManager(),
         )
 
         events = []
-        async for event in loop.run("Echo test", max_iterations=5):
+        async for event in loop.run("Echo test", config=TEST_TURN_CONFIG, max_iterations=5):
             events.append(event)
 
         # After the second LLM call, baseline should be the second API's

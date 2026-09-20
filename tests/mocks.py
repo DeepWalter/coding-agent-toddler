@@ -23,8 +23,11 @@ from toddler.llm import (
     TokenUsage,
 )
 from toddler.llm.base import BaseLLMProvider
+from toddler.session.manager import TurnConfig
 
 __all__ = [
+    "TEST_MODEL",
+    "TEST_TURN_CONFIG",
     "MockLLMProvider",
     "SlowStreamLLM",
     "make_mock_llm",
@@ -34,6 +37,11 @@ __all__ = [
     "text_response",
     "tool_use_response",
 ]
+
+# The model a test turn runs with.  Distinct from any Settings default so a
+# test that accidentally reads settings instead of the turn config fails.
+TEST_MODEL = "test-model"
+TEST_TURN_CONFIG = TurnConfig(model=TEST_MODEL)
 
 # Reasoning fragments per chunk in MockLLMProvider._stream — small enough
 # that a short canned reasoning string still arrives as several deltas.
@@ -52,18 +60,24 @@ class MockLLMProvider(BaseLLMProvider):
         self.responses: list[LLMResponse] = list(responses or [])
         self.call_count: int = 0
         self.messages_history: list[list[Message]] = []
+        # ``(model, reasoning_effort)`` per call, in order — lets a test
+        # assert that one turn never changes model underneath itself.
+        self.call_configs: list[tuple[str, str | None]] = []
 
     async def generate(
         self,
         messages: list[Message],
         tools: list[dict],
         *,
+        model: str,
+        reasoning_effort: str | None = None,
         max_completion_tokens: int = 4096,
         response_format: dict | None = None,
         temperature: float = 0.0,
         stream: bool = True,
     ) -> AsyncIterator[StreamEvent] | LLMResponse:
         self.messages_history.append(messages)
+        self.call_configs.append((model, reasoning_effort))
         resp = self._next_response()
         if stream:
             return self._stream(resp)
@@ -116,11 +130,7 @@ class MockLLMProvider(BaseLLMProvider):
             data={"stop_reason": resp.stop_reason, "usage": resp.usage},
         )
 
-    @property
-    def model(self) -> str:
-        return "test-model"
-
-    async def generate_compact(self, prompt: str) -> str:
+    async def generate_compact(self, prompt: str, *, model: str) -> str:
         return "[compacted]"
 
 

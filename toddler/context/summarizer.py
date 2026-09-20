@@ -88,7 +88,9 @@ class ConversationCompactor:
     # Public API
     # ------------------------------------------------------------------
 
-    async def compact(self, messages: list[Message]) -> list[Message]:
+    async def compact(
+        self, messages: list[Message], *, model: str,
+    ) -> list[Message]:
         """Summarise old turns and return a compacted message list.
 
         The returned list has the following structure:
@@ -104,6 +106,9 @@ class ConversationCompactor:
         ----------
         messages:
             The full conversation history.
+        model:
+            The model to summarise with — the conversation's own, so the
+            summary is counted by the encoding that will hold it.
 
         Returns
         -------
@@ -151,7 +156,7 @@ class ConversationCompactor:
 
         # Call the LLM for summarisation.
         try:
-            summary = await self._llm.generate_compact(prompt)
+            summary = await self._llm.generate_compact(prompt, model=model)
         except Exception:
             logger.exception("Compaction LLM call failed — "
                              "keeping original messages.")
@@ -175,7 +180,7 @@ class ConversationCompactor:
         return compacted
 
     async def compact_with_checkpoint(
-        self, messages: list[Message]
+        self, messages: list[Message], *, model: str,
     ) -> tuple[list[Message], str | None]:
         """Like :meth:`compact` but also returns a checkpoint summary.
 
@@ -188,7 +193,7 @@ class ConversationCompactor:
             The compacted message list and a short checkpoint summary
             (``None`` when no compaction was needed).
         """
-        compacted = await self.compact(messages)
+        compacted = await self.compact(messages, model=model)
 
         # If no change, no checkpoint summary.
         if compacted is messages:

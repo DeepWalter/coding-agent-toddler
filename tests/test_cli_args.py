@@ -7,18 +7,16 @@ neither entry point owns stay out of the other's parser — re-inlining a
 duplicate in one of them is how the two would drift apart again.
 
 The last group follows ``--reasoning-effort`` past the parser: argv →
-:class:`Settings` → the request the provider builds.
+:class:`Settings`, which is where the provider's involvement ends — the
+effort reaches a request through the turn config (see
+``tests/test_model_selection.py``).
 """
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 
 from toddler.config.settings import Settings
-from toddler.llm import Message
-from toddler.llm.provider import OpenAICompatibleProvider
 from toddler.utils.cli import build_argparser, build_serve_argparser
 
 # Defined once in _add_common_args, added to both parsers.  The paired
@@ -103,37 +101,15 @@ class TestParserOwnership:
 # ============================================================================
 
 
-class _EmptyStream:
-    """Async iterable that ends at once — these tests assert on the
-    request that was built, not on the reply."""
-
-    def __aiter__(self):
-        return self
-
-    async def __anext__(self):
-        raise StopAsyncIteration
-
-
-def _install_stub(monkeypatch) -> list[dict]:
-    """Swap the SDK client for one recording ``create`` kwargs."""
-    calls: list[dict] = []
-
-    class _StubCompletions:
-        async def create(self, **kwargs):
-            calls.append(kwargs)
-            return _EmptyStream()
-
-    class _StubClient:
-        def __init__(
-            self, base_url=None, api_key=None, http_client=None,
-        ) -> None:
-            self.chat = SimpleNamespace(completions=_StubCompletions())
-
-    monkeypatch.setattr("toddler.llm.provider.AsyncOpenAI", _StubClient)
-    return calls
-
-
 class TestReasoningEffortFlag:
+    """The flag's chain to the request.
+
+    It stops at Settings: the provider has no effort of its own, so the
+    value travels Settings → the turn's config → the request.  The last
+    hop is asserted in ``tests/test_model_selection.py``, which drives a
+    real turn; the tier-to-wire mapping is pinned in
+    ``tests/test_provider_params.py``.
+    """
 
     def test_flag_reaches_settings(self):
         args = build_argparser().parse_args(
@@ -156,19 +132,16 @@ class TestReasoningEffortFlag:
                 ["--reasoning-effort", "hgih", "do the thing"]
             )
 
-    @pytest.mark.asyncio
-    async def test_flag_flows_to_the_request(self, monkeypatch):
-        calls = _install_stub(monkeypatch)
+    def test_flag_survives_the_cli_overlay_with_the_model(self):
+        """Both flags ride one ``from_cli`` merge — the turn config reads
+        them together, so a model override must not drop the effort."""
         args = build_argparser().parse_args([
             "--reasoning-effort", "ultra",
             "--model", "deepseek-v4-pro",
             "do the thing",
         ])
-        provider = OpenAICompatibleProvider(Settings.from_cli(args))
 
-        stream = await provider.generate(
-            [Message.user("hi")], [], stream=True,
+        settings = Settings.from_cli(args)
+        assert (settings.model, settings.reasoning_effort) == (
+            "deepseek-v4-pro", "ultra",
         )
-        [evt async for evt in stream]
-
-        assert calls[0]["reasoning_effort"] == "max"

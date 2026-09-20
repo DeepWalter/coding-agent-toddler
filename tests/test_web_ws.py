@@ -36,8 +36,13 @@ from toddler.web.app import create_app
 
 
 def _app(tmp_path, llm):
-    """An app with a tmp session dir, tmp repo root, and the mock LLM."""
-    settings = Settings(session_dir=tmp_path)
+    """An app with a tmp session dir, tmp repo root, and the mock LLM.
+
+    The model is pinned here: it reaches the UI through the session's
+    turn config, so an ambient ``DEEPSEEK_MODEL`` would otherwise decide
+    what the frames assert against.
+    """
+    settings = Settings(session_dir=tmp_path, model="test-model")
     return create_app(settings, repo_root=tmp_path, llm=llm)
 
 

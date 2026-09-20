@@ -251,10 +251,12 @@ class TestGenerateWire:
     @pytest.mark.asyncio
     async def test_streaming_call_carries_every_parameter(self, monkeypatch):
         completions = _install_stub(monkeypatch, chunks=[])
-        provider = _make_provider()
+        # A model in Settings must not reach the wire: the provider has no
+        # identity, so only the call's own model can.
+        provider = _make_provider(model="settings-model")
 
         events = await _drain(await provider.generate(
-            [Message.user("hi")], [], stream=True,
+            [Message.user("hi")], [], model=_DEEPSEEK, stream=True,
         ))
 
         # A duplicated ``model`` kwarg would be swallowed into an error
@@ -274,53 +276,43 @@ class TestGenerateWire:
         completions = _install_stub(
             monkeypatch, response=_text_response("done"),
         )
-        provider = _make_provider(_OPENAI)
+        provider = _make_provider()
 
         result = await provider.generate(
-            [Message.user("hi")], [], stream=False,
+            [Message.user("hi")], [], model=_OPENAI, stream=False,
             max_completion_tokens=512,
         )
 
         assert result.messages[0].content == "done"
         call = completions.calls[0]
+        assert call["model"] == _OPENAI
         assert call["stream"] is False
         assert call["max_completion_tokens"] == 512
 
     @pytest.mark.asyncio
-    async def test_explicit_effort_overrides_the_settings_default(
-        self, monkeypatch
-    ):
+    async def test_effort_is_the_callers(self, monkeypatch):
+        """The call's effort reaches the wire; the settings value is inert."""
         completions = _install_stub(monkeypatch, chunks=[])
         provider = _make_provider(reasoning_effort="high")
 
         await _drain(await provider.generate(
-            [Message.user("hi")], [], stream=True, reasoning_effort="minimal",
+            [Message.user("hi")], [], model=_DEEPSEEK, stream=True,
+            reasoning_effort="minimal",
         ))
 
         assert completions.calls[0]["reasoning_effort"] == "low"
 
     @pytest.mark.asyncio
-    async def test_settings_effort_is_the_fallback(self, monkeypatch):
+    async def test_no_effort_from_the_call_omits_the_field(self, monkeypatch):
         completions = _install_stub(monkeypatch, chunks=[])
-        provider = _make_provider(reasoning_effort="medium")
-
-        assert provider.effort == "medium"
-        await _drain(await provider.generate(
-            [Message.user("hi")], [], stream=True,
-        ))
-
-        assert completions.calls[0]["reasoning_effort"] == "high"
-
-    @pytest.mark.asyncio
-    async def test_no_effort_configured_sends_no_effort(self, monkeypatch):
-        completions = _install_stub(monkeypatch, chunks=[])
-        provider = _make_provider()
+        provider = _make_provider(reasoning_effort="max")
 
         await _drain(await provider.generate(
-            [Message.user("hi")], [], stream=True,
+            [Message.user("hi")], [], model=_DEEPSEEK, stream=True,
         ))
 
-        assert provider.effort is None
+        # No fallback to the configured effort — ``None`` means "leave the
+        # endpoint's own default alone", and nothing else.
         assert "reasoning_effort" not in completions.calls[0]
 
 
@@ -342,24 +334,27 @@ class TestGenerateCompact:
         completions = _install_stub(
             monkeypatch, response=_text_response("summary"),
         )
-        provider = _make_provider(model)
+        provider = _make_provider()
 
-        assert await provider.generate_compact("summarize") == "summary"
+        assert await provider.generate_compact(
+            "summarize", model=model,
+        ) == "summary"
 
         call = completions.calls[0]
+        assert call["model"] == model
         assert call[budget_key] == 1024
         assert call["stream"] is False
         assert "reasoning_effort" not in call
         assert "response_format" not in call
 
     @pytest.mark.asyncio
-    async def test_compact_ignores_the_configured_effort(self, monkeypatch):
-        """A cheap summary call must not inherit a thinking-effort setting."""
+    async def test_compact_sends_no_effort(self, monkeypatch):
+        """A cheap summary call must not carry a thinking-effort directive."""
         completions = _install_stub(
             monkeypatch, response=_text_response("summary"),
         )
         provider = _make_provider(reasoning_effort="max")
 
-        await provider.generate_compact("summarize")
+        await provider.generate_compact("summarize", model=_DEEPSEEK)
 
         assert "reasoning_effort" not in completions.calls[0]

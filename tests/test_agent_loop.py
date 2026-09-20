@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tests.mocks import SlowStreamLLM
+from tests.mocks import TEST_TURN_CONFIG, SlowStreamLLM
 from toddler.agent.events import (
     AgentError,
     AgentFinished,
@@ -71,6 +71,8 @@ class MockLLMProvider(BaseLLMProvider):
         messages: list[Message],
         tools: list[dict],
         *,
+        model: str,
+        reasoning_effort: str | None = None,
         max_completion_tokens: int = 4096,
         response_format: dict | None = None,
         temperature: float = 0.0,
@@ -89,11 +91,7 @@ class MockLLMProvider(BaseLLMProvider):
             usage=TokenUsage(input_tokens=10, output_tokens=5),
         )
 
-    @property
-    def model(self) -> str:
-        return "test-model"
-
-    async def generate_compact(self, prompt: str) -> str:
+    async def generate_compact(self, prompt: str, *, model: str) -> str:
         return "[compacted]"
 
 
@@ -270,7 +268,9 @@ def executor(registry) -> ToolExecutor:
 def conv_ctx() -> ContextManager:
     """Bare ContextManager for tests (no backing session)."""
     from toddler.config.settings import Settings
-    ctx = ContextManager(Settings(), MockLLMProvider())
+    ctx = ContextManager(
+        Settings(), MockLLMProvider(), model=TEST_TURN_CONFIG.model,
+    )
     ctx.load([])
     return ctx
 
@@ -319,7 +319,7 @@ class TestSimpleTextResponse:
             ]
         )
         loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx, permission_manager=PermissionManager())
-        events = await _collect_events(loop.run("Hi!"))
+        events = await _collect_events(loop.run("Hi!", config=TEST_TURN_CONFIG))
 
         assert len(events) >= 2
         assert isinstance(events[0], ContentDelta)
@@ -335,7 +335,7 @@ class TestSimpleTextResponse:
             ]
         )
         loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx, permission_manager=PermissionManager())
-        events = await _collect_events(loop.run("Hi!"))
+        events = await _collect_events(loop.run("Hi!", config=TEST_TURN_CONFIG))
 
         # No ContentDelta when text is empty.
         assert not any(isinstance(e, ContentDelta) for e in events)
@@ -369,7 +369,7 @@ class TestToolCalls:
             ]
         )
         loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx, permission_manager=PermissionManager())
-        events = await _collect_events(loop.run("Echo please"))
+        events = await _collect_events(loop.run("Echo please", config=TEST_TURN_CONFIG))
 
         # Should have: ToolCallStart, ToolCallEnd, ContentDelta, AgentFinished
         starts = [e for e in events if isinstance(e, ToolCallStart)]
@@ -412,7 +412,7 @@ class TestToolCalls:
             ]
         )
         loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx, permission_manager=PermissionManager())
-        events = await _collect_events(loop.run("Double echo"))
+        events = await _collect_events(loop.run("Double echo", config=TEST_TURN_CONFIG))
 
         starts = [e for e in events if isinstance(e, ToolCallStart)]
         ends = [e for e in events if isinstance(e, ToolCallEnd)]
@@ -442,7 +442,7 @@ class TestErrorRecovery:
             ]
         )
         loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx, permission_manager=PermissionManager())
-        events = await _collect_events(loop.run("Do something"))
+        events = await _collect_events(loop.run("Do something", config=TEST_TURN_CONFIG))
 
         ends = [e for e in events if isinstance(e, ToolCallEnd)]
         assert len(ends) == 1
@@ -472,7 +472,7 @@ class TestErrorRecovery:
             ]
         )
         loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx, permission_manager=PermissionManager())
-        events = await _collect_events(loop.run("Try unknown tool"))
+        events = await _collect_events(loop.run("Try unknown tool", config=TEST_TURN_CONFIG))
 
         ends = [e for e in events if isinstance(e, ToolCallEnd)]
         assert len(ends) == 1
@@ -484,13 +484,14 @@ class TestErrorRecovery:
 
         class FailingLLM(MockLLMProvider):
             async def generate(
-                self, messages, tools, *, max_completion_tokens=4096,
-                response_format=None, temperature=0.0, stream=True,
+                self, messages, tools, *, model, reasoning_effort=None,
+                max_completion_tokens=4096, response_format=None,
+                temperature=0.0, stream=True,
             ):
                 raise RuntimeError("API connection lost")
 
         loop = AgentLoop(FailingLLM(), registry, executor, settings, context=conv_ctx, permission_manager=PermissionManager())
-        events = await _collect_events(loop.run("Hi"))
+        events = await _collect_events(loop.run("Hi", config=TEST_TURN_CONFIG))
 
         errors = [e for e in events if isinstance(e, AgentError)]
         finishes = [e for e in events if isinstance(e, AgentFinished)]
@@ -526,7 +527,7 @@ class TestPermissionGating:
         )
         loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx, permission_manager=PermissionManager())
 
-        gen = loop.run("Write this down")
+        gen = loop.run("Write this down", config=TEST_TURN_CONFIG)
         events: list = []
 
         # Manually step through to handle the async confirmation.
@@ -564,7 +565,7 @@ class TestPermissionGating:
         )
         loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx, permission_manager=PermissionManager())
 
-        gen = loop.run("Write this")
+        gen = loop.run("Write this", config=TEST_TURN_CONFIG)
         events = []
         async for event in gen:
             events.append(event)
@@ -592,7 +593,7 @@ class TestPermissionGating:
             ]
         )
         loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx, permission_manager=PermissionManager())
-        events = await _collect_events(loop.run("Echo test"))
+        events = await _collect_events(loop.run("Echo test", config=TEST_TURN_CONFIG))
 
         paused = [e for e in events if isinstance(e, AgentPaused)]
         assert len(paused) == 0  # READ auto-approves
@@ -628,7 +629,7 @@ class TestPermissionMode:
             context=conv_ctx, permission_manager=perm_mgr,
         )
 
-        gen = loop.run("Write this")
+        gen = loop.run("Write this", config=TEST_TURN_CONFIG)
         events = []
         async for event in gen:
             events.append(event)
@@ -665,7 +666,7 @@ class TestPermissionMode:
             context=conv_ctx, permission_manager=perm_mgr,
         )
 
-        gen = loop.run("Delete everything")
+        gen = loop.run("Delete everything", config=TEST_TURN_CONFIG)
         events = []
         async for event in gen:
             events.append(event)
@@ -699,7 +700,7 @@ class TestPermissionMode:
             context=conv_ctx, permission_manager=perm_mgr,
         )
 
-        gen = loop.run("Write this")
+        gen = loop.run("Write this", config=TEST_TURN_CONFIG)
         events = []
         async for event in gen:
             events.append(event)
@@ -733,7 +734,7 @@ class TestPermissionMode:
             permission_manager=perm_mgr,
         )
 
-        gen = loop.run("Write this")
+        gen = loop.run("Write this", config=TEST_TURN_CONFIG)
         events = []
         async for event in gen:
             events.append(event)
@@ -765,7 +766,7 @@ class TestStopConditions:
         llm = MockLLMProvider(responses=[tool_response] * 10)
         loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx, permission_manager=PermissionManager())
         events = await _collect_events(
-            loop.run("Loop forever", max_iterations=3)
+            loop.run("Loop forever", config=TEST_TURN_CONFIG, max_iterations=3)
         )
 
         finishes = [e for e in events if isinstance(e, AgentFinished)]
@@ -784,7 +785,7 @@ class TestStopConditions:
             ]
         )
         loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx, permission_manager=PermissionManager())
-        events = await _collect_events(loop.run("Do something"))
+        events = await _collect_events(loop.run("Do something", config=TEST_TURN_CONFIG))
 
         finishes = [e for e in events if isinstance(e, AgentFinished)]
         assert len(finishes) == 1
@@ -814,7 +815,7 @@ class TestContextManager:
             ]
         )
         loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx, permission_manager=PermissionManager())
-        await _collect_events(loop.run("Test context"))
+        await _collect_events(loop.run("Test context", config=TEST_TURN_CONFIG))
 
         # Second call should include: system, user, assistant (tool_use), tool
         second_msgs = llm.messages_history[1]
@@ -875,7 +876,7 @@ class TestContextManager:
             ]
         )
         loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx, permission_manager=PermissionManager())
-        await _collect_events(loop.run("Hi"))
+        await _collect_events(loop.run("Hi", config=TEST_TURN_CONFIG))
 
         first_msgs = llm.messages_history[0]
         sys_msg = first_msgs[0]
@@ -971,7 +972,7 @@ class TestCancelMidStream:
         events = []
 
         async def _collect() -> None:
-            async for event in loop.run("explain", stream=True):
+            async for event in loop.run("explain", config=TEST_TURN_CONFIG, stream=True):
                 events.append(event)
 
         task = asyncio.create_task(_collect())
@@ -1031,7 +1032,7 @@ class TestMultiIteration:
             ]
         )
         loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx, permission_manager=PermissionManager())
-        events = await _collect_events(loop.run("Multi-round"))
+        events = await _collect_events(loop.run("Multi-round", config=TEST_TURN_CONFIG))
 
         starts = [e for e in events if isinstance(e, ToolCallStart)]
         ends = [e for e in events if isinstance(e, ToolCallEnd)]

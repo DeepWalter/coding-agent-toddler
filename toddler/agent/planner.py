@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from toddler.config.settings import Settings
     from toddler.context.manager import ContextManager
     from toddler.llm.base import BaseLLMProvider
+    from toddler.session.manager import TurnConfig
 
 __all__ = [
     "PLAN_RESPONSE_FORMAT",
@@ -484,6 +485,8 @@ class Planner:
     async def run(  # noqa: C901
         self,
         user_input: str,
+        *,
+        config: TurnConfig,
     ) -> AsyncIterator[AgentEvent]:
         """Run the plan loop for a single user request.
 
@@ -499,6 +502,11 @@ class Planner:
         ----------
         user_input:
             The raw user request.
+        config:
+            The turn's model and effort.  Exploration and the plan proposal
+            both use it, so the plan is researched and written by the same
+            model — even across the approval pause, which can last as long
+            as the user takes to decide.
         """
         # --- Plan-mode path: multi-phase orchestration ---
         original_request = user_input
@@ -509,14 +517,18 @@ class Planner:
 
             if current_mode == AgentMode.PLAN_EXPLORING:
                 async for event in self._agent_loop.run(
-                    explore_input, mode=self._sm.get_mode_hint(),
+                    explore_input,
+                    config=config,
+                    mode=self._sm.get_mode_hint(),
                 ):
                     yield event
                 self._sm.transition(AgentMode.PLAN_PROPOSING)
                 continue
 
             elif current_mode == AgentMode.PLAN_PROPOSING:
-                plan = await self._generate_plan(original_request)
+                plan = await self._generate_plan(
+                    original_request, config=config,
+                )
                 if plan is None:
                     self._sm.mark_finished()
                     yield FatalAgentError(
@@ -692,7 +704,9 @@ class Planner:
         self._plan = plan
         logger.info(f"Plan set: {plan.title} ({len(plan.steps)} steps)")
 
-    async def _generate_plan(self, user_request: str) -> Plan | None:
+    async def _generate_plan(
+        self, user_request: str, *, config: TurnConfig,
+    ) -> Plan | None:
         """Ask the LLM to produce a structured JSON plan.
 
         Collects research context from the exploration phase (recent
@@ -724,6 +738,8 @@ class Planner:
             response = await self._llm.generate(
                 [Message.user(prompt)],
                 tools=[],
+                model=config.model,
+                reasoning_effort=config.reasoning_effort,
                 max_completion_tokens=2048,
                 # Structured output — see PLAN_RESPONSE_FORMAT.  The prompt
                 # still spells the shape out: JSON mode demands the word

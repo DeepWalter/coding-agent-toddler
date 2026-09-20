@@ -18,6 +18,7 @@ from toddler.config.settings import Settings
 from toddler.llm import Message, MessageBlock, StreamEvent, TokenUsage
 from toddler.llm.provider import OpenAICompatibleProvider
 
+_DEEPSEEK = "deepseek-v4-pro"
 _REASONING = "Check the module docstring first.\n"
 _ANSWER = "The answer is 42."
 _TOOL_CALLS = [
@@ -146,7 +147,9 @@ class TestMessagesToOpenaiEcho:
             MessageBlock.reasoning_block(_REASONING),
             MessageBlock.content_block(_ANSWER),
         ])
-        out = OpenAICompatibleProvider._messages_to_openai([msg])[0]
+        out = OpenAICompatibleProvider._messages_to_openai(
+            [msg], model=_DEEPSEEK,
+        )[0]
         assert out == {
             "role": "assistant",
             "content": _ANSWER,
@@ -161,7 +164,9 @@ class TestMessagesToOpenaiEcho:
                 "call_1", "read_file", {"path": "a.py"},
             ),
         ])
-        out = OpenAICompatibleProvider._messages_to_openai([msg])[0]
+        out = OpenAICompatibleProvider._messages_to_openai(
+            [msg], model=_DEEPSEEK,
+        )[0]
         assert out["reasoning_content"] == "I need the file first."
         assert out["content"] is None
         assert out["tool_calls"] == _TOOL_CALLS
@@ -173,7 +178,7 @@ class TestMessagesToOpenaiEcho:
         ])
         user = Message.user("hi")
         out = OpenAICompatibleProvider._messages_to_openai(
-            [plain, tool_only, user]
+            [plain, tool_only, user], model=_DEEPSEEK,
         )
         assert out[0] == {"role": "assistant", "content": "hi"}
         assert "reasoning_content" not in out[0]
@@ -187,11 +192,42 @@ class TestMessagesToOpenaiEcho:
             MessageBlock.tool_result_block("call_1", "ok"),
             MessageBlock.tool_result_block("call_2", "boom", is_error=True),
         ])
-        out = OpenAICompatibleProvider._messages_to_openai([msg])
+        out = OpenAICompatibleProvider._messages_to_openai(
+            [msg], model=_DEEPSEEK,
+        )
         assert out == [
             {"role": "tool", "tool_call_id": "call_1", "content": "ok"},
             {"role": "tool", "tool_call_id": "call_2", "content": "boom"},
         ]
+
+    def test_foreign_reasoning_fails_loudly(self, caplog):
+        """Another model's reasoning is a mismatch, not a key to drop: the
+        endpoint would either reject it or absorb reasoning it never wrote.
+        Both the log and the exception name the model."""
+        msg = Message.assistant([
+            MessageBlock.reasoning_block(_REASONING),
+            MessageBlock.content_block(_ANSWER),
+        ])
+
+        with pytest.raises(NotImplementedError) as excinfo:
+            OpenAICompatibleProvider._messages_to_openai([msg], model="gpt-5")
+
+        assert "gpt-5" in str(excinfo.value)
+        assert "gpt-5" in caplog.text
+
+    def test_dropped_when_thinking_is_disabled(self):
+        """``"none"`` turns thinking off, and a request that is not
+        thinking has no use for a prior round's reasoning."""
+        msg = Message.assistant([
+            MessageBlock.reasoning_block(_REASONING),
+            MessageBlock.content_block(_ANSWER),
+        ])
+
+        out = OpenAICompatibleProvider._messages_to_openai(
+            [msg], model=_DEEPSEEK, reasoning_effort="none",
+        )[0]
+
+        assert "reasoning_content" not in out
 
 
 # ============================================================================
@@ -269,7 +305,7 @@ class TestStreamingUsageTrailer:
         provider = _make_provider()
 
         stream = await provider.generate(
-            [Message.user("hi")], [], stream=True,
+            [Message.user("hi")], [], model="deepseek-v4-pro", stream=True,
         )
         events = [evt async for evt in stream]
 
@@ -313,7 +349,7 @@ class TestStreamingUsageTrailer:
         provider = _make_provider()
 
         stream = await provider.generate(
-            [Message.user("hi")], [], stream=True,
+            [Message.user("hi")], [], model="deepseek-v4-pro", stream=True,
         )
         events = [evt async for evt in stream]
 
@@ -348,7 +384,7 @@ class TestStreamingUsageTrailer:
         provider = _make_provider()
 
         stream = await provider.generate(
-            [Message.user("hi")], [], stream=True,
+            [Message.user("hi")], [], model="deepseek-v4-pro", stream=True,
         )
         events = [evt async for evt in stream]
 
@@ -381,7 +417,7 @@ class TestStreamingUsageTrailer:
         provider = _make_provider()
 
         result = await provider.generate(
-            [Message.user("hi")], [], stream=False,
+            [Message.user("hi")], [], model="deepseek-v4-pro", stream=False,
         )
 
         assert result.stop_reason == "end_turn"

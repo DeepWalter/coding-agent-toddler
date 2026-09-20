@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator
 
 import pytest
 
+from tests.mocks import TEST_TURN_CONFIG
 from toddler.agent.events import (
     AgentError,
     AgentFinished,
@@ -90,7 +91,7 @@ class _SilentPlanner:
     def plan(self) -> Plan | None:
         return self._plan
 
-    async def run(self, user_input: str):
+    async def run(self, user_input: str, *, config):
         # A recoverable error is NOT a terminal event — the CLI keeps
         # the streaming renderer running on those (it only tears the
         # alt screen down on AgentFinished / FatalAgentError).
@@ -777,14 +778,18 @@ class MockPlanLLMProvider(BaseLLMProvider):
         self._seq_index = 0
         self.call_count = 0
         self.messages_history: list[list[Message]] = []
+        # ``(model, reasoning_effort)`` per call, in order.
+        self.call_configs: list[tuple[str, str | None]] = []
         # response_format of each plan-proposal call, in order.
         self.plan_response_formats: list[dict | None] = []
 
     async def generate(
-        self, messages, tools, *, max_completion_tokens=4096,
-        response_format=None, temperature=0.0, stream=True,
+        self, messages, tools, *, model, reasoning_effort=None,
+        max_completion_tokens=4096, response_format=None, temperature=0.0,
+        stream=True,
     ):
         self.messages_history.append(messages)
+        self.call_configs.append((model, reasoning_effort))
         self.call_count += 1
 
         # Empty tools → plan proposal call (non-streaming).
@@ -813,11 +818,7 @@ class MockPlanLLMProvider(BaseLLMProvider):
             usage=TokenUsage(input_tokens=20, output_tokens=10),
         )
 
-    @property
-    def model(self) -> str:
-        return "test-model"
-
-    async def generate_compact(self, prompt):
+    async def generate_compact(self, prompt, *, model):
         return "compacted"
 
 
@@ -1486,7 +1487,7 @@ class TestPlanner:
     ):
         """Complex input → yields PlanProposed with the expected plan."""
         planner = self._make_planner(settings, llm, ctx, agent_loop)
-        gen = planner.run("refactor the database layer")
+        gen = planner.run("refactor the database layer", config=TEST_TURN_CONFIG)
         events = []
         async for event in gen:
             events.append(event)
@@ -1502,7 +1503,7 @@ class TestPlanner:
     async def test_approve_plan(self, settings, llm, agent_loop, ctx):
         """Approve transitions to PLAN_EXECUTING and plan is set."""
         planner = self._make_planner(settings, llm, ctx, agent_loop)
-        gen = planner.run("refactor the database layer")
+        gen = planner.run("refactor the database layer", config=TEST_TURN_CONFIG)
         async for event in gen:
             if isinstance(event, PlanProposed):
                 break
@@ -1522,7 +1523,7 @@ class TestPlanner:
         turn would hang waiting for a decision that never takes effect."""
         llm._plan_json["id"] = 123
         planner = self._make_planner(settings, llm, ctx, agent_loop)
-        gen = planner.run("refactor the database layer")
+        gen = planner.run("refactor the database layer", config=TEST_TURN_CONFIG)
         async for event in gen:
             if isinstance(event, PlanProposed):
                 break
@@ -1537,7 +1538,7 @@ class TestPlanner:
     ):
         """Reject without feedback → FINISHED, plan cleared."""
         planner = self._make_planner(settings, llm, ctx, agent_loop)
-        gen = planner.run("refactor the database layer")
+        gen = planner.run("refactor the database layer", config=TEST_TURN_CONFIG)
         async for event in gen:
             if isinstance(event, PlanProposed):
                 break
@@ -1552,7 +1553,7 @@ class TestPlanner:
     ):
         """Reject with feedback → loops back to PLAN_EXPLORING."""
         planner = self._make_planner(settings, llm, ctx, agent_loop)
-        gen = planner.run("refactor the database layer")
+        gen = planner.run("refactor the database layer", config=TEST_TURN_CONFIG)
         async for event in gen:
             if isinstance(event, PlanProposed):
                 break
@@ -1584,7 +1585,7 @@ class TestPlanner:
         """Approving an already-approved plan is a no-op success — it
         must not fail the transition and kill the turn."""
         planner = self._make_planner(settings, llm, ctx, agent_loop)
-        gen = planner.run("refactor the database layer")
+        gen = planner.run("refactor the database layer", config=TEST_TURN_CONFIG)
         async for event in gen:
             if isinstance(event, PlanProposed):
                 break
@@ -1603,7 +1604,7 @@ class TestPlanner:
         """An approval for a different plan is stale input — the machine
         keeps waiting on the current plan's own decision."""
         planner = self._make_planner(settings, llm, ctx, agent_loop)
-        gen = planner.run("refactor the database layer")
+        gen = planner.run("refactor the database layer", config=TEST_TURN_CONFIG)
         async for event in gen:
             if isinstance(event, PlanProposed):
                 break
@@ -1623,7 +1624,7 @@ class TestPlanner:
         """A rejection arriving after approval is stale input — the
         approval stands and the plan is not cleared."""
         planner = self._make_planner(settings, llm, ctx, agent_loop)
-        gen = planner.run("refactor the database layer")
+        gen = planner.run("refactor the database layer", config=TEST_TURN_CONFIG)
         async for event in gen:
             if isinstance(event, PlanProposed):
                 break
@@ -1646,7 +1647,7 @@ class TestPlanner:
         input — the first feedback survives and drives the
         re-exploration."""
         planner = self._make_planner(settings, llm, ctx, agent_loop)
-        gen = planner.run("refactor the database layer")
+        gen = planner.run("refactor the database layer", config=TEST_TURN_CONFIG)
         async for event in gen:
             if isinstance(event, PlanProposed):
                 break
@@ -1683,7 +1684,7 @@ class TestPlanner:
         """A rejection for a different plan is stale input — the machine
         keeps waiting on the current plan's own decision."""
         planner = self._make_planner(settings, llm, ctx, agent_loop)
-        gen = planner.run("refactor the database layer")
+        gen = planner.run("refactor the database layer", config=TEST_TURN_CONFIG)
         async for event in gen:
             if isinstance(event, PlanProposed):
                 break
@@ -1708,7 +1709,7 @@ class TestPlanner:
         """Empty steps → AgentError yielded."""
         llm._plan_json = {"title": "Bad", "steps": []}
         planner = self._make_planner(settings, llm, ctx, agent_loop)
-        gen = planner.run("refactor the database layer")
+        gen = planner.run("refactor the database layer", config=TEST_TURN_CONFIG)
         events = await self._collect(gen)
 
         errors = [e for e in events if isinstance(e, AgentError)]
@@ -1723,7 +1724,7 @@ class TestPlanner:
         planner = self._make_planner(
             settings, llm, ctx, agent_loop, state_machine=sm,
         )
-        gen = planner.run("refactor the database layer")
+        gen = planner.run("refactor the database layer", config=TEST_TURN_CONFIG)
         async for event in gen:
             if isinstance(event, PlanProposed):
                 break

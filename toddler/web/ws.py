@@ -73,7 +73,7 @@ def _hello_frame(state: WebAppState) -> dict:
     return {
         "type": "hello",
         "session": session_payload(
-            state.session_mgr, state.llm.model, str(state.repo_root),
+            state.session_mgr, state.settings.model, str(state.repo_root),
         ),
         "conversation": conversation_payload(state.session_mgr),
         "busy": state.runner.busy,
@@ -212,7 +212,7 @@ async def _dispatch_slash_command(
             state.runner.broadcast(_hello_frame(state))
         elif kind == "session":
             state.runner.broadcast(session_info_frame(
-                state.session_mgr, state.llm.model, str(state.repo_root),
+                state.session_mgr, state.settings.model, str(state.repo_root),
             ))
     if result.message:
         state.runner.broadcast(_notice_frame(result.message))
@@ -333,7 +333,7 @@ async def _cmd_set_mode(
     # Broadcast the new mode_label/permission_mode so every tab's pill
     # (and the status bar) updates — the ack alone leaves other tabs stale.
     state.runner.broadcast(session_info_frame(
-        state.session_mgr, state.llm.model, str(state.repo_root),
+        state.session_mgr, state.settings.model, str(state.repo_root),
     ))
 
 
@@ -396,7 +396,7 @@ async def _cmd_rename_conversation(
     # Broadcast so every tab's header follows — the ack alone leaves the
     # others showing the old title.
     state.runner.broadcast(session_info_frame(
-        state.session_mgr, state.llm.model, str(state.repo_root),
+        state.session_mgr, state.settings.model, str(state.repo_root),
     ))
 
 

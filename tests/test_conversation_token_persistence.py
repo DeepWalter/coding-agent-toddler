@@ -53,20 +53,17 @@ class TestContextManagerTokenCount:
         from toddler.config.settings import Settings
 
         class _MockProvider(BaseLLMProvider):
-            @property
-            def model(self) -> str:
-                return "gpt-4"
-
             async def generate(self, messages, tools, *,
+                               model: str, reasoning_effort=None,
                                max_completion_tokens=4096,
                                response_format=None,
                                temperature=0.0, stream=True):
                 raise NotImplementedError
 
-            async def generate_compact(self, prompt: str) -> str:
+            async def generate_compact(self, prompt: str, *, model: str) -> str:
                 raise NotImplementedError
 
-        return ContextManager(Settings(), _MockProvider())
+        return ContextManager(Settings(), _MockProvider(), model="gpt-4")
 
     def test_count_tokens_matches_full_estimate(self, ctx):
         """count_tokens() returns the window manager's estimate for the buffer."""

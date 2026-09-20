@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from pathlib import Path
 
 from toddler.agent.events import (
@@ -39,6 +40,40 @@ from toddler.tools.executor import ToolExecutor
 from toddler.tools.plan import PlanState, PlanUpdateTool
 
 logger = logging.getLogger(__name__)
+
+# ======================================================================
+# TurnConfig
+# ======================================================================
+
+
+@dataclass(frozen=True, slots=True)
+class TurnConfig:
+    """The ``(model, reasoning_effort)`` pair one agent turn runs with.
+
+    Owned by the session: :meth:`SessionManager.process_turn` resolves it
+    once and threads it down, so every request a turn makes — planning,
+    exploration, the plan proposal, each execution round — carries the
+    same pair and a selection change mid-turn cannot split the turn across
+    two models.
+
+    The agent layer annotates with this type under ``TYPE_CHECKING``:
+    it is defined here because the session owns the selection, and the
+    manager imports the agent loop, so a runtime import would be circular.
+
+    Parameters
+    ----------
+    model:
+        The model id sent on the wire.
+    reasoning_effort:
+        How much thinking the model may spend before answering, on the
+        shared tier scale (``"minimal"`` … ``"max"``; ``"none"`` disables
+        thinking).  *None* omits the field, leaving the endpoint's own
+        default in place.
+    """
+
+    model: str
+    reasoning_effort: str | None = None
+
 
 # ======================================================================
 # SessionManager
@@ -143,6 +178,7 @@ class SessionManager:
         self._ctx = ContextManager(
             self._settings,
             self._llm,
+            model=self._settings.model,
             project_root=self._repo_root,
             memory_dir=self._settings.session_dir,
         )
@@ -229,6 +265,16 @@ class SessionManager:
         on those, so ending otherwise would strand the terminal in the
         alternate screen.
         """
+        # --- Resolve the turn's model and effort ---
+        # Read once, here, and threaded down as a parameter: every request
+        # this turn makes — exploration, the plan proposal, every execution
+        # round — carries this same pair, so a selection change mid-turn
+        # cannot split one turn across two models.
+        config = TurnConfig(
+            model=self._settings.model,
+            reasoning_effort=self._settings.reasoning_effort,
+        )
+
         # --- Conversation-start checkpoint (first turn only) ---
         self._create_conversation_start_checkpoint()
 
@@ -260,7 +306,7 @@ class SessionManager:
             # UI's session-info broadcaster) see the gating flip.
             self.set_permission_mode(PermissionMode.MANUAL)
 
-            async for event in self.planner.run(user_input):
+            async for event in self.planner.run(user_input, config=config):
                 if isinstance(event, (AgentFinished, FatalAgentError)):
                     terminal_event_seen = True
                 if isinstance(event, AgentFinished):
@@ -299,6 +345,7 @@ class SessionManager:
                 user_input,
                 self._sm.get_mode_hint(),
                 plan_mode=self._sm.is_plan_executing,
+                config=config,
             ):
                 yield event
         elif not terminal_event_seen:
@@ -448,11 +495,13 @@ class SessionManager:
         # Seed the token-count baseline from the persisted conversation row so
         # the first count_tokens() call skips a full tiktoken re-estimate.
         # Only valid when the stored count is nonzero AND was computed with
-        # the current model.
+        # the model the window is now keyed to — the row can have been
+        # written by another process (the REPL and ``tod serve`` share one
+        # database), so the check is not tautological.
         if (
             self._conv.total_tokens > 0
             and self._conv.model is not None
-            and self._conv.model == self._llm.model
+            and self._conv.model == self._ctx.model
         ):
             self._ctx.set_token_baseline(
                 total_tokens=self._conv.total_tokens,
@@ -472,7 +521,7 @@ class SessionManager:
         return [title for _, title in summaries]
 
     async def _run_phase(
-        self, user_input: str, mode_hint: str,
+        self, user_input: str, mode_hint: str, *, config: TurnConfig,
     ) -> AsyncIterator[AgentEvent]:
         """Run one agent-loop phase and persist afterward.
 
@@ -482,6 +531,7 @@ class SessionManager:
         stream = self._settings.streaming_enabled
         gen = self.agent.run(
             user_input,
+            config=config,
             max_iterations=self._settings.max_iterations,
             stream=stream,
             mode=mode_hint,
@@ -524,7 +574,8 @@ class SessionManager:
     # ------------------------------------------------------------------
 
     async def _run_execution(
-        self, user_input: str, mode_hint: str, *, plan_mode: bool,
+        self, user_input: str, mode_hint: str, *,
+        plan_mode: bool, config: TurnConfig,
     ) -> AsyncIterator[AgentEvent]:
         """Run the execution phase, with plan tracking on plan turns.
 
@@ -543,7 +594,9 @@ class SessionManager:
             if plan_mode:
                 self._activate_plan_execution(self.planner.plan)
 
-            async for event in self._run_phase(user_input, mode_hint):
+            async for event in self._run_phase(
+                user_input, mode_hint, config=config,
+            ):
                 yield event
                 if not isinstance(event, ToolCallEnd):
                     continue
@@ -699,6 +752,7 @@ class SessionManager:
         self._ctx = ContextManager(
             self._settings,
             self._llm,
+            model=self._settings.model,
             project_root=self._repo_root,
             memory_dir=self._settings.session_dir,
         )
@@ -780,7 +834,7 @@ class SessionManager:
         # comparable across loads when the model is unchanged, so persist it
         # too.
         self._conv.total_tokens = self._ctx.count_tokens()
-        self._conv.model = self._llm.model
+        self._conv.model = self._ctx.model
 
         # Persist conversation metadata.
         self._storage_mgr.update_conversation(self._conv)

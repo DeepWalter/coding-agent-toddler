@@ -29,17 +29,15 @@ class _StubLLM(BaseLLMProvider):
         self._summary = summary
         self.fail_compact = False
 
-    @property
-    def model(self) -> str:
-        return "test-model"
 
     async def generate(
-        self, messages, tools, *, max_completion_tokens=4096,
+        self, messages, tools, *, model, reasoning_effort=None,
+        max_completion_tokens=4096,
         response_format=None, temperature=0.0, stream=True,
     ):
         raise NotImplementedError
 
-    async def generate_compact(self, prompt: str) -> str:
+    async def generate_compact(self, prompt: str, *, model: str) -> str:
         if self.fail_compact:
             raise RuntimeError("summarisation failed")
         return self._summary
@@ -76,7 +74,7 @@ class TestCompact:
     def ctx(self, llm: _StubLLM) -> ContextManager:
         from toddler.config.settings import Settings
 
-        return ContextManager(Settings(), llm)
+        return ContextManager(Settings(), llm, model="test-model")
 
     @pytest.mark.asyncio
     async def test_compacts_long_conversation(self, ctx, llm):

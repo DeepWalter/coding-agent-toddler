@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     from toddler.config.settings import Settings
     from toddler.context.manager import ContextManager
     from toddler.llm.base import BaseLLMProvider
+    from toddler.session.manager import TurnConfig
     from toddler.tools.executor import ToolExecutor
     from toddler.tools.registry import ToolRegistry
 
@@ -134,6 +135,7 @@ class AgentLoop:
         self,
         user_input: str,
         *,
+        config: TurnConfig,
         max_iterations: int | None = None,
         token_budget: int | None = None,
         stream: bool = False,
@@ -145,6 +147,10 @@ class AgentLoop:
         ----------
         user_input:
             The user's request (plain text).
+        config:
+            The model and effort every request in this run carries.  A
+            parameter rather than provider state, so one run cannot drift
+            onto a second model when the selection changes underneath it.
         max_iterations:
             Override the configured max iterations.
         token_budget:
@@ -192,7 +198,7 @@ class AgentLoop:
             llm_result: dict[str, Message | None | str | TokenUsage] = {}
             try:
                 async for event in self._call_llm(
-                    messages, tools, stream=stream,
+                    messages, tools, config=config, stream=stream,
                     handler=handler, llm_result=llm_result,
                 ):
                     yield event
@@ -310,7 +316,8 @@ class AgentLoop:
 
     async def _call_llm(
         self, messages: list[Message], tools: list[dict], *,
-        stream: bool, handler: BaseHandler, llm_result: dict,
+        config: TurnConfig, stream: bool, handler: BaseHandler,
+        llm_result: dict,
     ) -> AsyncIterator[AgentEvent]:
         """Call the LLM and yield :class:`AgentEvent` items in real time.
 
@@ -324,6 +331,8 @@ class AgentLoop:
             response = await self._llm.generate(
                 messages,
                 tools,
+                model=config.model,
+                reasoning_effort=config.reasoning_effort,
                 max_completion_tokens=self._settings.max_tokens_per_response,
                 temperature=self._settings.temperature,
                 stream=stream,

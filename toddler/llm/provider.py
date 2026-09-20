@@ -82,7 +82,8 @@ class OpenAICompatibleProvider(BaseLLMProvider):
     ----------
     settings:
         Resolved :class:`~toddler.config.settings.Settings` object that
-        carries ``api_key``, ``base_url``, and ``model``.
+        carries the endpoint's ``api_key`` and ``base_url``.  The model is
+        not provider state — every call names its own.
     http_client:
         Optional shared ``httpx.AsyncClient``.  When *None* a default
         client is created internally.
@@ -93,32 +94,11 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         settings: Settings,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
-        self._settings = settings
-        self._model = settings.model
-        self._effort = settings.reasoning_effort
         self._client = AsyncOpenAI(
             base_url=settings.base_url,
             api_key=settings.api_key,
             http_client=http_client,
         )
-
-    # ------------------------------------------------------------------
-    # Properties
-    # ------------------------------------------------------------------
-
-    @property
-    def model(self) -> str:
-        """The model name string."""
-        return self._model
-
-    @property
-    def effort(self) -> str | None:
-        """Configured thinking-effort tier; ``None`` = endpoint default."""
-        return self._effort
-
-    @effort.setter
-    def effort(self, value: str | None) -> None:
-        self._effort = value
 
     # ------------------------------------------------------------------
     # generate — the core API
@@ -129,6 +109,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         messages: list[Message],
         tools: list[dict],
         *,
+        model: str,
         max_completion_tokens: int = 4096,
         reasoning_effort: str | None = None,
         response_format: dict | None = None,
@@ -137,19 +118,23 @@ class OpenAICompatibleProvider(BaseLLMProvider):
     ) -> AsyncIterator[StreamEvent] | LLMResponse:
         """Send one chat-completion request — streaming by default.
 
-        ``reasoning_effort`` falls back to the provider's configured
-        :attr:`effort`; ``None`` leaves the endpoint's own default in place.
-        The model family decides the final wire shape — see
-        :meth:`_parse_params`.
+        *model* and *reasoning_effort* are the caller's, not the
+        provider's: one agent turn names the same model on every call it
+        makes.  A ``None`` *reasoning_effort* omits the field, leaving the
+        endpoint's own default in place.  Together they also decide
+        whether the request owes DeepSeek its prior reasoning — see
+        :func:`_needs_reasoning_echo`.  The model family decides the final
+        wire shape — see :meth:`_parse_params`.
         """
-        model = self.model
-        openai_messages = self._messages_to_openai(messages)
+        openai_messages = self._messages_to_openai(
+            messages, model=model, reasoning_effort=reasoning_effort,
+        )
         openai_tools = self._tools_param(tools)
 
         kwargs = self._parse_params(
             model,
             max_completion_tokens=max_completion_tokens,
-            reasoning_effort=reasoning_effort or self.effort,
+            reasoning_effort=reasoning_effort,
             response_format=response_format,
             temperature=temperature,
         )
@@ -160,32 +145,32 @@ class OpenAICompatibleProvider(BaseLLMProvider):
                 "stream_options": {"include_usage": True},
             })
             return self._generate_streaming(
-                openai_messages, openai_tools, **kwargs
+                openai_messages, openai_tools, model=model, **kwargs
             )
 
         kwargs["stream"] = False
         return await self._generate_non_streaming(
-            openai_messages, openai_tools, **kwargs
+            openai_messages, openai_tools, model=model, **kwargs
         )
 
     # ------------------------------------------------------------------
     # Compaction helper
     # ------------------------------------------------------------------
 
-    async def generate_compact(self, prompt: str) -> str:
+    async def generate_compact(self, prompt: str, *, model: str) -> str:
         # Deliberately bare: no thinking-effort directive (compaction wants
         # the shortest path to an answer) and no response format.  It still
         # routes through _parse_params so the token-budget key matches the
         # model family — a non-DeepSeek reasoning model rejects max_tokens.
         kwargs = self._parse_params(
-            self._model,
+            model,
             max_completion_tokens=1024,
             reasoning_effort=None,
             response_format=None,
             temperature=0.0,
         )
         response = await self._client.chat.completions.create(
-            model=self._model,
+            model=model,
             messages=[{"role": "user", "content": prompt}],
             stream=False,
             **kwargs,
@@ -201,6 +186,8 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         self,
         openai_messages: list[dict],
         openai_tools: list[dict] | NotGiven,
+        *,
+        model: str,
         **kwargs: Any,
     ) -> AsyncIterator[StreamEvent]:
         """Yield :class:`StreamEvent` items from an SSE stream."""
@@ -208,7 +195,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
 
         try:
             stream = await self._client.chat.completions.create(
-                model=self._model,
+                model=model,
                 messages=openai_messages,
                 tools=openai_tools,
                 **kwargs
@@ -307,13 +294,15 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         self,
         openai_messages: list[dict],
         openai_tools: list[dict] | NotGiven,
+        *,
+        model: str,
         **kwargs: Any,
     ) -> LLMResponse:
         """Return a single :class:`LLMResponse` (no streaming)."""
 
         try:
             response = await self._client.chat.completions.create(
-                model=self._model,
+                model=model,
                 messages=openai_messages,
                 tools=openai_tools,
                 **kwargs
@@ -337,9 +326,19 @@ class OpenAICompatibleProvider(BaseLLMProvider):
     # ==================================================================
 
     @staticmethod
-    def _messages_to_openai(messages: list[Message]) -> list[dict]:
+    def _messages_to_openai(
+        messages: list[Message],
+        *,
+        model: str,
+        reasoning_effort: str | None = None,
+    ) -> list[dict]:
         """Convert a list of internal :class:`Message` objects to the
-        list-of-dicts expected by the OpenAI chat-completion endpoint."""
+        list-of-dicts expected by the OpenAI chat-completion endpoint.
+
+        *model* and *reasoning_effort* identify the request's dialect —
+        whether it owes DeepSeek the tool round's prior reasoning, see the
+        echo-back note on the assistant branch.
+        """
 
         openai_msgs: list[dict] = []
         for msg in messages:
@@ -383,16 +382,43 @@ class OpenAICompatibleProvider(BaseLLMProvider):
 
                 # DeepSeek echo-back requirement: in thinking mode the
                 # tool-round assistant messages' reasoning_content must be
-                # passed back on every subsequent request, or the API
-                # returns HTTP 400 mid-turn.  Self-scoping — only history
-                # produced by a reasoning endpoint carries a reasoning
-                # block, so only such traffic ever receives the key; the
-                # plain dict rides through the OpenAI SDK unvalidated.
-                # Residual risk: a strict third-party validator could
-                # reject the unknown key (accepted).
+                # passed back, or the API returns HTTP 400 mid-turn.  Both
+                # halves come from the turn's config — thinking being on
+                # (``"none"`` disables it, and a request that is not
+                # thinking has no use for a prior round's reasoning), and
+                # the same ``deepseek-`` family test :meth:`_parse_params`
+                # uses to pick the token-budget key.  Another endpoint with
+                # its own dialect would extend the family test here.
+                # Self-scoping in the ordinary case: only a dialect that
+                # emits reasoning_content ever produces a block to replay,
+                # and the plain dict rides through the OpenAI SDK
+                # unvalidated.
                 reasoning = msg.reasoning
-                if reasoning:
-                    openai_msg["reasoning_content"] = reasoning
+                if reasoning and reasoning_effort != "none":
+                    if model.lower().startswith("deepseek-"):
+                        openai_msg["reasoning_content"] = reasoning
+                    else:
+                        # Reasoning from a dialect we cannot echo to.  Only
+                        # a model change can produce this: the in-flight
+                        # round is always the serving endpoint's own, so
+                        # the blocks here are another model's.  Dropping
+                        # them silently would hide a real mismatch — the
+                        # endpoint either rejects the key or absorbs
+                        # reasoning it never wrote — so fail loudly and
+                        # name the model, and log it too in case the caller
+                        # swallows the exception into a recoverable error.
+                        logger.error(
+                            "No reasoning echo dialect for model %r — the "
+                            "request carries reasoning_content written by "
+                            "another model.",
+                            model,
+                        )
+                        raise NotImplementedError(
+                            f"reasoning echo is not implemented for model "
+                            f"{model!r}; it carries another model's "
+                            f"reasoning, which this endpoint cannot "
+                            f"receive."
+                        )
 
                 openai_msgs.append(openai_msg)
 
