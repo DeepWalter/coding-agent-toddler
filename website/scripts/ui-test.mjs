@@ -39,6 +39,16 @@
 //            stream needs it.  An echo taller than three lines is cut there
 //            and faded, with a chip that opens the rest of the input and
 //            closes it again
+//  phase 11 — the model + effort pill: it reads "spec tier", opens onto the
+//            three slots (the row the conversation was picked by is the one
+//            selected, even when another row names the same model) and the
+//            effort row, switches the model on a row click, cycles on the
+//            effort label, takes a drag on the rail that tracks live and
+//            reaches the wire exactly once, obeys the busy gate, follows
+//            another tab's switch into an open menu, replays the pill and
+//            the picked row from the server after a reload, stops claiming a
+//            conversation whose slot was retargeted, and excludes the mode
+//            popup from the keyboard
 // Prints PASS/FAIL plus diagnostics; exits 1 on any failure.
 import { chromium } from 'playwright'
 import WebSocket from 'ws'
@@ -90,7 +100,9 @@ function sendControl(cmd, payload = {}) {
       if (frame.type === 'ack' && frame.cmd === cmd) {
         clearTimeout(timer)
         ws.close()
-        resolve()
+        // The whole ack, so a caller can read what the backdoor returned
+        // (get_mutations) — callers that only await the round trip ignore it.
+        resolve(frame)
       }
     })
     ws.on('open', () => ws.send(JSON.stringify({ cmd, ...payload })))
@@ -1450,6 +1462,320 @@ await page.waitForTimeout(400)
     overTwin !== null && overTwin.expanded === open[1]
   console.log(`phase10 an echo over a second box with the same text reads that box's state ${JSON.stringify({ open, overB: overB && { expanded: overB.expanded, h: overB.height }, overTwin: overTwin && { expanded: overTwin.expanded, h: overTwin.height } })} ${ok ? 'PASS' : 'FAIL'}`)
   if (!ok) fails++
+}
+
+// --- Phase 11: the model + effort pill ---
+//
+// The pill shows the live spec and tier together ("mock-model high"), and
+// its menu is four rows: the three slots, then the effort control.  A slot
+// click switches the model; the effort row cycles on its label and takes a
+// drag on its rail.  The mock ships two slots on the live spec and one on a
+// `[1m]` spec, so the several-rows-selected case and the window column are
+// both live.
+
+// P11a: the closed pill reads "spec tier" as one line, and it is the tier
+// the server holds (the mock's session starts at "high").
+const pillText = async () =>
+  (await page.locator('.model-toggle').textContent())?.replace(/\s+/g, ' ').trim()
+const effortRow = async () => ({
+  value: (await page.locator('.effort-value').textContent())?.trim(),
+  now: await page.locator('.effort-rail').getAttribute('aria-valuenow'),
+  text: await page.locator('.effort-rail').getAttribute('aria-valuetext'),
+  checked: await page.locator('.model-menu-item[aria-checked="true"]').count(),
+  open: await page.locator('.model-menu').count(),
+})
+const waitPill = (want) =>
+  page.waitForFunction(
+    (w) =>
+      document.querySelector('.model-toggle')?.textContent?.replace(/\s+/g, ' ').trim() === w,
+    want,
+    { timeout: 8000 },
+  )
+{
+  await waitPill('mock-model high')
+  const ok = (await pillText()) === 'mock-model high'
+  console.log(`phase11 the pill reads "spec tier" (${JSON.stringify(await pillText())}) ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+
+// P11b: four rows.  The three slots carry the spec they name and that
+// spec's window; the fourth is the effort control, parked at the stop the
+// stored tier collapses onto.  Exactly ONE slot row reads selected — the
+// one the conversation was picked by — even though `flash` names the same
+// model as `default`: the highlight follows the slot, not the spec.
+// The checked rows' slot names.  Read the name element, not the row's text:
+// the row is a flex line, so its textContent runs the three parts together.
+const selectedRow = async () =>
+  (await page.locator('.model-menu-item[aria-checked="true"] .model-menu-name').allTextContents())
+    .map((t) => t.trim())
+await page.locator('.model-toggle').click()
+await page.waitForSelector('.model-menu')
+{
+  const rows = await page.locator('.model-menu-item').allTextContents()
+  const state = await effortRow()
+  const picked = await selectedRow()
+  const ok =
+    rows.length === 3 &&
+    rows[0].includes('default') && rows[0].includes('mock-model') && rows[0].includes('200.0K') &&
+    rows[1].includes('pro') && rows[1].includes('mock-model[1m]') && rows[1].includes('1.0M') &&
+    rows[2].includes('flash') &&
+    picked.join() === 'default' &&
+    state.value === 'high' && state.now === '4'
+  console.log(`phase11 menu shows three slots and the effort row, one of them selected ${JSON.stringify({ rows, picked, ...state })} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+
+// P11c: the row the conversation holds is highlighted even when another row
+// names the same model — and picking that other row moves the highlight
+// while changing nothing else about the model.  This is the case the spec
+// alone cannot express, and the reason the slot is stored at all.
+{
+  const before = await selectedRow()
+  await page.locator('.model-menu-item', { hasText: 'flash' }).click()
+  await page.waitForFunction(
+    () =>
+      document.querySelector('.model-menu-item[aria-checked="true"]')
+        ?.textContent?.trim().startsWith('flash') === true,
+    null,
+    { timeout: 8000 },
+  )
+  const picked = await selectedRow()
+  const text = await pillText()
+  const state = await effortRow()
+  const ok =
+    before.join() === 'default' && picked.join() === 'flash' &&
+    text === 'mock-model high' && state.open === 1
+  console.log(`phase11 a pick between two slots naming the SAME model moves the highlight only ${JSON.stringify({ before, picked, text, open: state.open })} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+
+// P11d: a pick that DOES change the model — pro names a `[1m]` spec — moves
+// both the spec in the pill and the highlighted row.  The menu stays open
+// (a picker you compare within).
+{
+  await page.locator('.model-menu-item', { hasText: 'pro' }).click()
+  await waitPill('mock-model[1m] high')
+  const state = await effortRow()
+  const picked = await selectedRow()
+  const ok = picked.join() === 'pro' && state.open === 1
+  console.log(`phase11 a pick that changes the spec moves the pill and the highlight ${JSON.stringify({ picked, open: state.open })} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+
+// P11e: the label click cycles one tier at a time — high → xhigh — and the
+// menu stays open, so a trip across the scale is one open, not one per step.
+{
+  await page.locator('.effort-label').click()
+  await page.waitForFunction(
+    () => document.querySelector('.effort-value')?.textContent?.trim() === 'xhigh',
+    null,
+    { timeout: 8000 },
+  )
+  const state = await effortRow()
+  const ok = state.value === 'xhigh' && state.now === '5' && state.text === 'xhigh' && state.open === 1
+  console.log(`phase11 the effort label cycles one tier to xhigh ${JSON.stringify(state)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+
+// P11f: the drag.  The knob follows the pointer, the row names the stop it
+// would commit — and the wire is untouched until release, however many
+// stops the pointer crosses.  Then exactly one set_effort lands, on the
+// stop nearest where the pointer stopped.
+{
+  const rail = await page.locator('.effort-rail').boundingBox()
+  const cy = rail.y + rail.height / 2
+  const before = (await sendControl('get_mutations')).mutations.length
+  // Inset by a couple of px at both ends: the end stops sit ON the rail's
+  // edges, and a press exactly on the boundary lands outside the box (no
+  // capture, no drag).  The inset is far inside the ~1/7-width rounding
+  // tolerance, so each point still resolves to the stop it names.
+  const LAST = 7 // the eighth stop; EFFORT_STOPS has no client-side export here
+  const atStop = (i) => rail.x + 2 + ((rail.width - 4) * i) / LAST
+
+  await page.mouse.move(atStop(LAST), cy)
+  await page.mouse.down()
+  await page.mouse.move(atStop(2), cy, { steps: 3 })
+  const mid = await effortRow()
+  const midMutations = (await sendControl('get_mutations')).mutations.length
+  await page.mouse.move(atStop(0), cy, { steps: 5 })
+  await page.mouse.up()
+  await page.waitForFunction(
+    () => document.querySelector('.effort-value')?.textContent?.trim() === 'none',
+    null,
+    { timeout: 8000 },
+  )
+  const after = (await sendControl('get_mutations')).mutations
+  const landed = after[after.length - 1]
+  const ok =
+    mid.value === 'low' && mid.now === '2' &&
+    midMutations === before &&
+    after.length === before + 1 &&
+    landed.cmd === 'set_effort' && landed.tier === 'none'
+  console.log(`phase11 a drag tracks live and commits once ${JSON.stringify({ mid, midMutations, before, after: after.length, landed })} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+
+// P11g: the arrows clamp at the ends — a slider is a scale, and stepping
+// off the top onto `none` would turn thinking off behind the user's back.
+{
+  await page.locator('.effort-rail').press('ArrowRight') // none → minimal
+  await page.waitForFunction(
+    () => document.querySelector('.effort-value')?.textContent?.trim() === 'minimal',
+    null,
+    { timeout: 8000 },
+  )
+  await page.locator('.effort-rail').press('ArrowLeft') // back to none
+  await page.waitForFunction(
+    () => document.querySelector('.effort-value')?.textContent?.trim() === 'none',
+    null,
+    { timeout: 8000 },
+  )
+  await page.locator('.effort-rail').press('ArrowLeft') // still none — clamped
+  await page.waitForTimeout(200)
+  const state = await effortRow()
+  const ok = state.value === 'none' && state.now === '0'
+  console.log(`phase11 the rail's arrows step and clamp ${JSON.stringify(state)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+
+// P11h: the busy gate.  A turn starting anywhere takes the picker's gate
+// away, so the open menu closes rather than offering switches the server
+// would reject — and it comes back when the turn ends.
+{
+  await sendControl('set_busy', { busy: true })
+  await page.waitForFunction(
+    () => document.querySelector('.model-toggle')?.disabled === true,
+    null,
+    { timeout: 8000 },
+  )
+  const closed = (await page.locator('.model-menu').count()) === 0
+  await page.locator('.model-toggle').click({ force: true })
+  await page.waitForTimeout(150)
+  const stillClosed = (await page.locator('.model-menu').count()) === 0
+  await sendControl('set_busy', { busy: false })
+  await page.waitForFunction(
+    () => document.querySelector('.model-toggle')?.disabled === false,
+    null,
+    { timeout: 8000 },
+  )
+  const ok = closed && stillClosed
+  console.log(`phase11 a turn closes the menu and disables the pill ${JSON.stringify({ closed, stillClosed })} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+
+// P11i: another tab's switch.  The broadcast updates the pill AND the menu
+// it has open — a session_info is not a reason to close a popup.
+{
+  await page.locator('.model-toggle').click()
+  await page.waitForSelector('.model-menu')
+  await sendControl('set_effort', { tier: 'xhigh' })
+  await page.waitForFunction(
+    () => document.querySelector('.effort-value')?.textContent?.trim() === 'xhigh',
+    null,
+    { timeout: 8000 },
+  )
+  const state = await effortRow()
+  const ok = state.open === 1 && state.now === '5' && state.text === 'xhigh'
+  console.log(`phase11 another tab's tier moves the open menu ${JSON.stringify(state)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+
+// P11j: this tab's own two switches ride the same session_info, so the pill
+// follows the server rather than a local guess — including across a reload,
+// which replays them from the mock's session.
+{
+  await sendControl('set_model', { slot: 'flash' })
+  await waitPill('mock-model xhigh')
+  await page.keyboard.press('Escape')
+  await page.waitForFunction(
+    () => document.querySelector('.model-menu') === null,
+    null,
+    { timeout: 8000 },
+  )
+  await page.reload()
+  await page.waitForSelector('.model-toggle', { timeout: 15000 })
+  await page.locator('.model-toggle').click()
+  await page.waitForSelector('.model-menu')
+  const picked = await selectedRow()
+  const text = await pillText()
+  const ok = text === 'mock-model xhigh' && picked.join() === 'flash'
+  console.log(`phase11 the pill and the picked row replay from the server after a reload ${JSON.stringify({ text, picked })} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+
+// P11k: a slot retargeted underneath a live conversation.  The conversation
+// still runs the model it was created with — the spec is what runs — so the
+// stored slot no longer names it, and highlighting that row would claim a
+// model this conversation has never asked for.  The highlight falls back to
+// whatever row DOES name the running model.
+{
+  await sendControl('retarget_slot', { slot: 'flash', spec: 'other-model' })
+  await page.waitForFunction(
+    () =>
+      document.querySelector('.model-menu-item[aria-checked="true"]')
+        ?.textContent?.trim().startsWith('default') === true,
+    null,
+    { timeout: 8000 },
+  )
+  const picked = await selectedRow()
+  const text = await pillText()
+  const ok = picked.join() === 'default' && text === 'mock-model xhigh'
+  console.log(`phase11 a retargeted slot stops claiming the conversation ${JSON.stringify({ picked, text })} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+  await page.keyboard.press('Escape')
+  await page.waitForFunction(
+    () => document.querySelector('.model-menu') === null,
+    null,
+    { timeout: 8000 },
+  )
+}
+
+// P11l: a tier the scale does not hold.  `TODDLER_EFFORT_LEVEL` is never
+// validated, so an unrecognized one reaches a conversation row and the
+// picker has to show it: the knob parks at `max` — where the endpoint's own
+// coercion sends the request — while the row still names the tier the
+// server holds.
+{
+  await page.locator('.model-toggle').click()
+  await page.waitForSelector('.model-menu')
+  await sendControl('force_effort', { tier: 'ludicrous' })
+  await page.waitForFunction(
+    () => document.querySelector('.effort-value')?.textContent?.trim() === 'ludicrous',
+    null,
+    { timeout: 8000 },
+  )
+  const state = await effortRow()
+  const ok = state.now === '6' && state.text === 'ludicrous' && state.open === 1
+  console.log(`phase11 an unknown tier parks at max and keeps its name ${JSON.stringify(state)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+  await page.keyboard.press('Escape')
+  await page.waitForFunction(
+    () => document.querySelector('.model-menu') === null,
+    null,
+    { timeout: 8000 },
+  )
+}
+
+// P11m: the two popups exclude each other on the keyboard path as well.
+// Tabbing out of the open mode menu reaches the model pill; Enter there
+// must leave exactly one menu on screen.  Two independent `open` refs would
+// leave both up — a few dozen pixels apart and overlapping — because the
+// pointer path (one trigger is always outside the other) has no keyboard
+// equivalent.
+{
+  await page.locator('.mode-toggle').focus()
+  await page.keyboard.press('Enter')
+  const opened = await page.locator('.mode-menu').count()
+  for (let i = 0; i < 4; i++) await page.keyboard.press('Tab')
+  const landed = await page.evaluate(() => document.activeElement?.className)
+  await page.keyboard.press('Enter')
+  await page.waitForTimeout(200)
+  const mode = await page.locator('.mode-menu').count()
+  const model = await page.locator('.model-menu').count()
+  const ok = opened === 1 && landed === 'model-toggle' && mode === 0 && model === 1
+  console.log(`phase11 the two popups exclude each other from the keyboard too ${JSON.stringify({ opened, landed, mode, model })} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+  await page.keyboard.press('Escape')
 }
 
 await browser.close()

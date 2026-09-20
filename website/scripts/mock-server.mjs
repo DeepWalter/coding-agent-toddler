@@ -94,8 +94,33 @@ const session = {
   gating_editable: true,
   context_usage_pct: Number(process.env.MOCK_CONTEXT_PCT ?? 12),
   model: 'mock-model',
+  // The slot the conversation's model was picked by — the row the picker
+  // highlights.  Distinct from `model`: `flash` names the same spec as
+  // `default`, so only this tells the two rows apart.
+  model_slot: 'default',
+  effort: 'high',
+  // The real server ships all three slots on the same id; this mock splits
+  // them so the picker's window column is observable and so a pick between
+  // `default` and `flash` is a pure slot change — same spec, different row.
+  model_slots: [
+    { name: 'default', spec: 'mock-model', context_tokens: 200000 },
+    { name: 'pro', spec: 'mock-model[1m]', context_tokens: 1000000 },
+    { name: 'flash', spec: 'mock-model', context_tokens: 200000 },
+  ],
   cwd: '/tmp',
 }
+
+// What the picker has asked the server to change — read back over the
+// socket so a test can assert that a drag commits exactly once, however
+// many stops it crossed.  (The real server has no such read; this is the
+// test-only backdoor shape set_context already uses.)
+const mutations = []
+
+// The tiers toddler/config/defaults.py accepts — mirrored so a bad tier
+// fails here the way the real server fails it.
+const EFFORT_TIERS = [
+  'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra',
+]
 
 // Reasoning bodies the thought-block assertions compare against — keep in
 // sync with ui-test.mjs (SEED_REASONING / THINK_REASONING).
@@ -372,6 +397,85 @@ wss.on('connection', (ws) => {
       case 'set_mode':
         session.permission_mode = msg.mode
         broadcast(sessionInfoFrame())
+        break
+      // The picker's two commands.  Both validate, ack the caller and
+      // broadcast session_info — the real handlers' shape (ws.py), so a
+      // test can await the round trip on an ack before asserting.
+      case 'set_model': {
+        const slot = session.model_slots.find((s) => s.name === msg.slot)
+        if (!slot) {
+          send({
+            type: 'error',
+            code: 'invalid_slot',
+            message: 'slot must be one of default, pro, flash.',
+          })
+          break
+        }
+        mutations.push({ cmd: 'set_model', slot: msg.slot })
+        session.model = slot.spec
+        // The slot is stamped even when the spec does not move — that is
+        // the whole point of storing it.
+        session.model_slot = slot.name
+        send({ type: 'ack', cmd: 'set_model', accepted: true })
+        broadcast(sessionInfoFrame())
+        break
+      }
+      case 'set_effort': {
+        if (!EFFORT_TIERS.includes(msg.tier)) {
+          send({
+            type: 'error',
+            code: 'invalid_effort',
+            message: `unknown effort tier: ${msg.tier}`,
+          })
+          break
+        }
+        mutations.push({ cmd: 'set_effort', tier: msg.tier })
+        session.effort = msg.tier
+        send({ type: 'ack', cmd: 'set_effort', accepted: true })
+        broadcast(sessionInfoFrame())
+        break
+      }
+      case 'set_busy': {
+        // Test-only backdoor: hold the app busy without a turn in flight, so
+        // the input bar stays mounted (a real turn's tool gate *replaces* the
+        // bar, which is exactly the state the busy assertions cannot use).
+        // The runner's own frame is `state {busy}`, which is what this sends.
+        send({ type: 'ack', cmd: 'set_busy', accepted: true })
+        broadcast({ type: 'state', busy: Boolean(msg.busy) })
+        break
+      }
+      case 'retarget_slot': {
+        // Test-only backdoor: point a slot at a different model, the way
+        // restarting the server with a new TODDLER_<SLOT>_MODEL would.  The
+        // conversation's own model and slot are deliberately untouched —
+        // that divergence is what the picker has to survive.
+        const slot = session.model_slots.find((s) => s.name === msg.slot)
+        if (!slot) {
+          send({ type: 'error', code: 'invalid_slot', message: 'unknown slot' })
+          break
+        }
+        slot.spec = String(msg.spec)
+        send({ type: 'ack', cmd: 'retarget_slot', accepted: true })
+        broadcast(sessionInfoFrame())
+        break
+      }
+      case 'force_effort': {
+        // Test-only backdoor: write a tier straight into the session, the
+        // way a bad TODDLER_EFFORT_LEVEL does.  Nothing validates that
+        // setting, so an unrecognized tier really can reach a conversation
+        // row — and the picker has to render it rather than fall over.
+        session.effort = String(msg.tier)
+        send({ type: 'ack', cmd: 'force_effort', accepted: true })
+        broadcast(sessionInfoFrame())
+        break
+      }
+      case 'get_mutations':
+        send({
+          type: 'ack',
+          cmd: 'get_mutations',
+          accepted: true,
+          mutations: [...mutations],
+        })
         break
       case 'set_context': {
         // Test-only backdoor: step context_usage_pct across the pill's 50%
