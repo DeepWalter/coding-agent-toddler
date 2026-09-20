@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, WebSocket
 
+from toddler.config.defaults import MODEL_SLOTS, REASONING_EFFORT_TIERS
 from toddler.tools.base import PermissionMode
 from toddler.web.events import serialize_transcript
 from toddler.web.runners import (
@@ -341,6 +342,74 @@ async def _cmd_ping(websocket: WebSocket, state: WebAppState, raw: dict) -> None
     await websocket.send_json({"type": "pong"})
 
 
+async def _cmd_set_model(
+    websocket: WebSocket, state: WebAppState, raw: dict,
+) -> None:
+    """Switch the conversation's model slot (the input bar's pill).
+
+    The same mutation ``/model <slot>`` performs, reached without the
+    slash dispatcher: that path answers with a notice, and a pill click
+    must not write a line into the console.  The slot is normalized
+    exactly as the CLI normalizes its argument, and validated here so
+    ``set_model``'s own ``ValueError`` stays unreachable.
+
+    Busy-gated like ``/model``: the selection is persisted to the
+    conversation row and the token accounting is re-keyed, neither of
+    which may happen under a turn that is already reading the old pair.
+    """
+    slot = raw.get("slot")
+    if not isinstance(slot, str) or slot.strip().lower() not in MODEL_SLOTS:
+        await _send_error(
+            websocket, "invalid_slot",
+            f"slot must be one of {', '.join(MODEL_SLOTS)}.",
+        )
+        return
+    async with state.runner.mutation_guard() as acquired:
+        if not acquired:
+            await _send_error(
+                websocket, "busy", "A turn is already running.",
+            )
+            return
+        state.session_mgr.set_model(slot.strip().lower())
+    await websocket.send_json(_ack_frame("set_model", True))
+    # Broadcast the new spec so every tab's pill (and the context gauge,
+    # which the switch re-keys) follows — the ack alone leaves the others
+    # showing the old model.
+    state.runner.broadcast(session_info_frame(
+        state.session_mgr, str(state.repo_root),
+    ))
+
+
+async def _cmd_set_effort(
+    websocket: WebSocket, state: WebAppState, raw: dict,
+) -> None:
+    """Switch the conversation's thinking-effort tier.
+
+    The same mutation ``/effort <tier>`` performs, with the same
+    membership check against the tier list — the endpoint silently
+    coerces an unknown tier to ``max``, so a typo has to fail here.
+    Busy-gated for the same reason as :func:`_cmd_set_model`.
+    """
+    tier = raw.get("tier")
+    if not isinstance(tier, str) or tier.strip().lower() not in REASONING_EFFORT_TIERS:
+        await _send_error(
+            websocket, "invalid_effort",
+            f"tier must be one of {', '.join(REASONING_EFFORT_TIERS)}.",
+        )
+        return
+    async with state.runner.mutation_guard() as acquired:
+        if not acquired:
+            await _send_error(
+                websocket, "busy", "A turn is already running.",
+            )
+            return
+        state.session_mgr.set_effort(tier.strip().lower())
+    await websocket.send_json(_ack_frame("set_effort", True))
+    state.runner.broadcast(session_info_frame(
+        state.session_mgr, str(state.repo_root),
+    ))
+
+
 async def _cmd_new_conversation(
     websocket: WebSocket, state: WebAppState, raw: dict,
 ) -> None:
@@ -433,6 +502,8 @@ _COMMANDS: dict[str, Callable] = {
     "approve_plan": _cmd_approve_plan,
     "reject_plan": _cmd_reject_plan,
     "set_mode": _cmd_set_mode,
+    "set_model": _cmd_set_model,
+    "set_effort": _cmd_set_effort,
     "new_conversation": _cmd_new_conversation,
     "rename_conversation": _cmd_rename_conversation,
     "switch_session": _cmd_switch_session,

@@ -1718,3 +1718,202 @@ class TestModelSelectionCommands:
             }
             ws.send_json({"cmd": "cancel"})
             _wait_for(ws, "turn_cancelled")
+
+
+# ============================================================================
+# Model selection on the session frames
+# ============================================================================
+
+
+class TestModelSelectionPayload:
+    """The selection as the input bar's pill reads it.
+
+    ``model`` alone cannot drive a picker: it is the resolved spec, so the
+    slots it could be switched to — and the effort tier the conversation
+    runs with — have to ride the same payload.
+    """
+
+    def test_hello_carries_effort_and_the_slots(self, tmp_path):
+        llm = make_mock_llm()
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            session = ws.receive_json()["session"]
+            # The fixture's settings: default and flash ship the same id,
+            # pro is retargeted, so "which slot is live" is answerable here
+            # by spec matching alone.
+            assert session["effort"] == "high"
+            assert session["model_slots"] == [
+                {
+                    "name": "default",
+                    "spec": "deepseek-flash",
+                    "context_tokens": 200_000,
+                },
+                {"name": "pro", "spec": "test-model", "context_tokens": 200_000},
+                {
+                    "name": "flash",
+                    "spec": "deepseek-flash",
+                    "context_tokens": 200_000,
+                },
+            ]
+
+    def test_a_suffix_names_its_slots_window(self, tmp_path):
+        """The window is computed server-side — ``[1m]`` is Toddler's own
+        notation, so the frontend cannot derive it from the spec."""
+        settings = Settings(
+            session_dir=tmp_path, model="pro", model_pro="test-model[1m]",
+        )
+        app = create_app(settings, repo_root=tmp_path, llm=make_mock_llm())
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            session = ws.receive_json()["session"]
+            windows = {
+                slot["name"]: slot["context_tokens"]
+                for slot in session["model_slots"]
+            }
+            assert windows == {"default": 200_000, "pro": 1_000_000, "flash": 200_000}
+            # The spec keeps the notation; the pill shows it verbatim.
+            assert session["model"] == "test-model[1m]"
+
+    def test_a_switch_is_reflected_on_the_next_frame(self, tmp_path):
+        """The payload is read from the manager, never captured at startup,
+        so the frame that follows a switch carries the new pair."""
+        llm = make_mock_llm()
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "set_model", "slot": "flash"})
+            frame = _wait_for(ws, "session_info")
+            assert frame["session"]["model"] == "deepseek-flash"
+            assert frame["session"]["effort"] == "high"
+
+    def test_the_slot_travels_with_the_spec(self, tmp_path):
+        """`model` alone cannot say which row a picker should highlight:
+        the fixture's `default` and `flash` both name `deepseek-flash`, so
+        the slot name is what tells them apart."""
+        llm = make_mock_llm()
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            hello = ws.receive_json()
+            assert hello["session"]["model_slot"] == "pro"
+
+            ws.send_json({"cmd": "set_model", "slot": "flash"})
+            frame = _wait_for(ws, "session_info")
+            # The spec moved off pro; the slot names the row that was picked.
+            assert frame["session"]["model"] == "deepseek-flash"
+            assert frame["session"]["model_slot"] == "flash"
+
+            # A pick between two slots naming the SAME model still moves it —
+            # this is the case the spec cannot express.
+            ws.send_json({"cmd": "set_model", "slot": "default"})
+            frame = _wait_for(ws, "session_info")
+            assert frame["session"]["model"] == "deepseek-flash"
+            assert frame["session"]["model_slot"] == "default"
+
+
+# ============================================================================
+# Model selection commands (the input bar's pill)
+# ============================================================================
+
+
+class TestModelEffortCommands:
+    """``set_model`` / ``set_effort`` — what the pill's rows send.
+
+    The slash commands reach the same manager methods, but answer with a
+    notice; these ack and broadcast ``session_info``, so a pill click
+    updates every tab without writing a line into the console.
+    """
+
+    def test_set_model_acks_and_broadcasts(self, tmp_path):
+        llm = make_mock_llm()
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "set_model", "slot": "flash"})
+            ack = _wait_for(ws, "ack")
+            assert ack == {"type": "ack", "cmd": "set_model", "accepted": True}
+            frame = _wait_for(ws, "session_info")
+            assert frame["session"]["model"] == "deepseek-flash"
+            assert client.app.state.web.session_mgr.model == "deepseek-flash"
+            # A selection is not a turn — the model is never asked anything.
+            assert llm.call_count == 0
+
+    def test_the_slot_is_normalized_like_the_cli(self, tmp_path):
+        llm = make_mock_llm()
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "set_model", "slot": "  PRO  "})
+            assert _wait_for(ws, "ack")["accepted"] is True
+            assert client.app.state.web.session_mgr.model == "test-model"
+
+    def test_unknown_slot_is_an_error_not_a_switch(self, tmp_path):
+        llm = make_mock_llm()
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "set_model", "slot": "gpt-4o"})
+            error = _wait_for(ws, "error")
+            assert error["code"] == "invalid_slot"
+            assert "default, pro, flash" in error["message"]
+            assert client.app.state.web.session_mgr.model == "test-model"
+
+    def test_a_non_string_slot_is_rejected(self, tmp_path):
+        llm = make_mock_llm()
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "set_model", "slot": 3})
+            assert _wait_for(ws, "error")["code"] == "invalid_slot"
+
+    def test_set_effort_acks_and_broadcasts(self, tmp_path):
+        llm = make_mock_llm()
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "set_effort", "tier": "low"})
+            ack = _wait_for(ws, "ack")
+            assert ack == {"type": "ack", "cmd": "set_effort", "accepted": True}
+            frame = _wait_for(ws, "session_info")
+            assert frame["session"]["effort"] == "low"
+            # The model is untouched — the two switches are independent.
+            assert frame["session"]["model"] == "test-model"
+            assert client.app.state.web.session_mgr.effort == "low"
+
+    def test_unknown_tier_is_an_error_not_a_switch(self, tmp_path):
+        """The endpoint coerces an unknown tier to ``max``, so a typo has
+        to fail here rather than silently spend the top budget."""
+        llm = make_mock_llm()
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "set_effort", "tier": "ludicrous"})
+            error = _wait_for(ws, "error")
+            assert error["code"] == "invalid_effort"
+            assert client.app.state.web.session_mgr.effort == "high"
+
+    def test_set_model_while_busy_rejected(self, tmp_path):
+        llm = make_mock_llm(pause_on_write(str(tmp_path / "out.txt")))
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "turn", "input": "write"})
+            _wait_for(ws, "agent_paused")
+
+            ws.send_json({"cmd": "set_model", "slot": "flash"})
+            assert _wait_for(ws, "error")["code"] == "busy"
+            assert client.app.state.web.session_mgr.model == "test-model"
+            ws.send_json({"cmd": "cancel"})
+            _wait_for(ws, "turn_cancelled")
+
+    def test_set_effort_while_busy_rejected(self, tmp_path):
+        llm = make_mock_llm(pause_on_write(str(tmp_path / "out.txt")))
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "turn", "input": "write"})
+            _wait_for(ws, "agent_paused")
+
+            ws.send_json({"cmd": "set_effort", "tier": "none"})
+            assert _wait_for(ws, "error")["code"] == "busy"
+            assert client.app.state.web.session_mgr.effort == "high"
+            ws.send_json({"cmd": "cancel"})
+            _wait_for(ws, "turn_cancelled")

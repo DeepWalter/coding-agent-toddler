@@ -33,6 +33,7 @@ from toddler.agent.events import (
     PlanStepUpdate,
 )
 from toddler.agent.state_machine import AgentStateMachine
+from toddler.config.models import context_length_for
 from toddler.session import SessionManager
 from toddler.web.events import serialize_event
 
@@ -64,6 +65,14 @@ def session_payload(mgr: SessionManager, cwd: str) -> dict:
     ``gating_editable`` is False while a plan is explored, proposed, or
     awaiting approval — gating is pinned to manual until the plan is
     approved, so the frontend's pill is frozen.
+
+    ``model`` is the *spec* the conversation runs with, and ``model_slots``
+    the slots it could be switched to — each with the context window its
+    spec is accounted for, computed here because the ``[1m]`` notation is
+    Toddler's own and the suffix table is not on the wire.  ``effort`` is
+    the literal tier (possibly ``None``, meaning the endpoint's default);
+    the frontend collapses it onto the coarser scale the endpoint
+    distinguishes.
     """
     session = mgr.session
     sm = mgr.state_machine
@@ -77,6 +86,16 @@ def session_payload(mgr: SessionManager, cwd: str) -> dict:
         ),
         "context_usage_pct": mgr.context_usage_pct,
         "model": mgr.model,
+        "model_slot": mgr.model_slot,
+        "effort": mgr.effort,
+        "model_slots": [
+            {
+                "name": name,
+                "spec": spec,
+                "context_tokens": context_length_for(spec),
+            }
+            for name, spec in mgr.model_slots.items()
+        ],
         "cwd": cwd,
     }
 
