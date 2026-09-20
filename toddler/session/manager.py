@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
 from pathlib import Path
 
 from toddler.agent.events import (
@@ -29,6 +28,7 @@ from toddler.checkpoint.models import (
     Checkpoint,
     RollbackResult,
 )
+from toddler.config.models import TurnConfig
 from toddler.config.settings import Settings
 from toddler.context.manager import CompactionResult, ContextManager
 from toddler.llm import BaseLLMProvider, Message, TokenUsage
@@ -40,40 +40,6 @@ from toddler.tools.executor import ToolExecutor
 from toddler.tools.plan import PlanState, PlanUpdateTool
 
 logger = logging.getLogger(__name__)
-
-# ======================================================================
-# TurnConfig
-# ======================================================================
-
-
-@dataclass(frozen=True, slots=True)
-class TurnConfig:
-    """The ``(model, reasoning_effort)`` pair one agent turn runs with.
-
-    Owned by the session: :meth:`SessionManager.process_turn` resolves it
-    once and threads it down, so every request a turn makes — planning,
-    exploration, the plan proposal, each execution round — carries the
-    same pair and a selection change mid-turn cannot split the turn across
-    two models.
-
-    The agent layer annotates with this type under ``TYPE_CHECKING``:
-    it is defined here because the session owns the selection, and the
-    manager imports the agent loop, so a runtime import would be circular.
-
-    Parameters
-    ----------
-    model:
-        The model id sent on the wire.
-    reasoning_effort:
-        How much thinking the model may spend before answering, on the
-        shared tier scale (``"minimal"`` … ``"max"``; ``"none"`` disables
-        thinking).  *None* omits the field, leaving the endpoint's own
-        default in place.
-    """
-
-    model: str
-    reasoning_effort: str | None = None
-
 
 # ======================================================================
 # SessionManager

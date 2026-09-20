@@ -29,6 +29,7 @@ from toddler.agent.events import (
 )
 from toddler.agent.handler import create_handler
 from toddler.agent.stop_conditions import StopConditionChecker
+from toddler.config.models import TurnConfig
 from toddler.llm import Message, MessageBlock, TokenUsage
 from toddler.tools.base import (
     PermissionManager,
@@ -41,7 +42,6 @@ if TYPE_CHECKING:
     from toddler.config.settings import Settings
     from toddler.context.manager import ContextManager
     from toddler.llm.base import BaseLLMProvider
-    from toddler.session.manager import TurnConfig
     from toddler.tools.executor import ToolExecutor
     from toddler.tools.registry import ToolRegistry
 

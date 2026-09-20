@@ -30,6 +30,7 @@ from toddler.agent.events import (
     PlanProposed,
 )
 from toddler.agent.state_machine import AgentMode, AgentStateMachine
+from toddler.config.models import TurnConfig
 from toddler.llm import Message
 from toddler.llm.responses import LLMResponse
 
@@ -38,7 +39,6 @@ if TYPE_CHECKING:
     from toddler.config.settings import Settings
     from toddler.context.manager import ContextManager
     from toddler.llm.base import BaseLLMProvider
-    from toddler.session.manager import TurnConfig
 
 __all__ = [
     "PLAN_RESPONSE_FORMAT",

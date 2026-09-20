@@ -15,6 +15,7 @@ import json
 from collections.abc import AsyncIterator
 
 from toddler.agent.planner import Plan
+from toddler.config.models import TurnConfig
 from toddler.llm import (
     LLMResponse,
     Message,
@@ -23,7 +24,6 @@ from toddler.llm import (
     TokenUsage,
 )
 from toddler.llm.base import BaseLLMProvider
-from toddler.session.manager import TurnConfig
 
 __all__ = [
     "TEST_MODEL",
