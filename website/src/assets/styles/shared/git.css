@@ -62,15 +62,21 @@
   border-bottom: 1px solid var(--editor-border);
 }
 
+/* The ● dot marking a dirty directory — the same glyph as the dirty dot on
+ * editor tabs, and both inherit the base font, so it is the same size in
+ * both places.  Warning-colored by default; the letter-color groups below
+ * override it per status and are more specific, so this base never wins
+ * over them. */
+.git-dot {
+  flex: none;
+  color: var(--warning);
+  user-select: none;
+}
+
 /* Changed tree names take their badge letter color — directories
  * (.tree-dir-changed, keeping the weight from .tree-dir), changed files
  * (.tree-file-changed, overriding the dim .tree-file), and the ● dot
  * marking a dirty directory.  One letter-color group per rule. */
-.git-dot {
-  flex: none;
-  user-select: none;
-}
-
 .tree-dir-changed.mod,
 .tree-file-changed.mod,
 .git-dot.mod {
@@ -150,13 +156,4 @@
 
 .git-badge.conflict {
   color: var(--error);
-}
-
-/* Directory indicator — the same ● and warning color as the dirty dot
- * on editor tabs, regardless of what changed inside.  Both inherit the
- * base font, so the glyph is the same size in both places. */
-.git-dot {
-  flex: none;
-  color: var(--warning);
-  user-select: none;
 }
