@@ -1,8 +1,8 @@
 /* `.btn` and its variants.
-      IMPORTED BEFORE shared/ask-cards.css AND components/source-control.css:
-      both tie these rules at equal specificity (`background`/`color` on the
-      ask-card rows, `align-self` on `.sc-commit-btn`) and win on source order
-      alone.  See index.css. */
+   IMPORTED BEFORE shared/ask-cards.css AND components/source-control.css:
+   both tie these rules at equal specificity (`background`/`color` on the
+   ask-card rows, `align-self` on `.sc-commit-btn`) and win on source order
+   alone.  See index.css. */
 
 .btn.small {
   padding: 3px 10px;

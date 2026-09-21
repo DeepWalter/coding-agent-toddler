@@ -1,8 +1,8 @@
 /* Git status vocabulary shared across panes: badge letters and their
-      colours, the directory dot, the stage/discard chip pair (the source
-      control rows and the diff view's hunk rail), and the action error banner.
-      The colour groups name `.tree-*` classes alongside `.git-dot`, so they
-      travel together; `.tree-*` layout lives in components/file-explorer.css. */
+   colours, the directory dot, the stage/discard chip pair (the source
+   control rows and the diff view's hunk rail), and the action error banner.
+   The colour groups name `.tree-*` classes alongside `.git-dot`, so they
+   travel together; `.tree-*` layout lives in components/file-explorer.css. */
 
 .sc-row-action,
 .diff-action-btn {

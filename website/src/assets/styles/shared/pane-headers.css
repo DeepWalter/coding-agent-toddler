@@ -1,6 +1,6 @@
 /* Pane chrome shared by FileExplorer, SourceControl, ConsoleHeader and
-      FileEditorDiffView: the one header row, its titles, the refresh button,
-      and the explorer/source-control list and empty states. */
+   FileEditorDiffView: the one header row, its titles, the refresh button,
+   and the explorer/source-control list and empty states. */
 
 /* One row for every pane header — explorer, source control, console — so
    the three line up across the split.  min-height holds that row whatever

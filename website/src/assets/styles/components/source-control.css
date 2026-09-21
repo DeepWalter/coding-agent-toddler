@@ -1,13 +1,25 @@
 /* SourceControl.vue — the staged/unstaged sections, their rows, and the
-      commit box.  The action chips it shares with the diff view and its error
-      banner are in shared/git.css; the pane header row is in
-      shared/pane-headers.css.
-      IMPORTED AFTER shared/buttons.css: `.sc-commit-btn` ties `.btn` at equal
-      specificity on `align-self` and wins on source order alone.  See index.css. */
+   commit box.  The action chips it shares with the diff view and its error
+   banner are in shared/git.css; the pane header row is in
+   shared/pane-headers.css.
+   IMPORTED AFTER shared/buttons.css: `.sc-commit-btn` ties `.btn` at equal
+   specificity on `align-self` and wins on source order alone.  See index.css. */
 
 /* ------------------------------------------------------------------ */
 /* Source-control panel (staged / unstaged sections, VS Code-style).   */
 /* ------------------------------------------------------------------ */
+
+/* The pane root.  Same flex column as `.explorer` / `.editor` / `.diff`,
+   and load-bearing: without it `.sc-list`'s `flex: 1; overflow-y: auto`
+   never binds — the list grows to its content height and `.pane`'s
+   `overflow: hidden` clips the rest, so a working tree with more changed
+   files than fit the pane cannot be scrolled at all. */
+.sc {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
 
 .sc-section {
   border-top: 1px solid var(--editor-border);

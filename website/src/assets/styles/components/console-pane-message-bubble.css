@@ -1,6 +1,6 @@
 /* ConsolePaneMessageBubble.vue — the user box, its three-line clamp and fade,
-      and the more/less chip.  Rendered twice: as a transcript row (ConsolePane)
-      and as the echo (ConsolePaneTopFloat), which adds only its lift. */
+   and the more/less chip.  Rendered twice: as a transcript row (ConsolePane)
+   and as the echo (ConsolePaneTopFloat), which adds only its lift. */
 
 .message {
   display: flex;

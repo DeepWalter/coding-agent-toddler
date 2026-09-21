@@ -1,7 +1,7 @@
 /* ConsolePaneTopFloat.vue — the echo of the input box the fold has scrolled
-      past.  The bubble's own clamp, fade and chip are in
-      console-pane-message-bubble.css; this file adds only the lift and the
-      pointer-events rules that keep a wheel over it scrolling the console. */
+   past.  The bubble's own clamp, fade and chip are in
+   console-pane-message-bubble.css; this file adds only the lift and the
+   pointer-events rules that keep a wheel over it scrolling the console. */
 
 /* ------------------------------------------------------------------ */
 /* Console top float (the input box the fold has scrolled past)        */

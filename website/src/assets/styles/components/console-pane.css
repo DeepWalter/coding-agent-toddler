@@ -1,9 +1,9 @@
 /* ConsolePane.vue — the scroller, its gutter, and the row / stream-line
-      shapes.  `.console-wrap` is the offset parent for ConsolePaneTopFloat;
-      the dock's offset parent is `.pane-console` (layout.css).
-      The gutter mark and its per-kind offsets are in
-      console-pane-status-mark.css, which must stay in step with the `top:`
-      insets of the block rules here. */
+   shapes.  `.console-wrap` is the offset parent for ConsolePaneTopFloat;
+   the dock's offset parent is `.pane-console` (layout.css).
+   The gutter mark and its per-kind offsets are in
+   console-pane-status-mark.css, which must stay in step with the `top:`
+   insets of the block rules here. */
 
 /* ------------------------------------------------------------------ */
 /* Console                                                             */

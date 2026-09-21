@@ -1,6 +1,6 @@
 /* The popup surface and row chrome the mode picker (ConsoleDockInputBar)
-      and the model picker (ConsoleDockInputBarModelPicker) share.  Each
-      picker adds its own row layout in its component file. */
+   and the model picker (ConsoleDockInputBarModelPicker) share.  Each
+   picker adds its own row layout in its component file. */
 
 /* The mode picker's popup and the model picker's share one surface: both
    open from .input-bar-meta, at the same level (the context tooltip below

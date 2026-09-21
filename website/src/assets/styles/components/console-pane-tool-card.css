@@ -1,6 +1,6 @@
 /* ConsolePaneToolCard.vue — the collapsible tool call card.
-      `.tool-card-section-title` is also rendered by ConsolePanePlanCard, which
-      points here rather than duplicating the rule. */
+   `.tool-card-section-title` is also rendered by ConsolePanePlanCard, which
+   points here rather than duplicating the rule. */
 
 /* Code-token colors live in the editor's HighlightStyle (theme.ts) — the
    console renders the same generated classes, so no token rules here. */

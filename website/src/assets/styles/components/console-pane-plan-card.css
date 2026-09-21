@@ -1,6 +1,6 @@
 /* ConsolePanePlanCard.vue — the transcript's plan card and its step statuses.
-      `.plan-card-feedback` is also rendered by ConsoleDockPlanAsk, and
-      `.tool-card-section-title` is borrowed from console-pane-tool-card.css. */
+   `.plan-card-feedback` is also rendered by ConsoleDockPlanAsk, and
+   `.tool-card-section-title` is borrowed from console-pane-tool-card.css. */
 
 /* ------------------------------------------------------------------ */
 /* Plan card                                                           */

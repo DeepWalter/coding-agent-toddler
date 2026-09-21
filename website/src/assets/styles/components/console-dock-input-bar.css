@@ -1,7 +1,7 @@
 /* ConsoleDockInputBar.vue — the compose field, the mode pill and its menu,
-      and the context gauge and tooltip.  The popup surface it shares with the
-      model picker is in shared/menus.css; the picker itself is in
-      console-dock-input-bar-model-picker.css. */
+   and the context gauge and tooltip.  The popup surface it shares with the
+   model picker is in shared/menus.css; the picker itself is in
+   console-dock-input-bar-model-picker.css. */
 
 .mode-toggle {
   border: 1px solid var(--editor-border);

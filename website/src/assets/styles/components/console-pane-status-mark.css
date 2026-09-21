@@ -1,7 +1,7 @@
 /* ConsolePaneStatusMark.vue — the gutter mark, its per-block-kind first-line
-      offsets, and the spinner.  Kept out of console-pane.css because the
-      offsets are written `.stream-row[data-kind=…]>.status-mark`: they copy the
-      `top:` insets from that file's block rules and must move together. */
+   offsets, and the spinner.  Kept out of console-pane.css because the
+   offsets are written `.stream-row[data-kind=…]>.status-mark`: they copy the
+   `top:` insets from that file's block rules and must move together. */
 
 /* The mark: one per block, outdented into the gutter.  Its box is exactly
    one line of the global 13px/1.55 type, so it centres on the block's first

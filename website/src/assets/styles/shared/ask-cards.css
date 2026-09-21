@@ -1,7 +1,7 @@
 /* The tool gate (ConsoleDockPausePrompt) and plan ask (ConsoleDockPlanAsk)
-      cards: the ✕ close and the action-row overrides.
-      IMPORTED AFTER shared/buttons.css — these rules tie `.btn` at equal
-      specificity and win on source order alone.  See index.css. */
+   cards: the ✕ close and the action-row overrides.
+   IMPORTED AFTER shared/buttons.css — these rules tie `.btn` at equal
+   specificity and win on source order alone.  See index.css. */
 
 /* A choice fills the card width as its own row (base .btn styling applies,
    with slimmer top/bottom padding so the rows sit tight in the card). */

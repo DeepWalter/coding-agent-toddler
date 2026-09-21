@@ -1,6 +1,6 @@
 /* FileEditorDiffView.vue — the side-by-side columns and the hunk action rail.
-      `.diff-tag` is also rendered by FileEditor's tab strip; `.diff-action-btn`
-      (shared with the source control rows) is in shared/git.css. */
+   `.diff-tag` is also rendered by FileEditor's tab strip; `.diff-action-btn`
+   (shared with the source control rows) is in shared/git.css. */
 
 /* ------------------------------------------------------------------ */
 /* Side-by-side diff view (diff tabs in the editor pane)               */

@@ -1,6 +1,6 @@
 /* ConsoleDock.vue — the floating card itself.  It reports its height as
-      `--bar-h` on `.pane-console`, which console-pane.css's bottom padding
-      reads so pinned output ends just above whichever card floats. */
+   `--bar-h` on `.pane-console`, which console-pane.css's bottom padding
+   reads so pinned output ends just above whichever card floats. */
 
 /* ------------------------------------------------------------------ */
 /* Console dock (floating card over the console's bottom edge)         */

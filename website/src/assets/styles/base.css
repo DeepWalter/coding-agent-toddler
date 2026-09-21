@@ -1,5 +1,5 @@
 /* Reset and global layer: every element, the page shell, and the
-      scrollbar family.  Loaded first so nothing else has to out-rank it. */
+   scrollbar family.  Loaded first so nothing else has to out-rank it. */
 
 * {
   box-sizing: border-box;

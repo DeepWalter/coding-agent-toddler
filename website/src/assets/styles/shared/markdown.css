@@ -1,7 +1,7 @@
 /* Rendered markdown, shared by ConsolePaneMessageBubble (`.message-content`)
-      and ConsolePane's notice lines (`.stream-line`).  The `:is()` selector
-      out-ranks either component's own white-space rule on specificity, so this
-      file's position in index.css is not load-bearing. */
+   and ConsolePane's notice lines (`.stream-line`).  The `:is()` selector
+   out-ranks either component's own white-space rule on specificity, so this
+   file's position in index.css is not load-bearing. */
 
 /* ------------------------------------------------------------------ */
 /* Message markdown                                                    */

@@ -1,7 +1,7 @@
 /* ConsoleHeader.vue — the in-place editable conversation title.
-      `.console-title`'s weight is set by the shared pane-header row; this file
-      deliberately uses font-family/font-size rather than the `font` shorthand
-      so it does not reset that weight. */
+   `.console-title`'s weight is set by the shared pane-header row; this file
+   deliberately uses font-family/font-size rather than the `font` shorthand
+   so it does not reset that weight. */
 
 /* The console header has no meta line and no action button, so it is all
    title.  It is a <button>, so the whole block is the rename target, and it
