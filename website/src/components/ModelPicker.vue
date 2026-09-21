@@ -93,8 +93,10 @@ function choose(slot: ModelSlotInfo) {
 /** The stop the pointer is on, or null when no drag is in flight.  The
  *  knob renders from here while dragging, so a session_info landing
  *  mid-drag (another tab's switch, or the echo of our own previous
- *  commit) cannot yank it out from under the pointer.  Once the drag ends
- *  the server is the truth again. */
+ *  commit) cannot yank it out from under the pointer.  Releasing hands
+ *  over to the tier the commit applies optimistically (`setEffort` in
+ *  useConsole), so the readout keeps the released stop rather than falling
+ *  back to the one the server is still holding. */
 const dragging = ref<EffortStop | null>(null)
 
 /** Where the knob sits: the live drag wins, the server otherwise. */
@@ -104,7 +106,7 @@ const stop = computed<EffortStop>(
 const stopIndex = computed(() => stopIndexOf(stop.value))
 /** What the row reads.  Mid-drag it names the stop under the pointer — the
  *  value a release would commit — so a drag is legible while it happens.
- *  Otherwise it is the stored tier verbatim, which keeps a collapsed one
+ *  Otherwise it is the live tier verbatim, which keeps a collapsed one
  *  ("xhigh") and an unset one ("default") saying what they are. */
 const effortDisplay = computed(() =>
   dragging.value === null ? effortLabel(props.effort) : dragging.value,

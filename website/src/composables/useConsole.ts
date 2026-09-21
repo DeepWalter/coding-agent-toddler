@@ -24,6 +24,7 @@ export type ConsoleAction =
   | Frame
   | { type: 'local_user'; text: string }
   | { type: 'local_mode'; mode: Mode }
+  | { type: 'local_effort'; tier: string }
   | { type: 'local_title'; title: string }
   | { type: 'local_plan_decision'; planId: number; decision: PlanDecision | null }
 
@@ -394,6 +395,16 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
       }
       break
     }
+    case 'local_effort': {
+      // Optimistic tier — the server's session_info broadcast confirms it.
+      // The rail's readout renders the picker's own in-flight stop only
+      // while a drag is held, so without this the value the user just
+      // released on would be replaced by the stored one — the old tier —
+      // for the whole round trip, and then put back: a visible flash on
+      // every click, and again at the end of every drag.
+      if (s.session) s.session.effort = action.tier
+      break
+    }
     case 'local_title':
       // Optimistic rename — the server's session_info broadcast carries the
       // stored title back.  A conversation that has none yet takes the new
@@ -482,12 +493,11 @@ export function useConsole(send: (cmd: Command) => void) {
     send({ cmd: 'set_mode', mode })
   }
 
-  /** Model/effort switches from the input bar's picker.
+  /** A model switch from the input bar's picker.
    *
    *  Deliberately not optimistic, unlike setMode: the pill shows the SPEC,
    *  and only the server holds the slot table that maps a slot name to one
-   *  — predicting it locally would be a guess.  The effort slider is its
-   *  own feedback while the drag is in flight, and a refused switch leaves
+   *  — predicting it locally would be a guess.  A refused switch leaves
    *  nothing to undo (the reducer consults acks for plan decisions only).
    */
   function setModel(slot: string) {
@@ -495,8 +505,24 @@ export function useConsole(send: (cmd: Command) => void) {
     send({ cmd: 'set_model', slot })
   }
 
+  /** An effort switch from the picker's rail.
+   *
+   *  Optimistic, unlike setModel: the tier *is* the value the pill and the
+   *  rail's readout show, so there is nothing to predict — and without this
+   *  the readout would flash the old tier at the end of every gesture.  The
+   *  rail renders its in-flight stop only while the pointer is down, so a
+   *  click reverts to the stored tier the moment it is released, and puts
+   *  the picked one back when the echo lands.
+   *
+   *  A refusal — another tab taking the busy gate in the same instant — is
+   *  answered with an error frame rather than a session_info, so the value
+   *  stands until the next broadcast corrects it: the same exposure
+   *  local_mode carries, narrowed here to a race with another tab by this
+   *  tab's own busy gate.
+   */
   function setEffort(tier: string) {
     if (state.busy) return
+    applyFrame({ type: 'local_effort', tier })
     send({ cmd: 'set_effort', tier })
   }
 
