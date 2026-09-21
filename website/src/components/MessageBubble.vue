@@ -73,8 +73,8 @@ function onClick(event: MouseEvent) {
     <div
       v-if="role === 'assistant'"
       class="message-content markdown"
-      v-html="rendered"
       @click="onClick"
+      v-html="rendered"
     ></div>
     <template v-else>
       <!-- User content is the only boxed text in the console — the border
