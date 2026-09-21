@@ -7,6 +7,10 @@
 /* Message markdown                                                    */
 /* ------------------------------------------------------------------ */
 
+/* Markdown content sits on `normal`, overriding the `pre-wrap` both carriers
+   get elsewhere (.message-content in console-pane-message-bubble.css,
+   .stream-line in console-pane.css): the renderer emits its own breaks, so
+   pre-wrap would double every newline. */
 :is(.message-content, .stream-line).markdown {
   white-space: normal;
 }
@@ -118,10 +122,4 @@
 
 :is(.message-content, .stream-line).markdown th {
   background: var(--editor-surface-2);
-}
-
-/* Markdown-rendered notices (/help, …): the renderer emits its own
-   breaks, so pre-wrap would double every newline. */
-.stream-line.markdown {
-  white-space: normal;
 }
