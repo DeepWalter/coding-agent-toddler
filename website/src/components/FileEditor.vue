@@ -11,7 +11,7 @@ import { editorTheme, highlightExt } from '../editor/theme'
 import { gitBadgeClass } from '../gitStatus'
 import type { GitStatusState, TabEntry } from '../types'
 import { basename, tabKey } from '../utils'
-import DiffView from './DiffView.vue'
+import FileEditorDiffView from './FileEditorDiffView.vue'
 
 /**
  * Editor pane with one tab per open entry — a regular file tab or a
@@ -20,8 +20,8 @@ import DiffView from './DiffView.vue'
  * all file tabs — switching tabs swaps its state via `view.setState`,
  * which carries each tab's doc, undo history, and cursor.  While a diff
  * tab is active the CM host stays mounted but hidden (`display: none`)
- * and DiffView takes over the pane — the EditorView's parent must never
- * unmount.  Files load via `GET /api/file`, save with Ctrl/Cmd+S via
+ * and FileEditorDiffView takes over the pane — the EditorView's parent must
+ * never unmount.  Files load via `GET /api/file`, save with Ctrl/Cmd+S via
  * `PUT /api/file` — the same path-safe endpoint the agent's WriteFile
  * tool backs onto.  Syntax highlighting comes from the CodeMirror legacy
  * grammars (`editor/languages.ts`).  A tab refetches from disk on
@@ -142,7 +142,8 @@ const activeFilePath = computed(() =>
   props.active?.kind === 'file' ? props.active.path : null,
 )
 
-/** Active diff tab (or null) — when set, DiffView replaces the header+body. */
+/** Active diff tab (or null) — when set, FileEditorDiffView replaces the
+ *  header+body. */
 const activeDiff = computed<Extract<TabEntry, { kind: 'diff' }> | null>(() =>
   props.active?.kind === 'diff' ? props.active : null,
 )
@@ -451,7 +452,7 @@ watch(() => props.active, (tab) => {
   if (tab.kind === 'diff') {
     // Diff tabs own no CodeMirror state.  Flush the outgoing file tab,
     // park the view on the empty doc, and blur it — the CM host stays
-    // mounted (hidden behind DiffView) so the EditorView survives.
+    // mounted (hidden behind FileEditorDiffView) so the EditorView survives.
     if (view) {
       flushCurrentFile()
       view.setState(emptyState)
@@ -506,7 +507,7 @@ watch(() => props.active, (tab) => {
     <!-- A diff tab takes over the pane.  Keyed by tab key: switching
          between two diff tabs remounts it, so the diff refetches fresh
          on every activation. -->
-    <DiffView
+    <FileEditorDiffView
       v-if="activeDiff"
       :key="tabKey(activeDiff)"
       :tab="activeDiff"

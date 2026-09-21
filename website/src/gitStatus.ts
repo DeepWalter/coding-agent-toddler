@@ -2,7 +2,7 @@ import type { GitStatusLetter } from './types'
 
 /**
  * Pure helpers for git-status badges — no Vue deps, shared by
- * FileExplorer, FileEditor, DiffView, and SourceControl.
+ * FileExplorer, FileEditor, FileEditorDiffView, and SourceControl.
  */
 
 /** Letter → CSS modifier class (colors in styles.css, both themes). */
