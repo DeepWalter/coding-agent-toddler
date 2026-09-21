@@ -18,12 +18,14 @@ const emit = defineEmits<{
 
 const rendered = computed(() => renderMarkdown(props.text))
 
-// A user box is given three lines (styles.css) and asked one question: does
-// the message fit them?  Measured, never inferred from the text — whether
-// three lines of *this* width overflows is not something a content rule can
-// know, and both the fade and the chip turn on the answer.  The transcript and
-// the console's top float read the same box, in the transcript's own row and
-// over the pane's top edge, so the rule lives here rather than in either.
+// A user box is given three lines
+// (assets/styles/components/console-pane-message-bubble.css) and asked one
+// question: does the message fit them?  Measured, never inferred from the
+// text — whether three lines of *this* width overflows is not something a
+// content rule can know, and both the fade and the chip turn on the answer.
+// The transcript and the console's top float read the same box, in the
+// transcript's own row and over the pane's top edge, so the rule lives here
+// rather than in either.
 //
 // The measure is per box, not per message: it is a question about this box's
 // width, and the float's box is the same width as the row's only by design.

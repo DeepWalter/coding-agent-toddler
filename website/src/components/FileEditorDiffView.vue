@@ -328,8 +328,9 @@ function onMidWheel(e: WheelEvent) {
             </span>
           </div>
         </div>
-        <!-- The action rail (styled in styles.css): one stacked button
-             pair per hunk — → revert above, +/− transfer below —
+        <!-- The action rail (styled in
+             assets/styles/components/file-editor-diff-view.css): one stacked
+             button pair per hunk — → revert above, +/− transfer below —
              pinned to the hunk's middle by --hunk-top minus
              --scroll-top.  It is always rendered so the columns never
              shift when actions appear or disappear; wheel over it

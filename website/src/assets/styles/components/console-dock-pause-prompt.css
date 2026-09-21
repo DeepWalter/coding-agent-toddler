@@ -1,0 +1,49 @@
+/* ConsoleDockPausePrompt.vue — the tool gate's card.  Its action-row
+      overrides live in shared/ask-cards.css. */
+
+/* ------------------------------------------------------------------ */
+/* Pause prompt                                                        */
+/* ------------------------------------------------------------------ */
+
+/* Tool-gate card inside the console dock (the card chrome comes from
+   .console-dock): the gate question leads as the title with the ✕ close on
+   the head row, and the choices are stacked full-width rows.  Only the ⚠
+   icon keeps the warning color — inside a neutral card an all-warning title
+   would read like an error banner. */
+.pause-prompt {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pause-prompt-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.pause-prompt-icon {
+  flex: none;
+  color: var(--warning);
+}
+
+.pause-prompt-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.pause-prompt-hint {
+  color: var(--text-muted);
+}
+
+.pause-prompt-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}

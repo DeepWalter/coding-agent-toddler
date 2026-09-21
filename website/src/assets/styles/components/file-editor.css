@@ -1,0 +1,151 @@
+/* FileEditor.vue — the tab strip, the CodeMirror host, and the loading/error
+      overlay. */
+
+/* ------------------------------------------------------------------ */
+/* File editor                                                         */
+/* ------------------------------------------------------------------ */
+
+.editor {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--editor-border);
+  background: var(--editor-surface);
+  flex: none;
+}
+
+.editor-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-dirty {
+  flex: none;
+  color: var(--warning);
+}
+
+.editor-status {
+  flex: none;
+  max-width: 45%;
+  color: var(--text-muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-status.status-error {
+  color: var(--error);
+}
+
+.editor-tabs {
+  display: flex;
+  flex: none;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--editor-border);
+  background: var(--editor-surface);
+}
+
+.editor-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  max-width: 200px;
+  padding: 5px 8px 5px 12px;
+  border-right: 1px solid var(--editor-border);
+  color: var(--text-subtle);
+  cursor: pointer;
+  user-select: none;
+}
+
+.editor-tab:hover {
+  background: var(--editor-surface-2);
+}
+
+.editor-tab.active {
+  background: var(--editor-bg);
+  color: var(--text);
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.editor-tab.dirty .editor-tab-name {
+  color: var(--warning);
+}
+
+.editor-tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-tab-dirty {
+  flex: none;
+  color: var(--warning);
+}
+
+.editor-tab-close {
+  flex: none;
+  background: none;
+  border: none;
+  border-radius: 3px;
+  color: var(--text-subtle);
+  font: inherit;
+  line-height: 1;
+  padding: 1px 5px;
+  cursor: pointer;
+}
+
+.editor-tab-close:hover {
+  background: var(--editor-surface-2);
+  color: var(--text);
+}
+
+.editor-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  position: relative;
+}
+
+/* Diff tab active — the CodeMirror host hides instead of unmounting (a
+ * remounted EditorView would lose all per-tab state; the invariant is
+ * that the view's parent never leaves the DOM).  DiffView fills the
+ * space the body would occupy. */
+.editor-body.hidden {
+  display: none;
+}
+
+.editor-cm {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Absolute overlay over the always-mounted editor host — the message paints
+   over (and click-blocks) any stale doc beneath while a tab loads or fails. */
+.editor-message {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--editor-bg);
+  color: var(--text-subtle);
+  padding: 12px;
+  text-align: center;
+}
+
+.editor-message.error {
+  color: var(--error);
+}

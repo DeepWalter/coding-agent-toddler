@@ -296,8 +296,9 @@ onBeforeUnmount(() => {
 
 /** The gutter mark's reading for a row — null for user input, the one kind
  *  that gets neither a mark nor the indent.  The two key on 'user' and must
- *  stay in step: `.stream-row:not([data-kind='user'])` in styles.css is the
- *  other half of this rule. */
+ *  stay in step: `.stream-row:not([data-kind='user'])` in
+ *  assets/styles/components/console-pane.css is the other half of this
+ *  rule. */
 function rowStatus(block: Block) {
   return block.kind === 'user' ? null : blockStatus(block)
 }

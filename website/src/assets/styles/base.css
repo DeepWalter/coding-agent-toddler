@@ -1,0 +1,74 @@
+/* Reset and global layer: every element, the page shell, and the
+      scrollbar family.  Loaded first so nothing else has to out-rank it. */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--editor-bg);
+  color: var(--text);
+  font: 13px/1.55 var(--mono);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Selected console text matches the editor's selection color. */
+::selection {
+  background: var(--selection);
+}
+
+/* ------------------------------------------------------------------ */
+/* Scrollbars                                                          */
+/* ------------------------------------------------------------------ */
+
+/* One look for every scrollable area — the slim bar from the explorer
+   list.  Containers used to declare `scrollbar-width: thin` one by one,
+   but stragglers (markdown <pre>, tool cards, CodeMirror, textareas, …)
+   kept the wide OS bar.  Modern Chromium draws the native scrollbar: it
+   honours scrollbar-width/scrollbar-color and ignores the ::-webkit
+   rules — the classic painter's triangular buttons are part of the OS
+   bar and no CSS removes them (Firefox has none).  The ::-webkit rules
+   still style the classic painter where it is active (old Chromium,
+   WebKit). */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--editor-border) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--editor-border);
+  border-radius: 4px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text-subtle) 45%, var(--editor-border));
+}
+
+*::-webkit-scrollbar-button {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}

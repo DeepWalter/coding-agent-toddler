@@ -1,0 +1,79 @@
+/* ConsolePaneThinkingBlock.vue — the Thought toggle and its quoted reasoning.
+      The flex guard it shares with the tool card is commented in
+      console-pane-tool-card.css. */
+
+/* ------------------------------------------------------------------ */
+/* Thinking — a "Thought" toggle over a quoted block of reasoning      */
+/* ------------------------------------------------------------------ */
+
+.thinking {
+  /* Same flex guard as .tool-card — see the comment there. */
+  flex: none;
+}
+
+/* Content-width, not the full row: the label is the affordance, so the
+   click target matches what the eye can see. */
+.thinking-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.thinking-toggle:hover {
+  color: var(--text);
+}
+
+.thinking-label {
+  font-weight: 600;
+}
+
+/* The live count is secondary to the phrase it follows — the label keeps
+   the 600 weight, the count rides at the toggle's muted colour. */
+.thinking-detail {
+  font-weight: 400;
+}
+
+.thinking-chevron {
+  color: var(--text-subtle);
+}
+
+/* The quote block: indented under the toggle, a muted rule down the left.
+   Deliberately quieter than the accent-barred blockquote markdown renders
+   inside replies.  No max-height — expanding is an explicit click, so the
+   reasoning flows and the pane's own scrollbar handles its length. */
+.thinking-quote {
+  margin: 6px 0 0;
+  padding: 2px 0 2px 10px;
+  border-left: 2px solid var(--editor-border);
+  color: var(--text-muted);
+  font: inherit;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+/* Code in a thought: a surface to sit on and full-contrast tokens, since
+   the quote around it is muted and unstyled tokens would inherit that.
+   Block-level inside the quote's <pre>, which keeps the wrapping. */
+.thinking-code {
+  display: block;
+  margin: 4px 0;
+  padding: 6px 8px;
+  background: var(--editor-surface-2);
+  border-radius: 4px;
+  color: var(--text);
+}
+
+/* An identifier reads the same in a thought as in an answer. */
+.thinking-inline {
+  background: var(--editor-surface-2);
+  border: 1px solid var(--editor-border);
+  border-radius: 4px;
+  padding: 1px 4px;
+}

@@ -1,0 +1,53 @@
+/* `.btn` and its variants.
+      IMPORTED BEFORE shared/ask-cards.css AND components/source-control.css:
+      both tie these rules at equal specificity (`background`/`color` on the
+      ask-card rows, `align-self` on `.sc-commit-btn`) and win on source order
+      alone.  See index.css. */
+
+.btn.small {
+  padding: 3px 10px;
+  font-size: 11px;
+}
+
+.btn {
+  border: 1px solid var(--editor-border);
+  border-radius: 6px;
+  background: var(--editor-surface-2);
+  color: var(--text);
+  font: inherit;
+  padding: 8px 14px;
+  cursor: pointer;
+  flex: none;
+  align-self: center;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--editor-surface-3);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.btn.primary {
+  border-color: var(--accent-fill);
+  background: var(--accent-fill);
+  color: var(--on-accent);
+}
+
+.btn.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.btn.danger {
+  border-color: var(--error);
+  background: var(--error);
+  color: var(--on-accent);
+}
+
+.btn.danger:hover:not(:disabled) {
+  /* the base fill is now the canonical error red, so hover darkens instead
+     of the old dim→bright step — keeps white text readable */
+  background: color-mix(in srgb, var(--error) 80%, #000);
+}

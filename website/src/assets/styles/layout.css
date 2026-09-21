@@ -1,0 +1,107 @@
+/* The app shells: the split, the panes and their dividers, and the
+      activity rail.  `.pane-console` is the offset parent the console dock
+      measures itself against (see components/console-dock.css). */
+
+/* ------------------------------------------------------------------ */
+/* Split layout                                                        */
+/* ------------------------------------------------------------------ */
+
+.split {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.pane {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.pane-left,
+.pane-editor {
+  flex: none;
+}
+
+.pane-console {
+  /* Offset parent for the floating console dock (absolute, bottom-inset),
+     which reports --bar-h here. */
+  position: relative;
+  flex: 1;
+}
+
+.divider {
+  flex: none;
+  width: 5px;
+  cursor: col-resize;
+  background: var(--editor-border);
+  touch-action: none;
+  user-select: none;
+}
+
+.divider:hover,
+.divider.dragging {
+  background: var(--accent-hover);
+}
+
+/* ------------------------------------------------------------------ */
+/* Activity bar — the narrow icon rail left of the panes; clicking the  */
+/* active icon toggles the pane (VSCode-style).                         */
+/* ------------------------------------------------------------------ */
+
+.activity-bar {
+  flex: none;
+  width: 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding-top: 4px;
+  background: var(--editor-surface);
+  border-right: 1px solid var(--editor-border);
+  overflow-y: auto;
+}
+
+.activity-btn {
+  position: relative;
+  flex: none;
+  width: 44px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-subtle);
+  cursor: pointer;
+}
+
+.activity-btn:hover {
+  background: var(--editor-surface-2);
+  color: var(--text);
+}
+
+.activity-btn.active {
+  color: var(--text);
+  box-shadow: inset 2px 0 0 var(--accent);
+  /* VSCode's left accent bar */
+}
+
+.activity-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: var(--accent-fill);
+  color: var(--on-accent);
+  font-size: 9px;
+  line-height: 14px;
+  text-align: center;
+  pointer-events: none;
+}

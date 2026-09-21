@@ -1,0 +1,143 @@
+/* SourceControl.vue — the staged/unstaged sections, their rows, and the
+      commit box.  The action chips it shares with the diff view and its error
+      banner are in shared/git.css; the pane header row is in
+      shared/pane-headers.css.
+      IMPORTED AFTER shared/buttons.css: `.sc-commit-btn` ties `.btn` at equal
+      specificity on `align-self` and wins on source order alone.  See index.css. */
+
+/* ------------------------------------------------------------------ */
+/* Source-control panel (staged / unstaged sections, VS Code-style).   */
+/* ------------------------------------------------------------------ */
+
+.sc-section {
+  border-top: 1px solid var(--editor-border);
+}
+
+.sc-section-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  padding: 6px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sc-section-head:hover {
+  background: var(--editor-surface-2);
+}
+
+.sc-chevron {
+  flex: none;
+  width: 10px;
+  color: var(--text-subtle);
+  font-weight: 400;
+}
+
+.sc-count {
+  margin-left: auto;
+  color: var(--text-subtle);
+  font-weight: 400;
+  font-size: 12px;
+}
+
+.sc-section-body {
+  padding-bottom: 4px;
+}
+
+.sc-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 3px 10px;
+  cursor: default;
+  white-space: nowrap;
+}
+
+.sc-row:hover {
+  background: var(--editor-surface-2);
+}
+
+/* Git action chips — shared by the source-control row buttons and the
+ * diff view's hunk rail buttons: 16x14, same hover-color language
+ * (stage green, discard/revert red). */
+.sc-row-actions {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* The clickable name area — a real button inside the row div, so the
+ * row's action chips never nest inside it. */
+.sc-row-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  padding: 0;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+/* The directory prefix shrinks and ellipsizes; the basename keeps its
+ * full weight and never truncates (VS Code's SC list behavior). */
+.sc-dir {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-subtle);
+}
+
+.sc-base {
+  flex: none;
+}
+
+/* Commit box — sits between the flex:none header and the flex:1 list. */
+.sc-commit {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--editor-border);
+}
+
+.sc-commit-input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 46px;
+  resize: vertical;
+  background: var(--editor-surface);
+  color: var(--text);
+  border: 1px solid var(--editor-border);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 8px;
+}
+
+.sc-commit-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.sc-commit-input:disabled {
+  opacity: 0.6;
+}
+
+.sc-commit-btn {
+  align-self: flex-end;
+}

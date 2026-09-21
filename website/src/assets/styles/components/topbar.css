@@ -1,0 +1,60 @@
+/* App.vue's top bar, and the theme toggle it holds.
+ */
+
+/* ------------------------------------------------------------------ */
+/* Top bar                                                             */
+/* ------------------------------------------------------------------ */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--editor-border);
+  background: var(--editor-surface);
+  flex: none;
+}
+
+.topbar-title {
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-bright);
+}
+
+.topbar-meta {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex: none;
+}
+
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--editor-border);
+  border-radius: 6px;
+  background: var(--editor-surface-2);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.theme-toggle:hover {
+  background: var(--editor-surface-3);
+  color: var(--text);
+}
+
+.theme-toggle svg {
+  display: block;
+}

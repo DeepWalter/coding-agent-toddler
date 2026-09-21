@@ -1,0 +1,29 @@
+/* ConsoleDock.vue — the floating card itself.  It reports its height as
+      `--bar-h` on `.pane-console`, which console-pane.css's bottom padding
+      reads so pinned output ends just above whichever card floats. */
+
+/* ------------------------------------------------------------------ */
+/* Console dock (floating card over the console's bottom edge)         */
+/* ------------------------------------------------------------------ */
+
+/* One floating card — the tool gate, an awaiting plan's decision bar, or
+   the input bar — inset over .pane-console's bottom edge, out of flow so
+   its height never shrinks the console's visible output.  The dock reports
+   its height as --bar-h on .pane-console (its offset parent — ConsoleDock
+   enforces that by template placement).  It needs no z-index: .pane-console
+   is positioned but not a stacking context, and the dock is its positioned
+   last child, so it paints above the console content. */
+.console-dock {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--editor-border);
+  border-radius: 10px;
+  background: var(--editor-surface-2);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.25);
+}

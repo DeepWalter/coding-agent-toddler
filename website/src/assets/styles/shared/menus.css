@@ -1,0 +1,67 @@
+/* The popup surface and row chrome the mode picker (ConsoleDockInputBar)
+      and the model picker (ConsoleDockInputBarModelPicker) share.  Each
+      picker adds its own row layout in its component file. */
+
+/* The mode picker's popup and the model picker's share one surface: both
+   open from .input-bar-meta, at the same level (the context tooltip below
+   is deliberately one surface up, lifting off the dock card). */
+.mode-menu,
+.model-menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 6px);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 210px;
+  padding: 4px;
+  border: 1px solid var(--editor-border);
+  border-radius: 8px;
+  background: var(--editor-surface-2);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.25);
+}
+
+/* Wider than the mode menu: a row carries a slot name, the spec it names
+   and that spec's window. */
+.model-menu {
+  min-width: 252px;
+}
+
+/* The row chrome both menus share; the layouts below diverge (the mode
+   rows stack a name over a description, the model rows run across). */
+.mode-menu-item,
+.model-menu-item {
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mode-menu-item:hover:not(:disabled),
+.mode-menu-item:focus-visible,
+.model-menu-item:hover:not(:disabled),
+.model-menu-item:focus-visible {
+  background: var(--editor-surface-3);
+}
+
+.mode-menu-item:disabled,
+.model-menu-item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.mode-menu-item:focus-visible,
+.model-menu-item:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.mode-menu-item.selected,
+.model-menu-item.selected {
+  background: var(--editor-surface-3);
+}

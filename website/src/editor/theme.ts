@@ -4,19 +4,20 @@ import { EditorView } from '@codemirror/view'
 
 /**
  * Editor chrome + token colors.  Token colors read the palette variables in
- * styles.css (each theme defines a --keyword/--function/... set), and the
- * console's markdown highlighter (`markdown.ts`) renders with this same
- * HighlightStyle — editor and console share one token→color mapping, and the
- * whole app stays on one palette even if it is retuned.
+ * assets/styles/theme.css (each theme defines a --keyword/--function/...
+ * set), and the console's markdown highlighter (`markdown.ts`) renders with
+ * this same HighlightStyle — editor and console share one token→color
+ * mapping, and the whole app stays on one palette even if it is retuned.
  */
 
-// One rule per granular syntax variable in styles.css: keywords → --keyword,
-// calls/defs → --function, strings → --string, numbers → --number, booleans
-// and atoms/builtins → --constant, comments → --comment italic, plain
-// identifiers → --variable, operators → --operator, html tag names → --tag,
-// attribute names → --attribute, types → --type, decorators/at-rules
-// (tags.meta) → --type italic, links → --accent, diff deletions → --error.
-// Params (tags.local) are intentionally left unstyled — the default --text.
+// One rule per granular syntax variable in assets/styles/theme.css:
+// keywords → --keyword, calls/defs → --function, strings → --string,
+// numbers → --number, booleans and atoms/builtins → --constant, comments
+// → --comment italic, plain identifiers → --variable, operators
+// → --operator, html tag names → --tag, attribute names → --attribute,
+// types → --type, decorators/at-rules (tags.meta) → --type italic, links
+// → --accent, diff deletions → --error.  Params (tags.local) are
+// intentionally left unstyled — the default --text.
 export const highlightStyle = HighlightStyle.define([
   {
     tag: [
@@ -75,7 +76,7 @@ export const highlightStyle = HighlightStyle.define([
   { tag: [tags.deleted, tags.invalid], color: 'var(--error)' },
 ])
 
-// Matches the old `.editor-textarea` look (styles.css): --editor-bg
+// Matches the old `.editor-textarea` look (the old stylesheet): --editor-bg
 // background, --text color, 13px/1.5 mono, 10px 12px padding, tab-size 2.
 // The line number gutter sits on --editor-surface-2; numerals are
 // --line-number, the active line's brighter on --active-line.  Selection

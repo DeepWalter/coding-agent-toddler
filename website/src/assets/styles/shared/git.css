@@ -1,0 +1,162 @@
+/* Git status vocabulary shared across panes: badge letters and their
+      colours, the directory dot, the stage/discard chip pair (the source
+      control rows and the diff view's hunk rail), and the action error banner.
+      The colour groups name `.tree-*` classes alongside `.git-dot`, so they
+      travel together; `.tree-*` layout lives in components/file-explorer.css. */
+
+.sc-row-action,
+.diff-action-btn {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 14px;
+  padding: 0;
+  border: 1px solid var(--editor-border);
+  border-radius: 4px;
+  background: var(--editor-surface-2);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.sc-row-action:hover:not(:disabled),
+.diff-action-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.sc-row-action.stage:hover:not(:disabled),
+.diff-action-btn.stage:hover:not(:disabled) {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.sc-row-action.discard:hover:not(:disabled),
+.diff-action-btn.revert:hover:not(:disabled) {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.sc-row-action:disabled,
+.diff-action-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.sc-row-action:focus-visible,
+.sc-row-name:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+/* Action error banner — shared by the source-control panel and the diff
+ * view. */
+.sc-error,
+.diff-apply-error {
+  flex: none;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 8%, transparent);
+  border-bottom: 1px solid var(--editor-border);
+}
+
+/* Changed tree names take their badge letter color — directories
+ * (.tree-dir-changed, keeping the weight from .tree-dir), changed files
+ * (.tree-file-changed, overriding the dim .tree-file), and the ● dot
+ * marking a dirty directory.  One letter-color group per rule. */
+.git-dot {
+  flex: none;
+  user-select: none;
+}
+
+.tree-dir-changed.mod,
+.tree-file-changed.mod,
+.git-dot.mod {
+  color: var(--warning);
+}
+
+.tree-dir-changed.add,
+.tree-file-changed.add,
+.git-dot.add {
+  color: var(--success);
+}
+
+.tree-dir-changed.del,
+.tree-file-changed.del,
+.git-dot.del {
+  color: var(--error);
+}
+
+.tree-dir-changed.rename,
+.tree-file-changed.rename,
+.git-dot.rename {
+  color: var(--accent);
+}
+
+.tree-dir-changed.untracked,
+.tree-file-changed.untracked,
+.git-dot.untracked {
+  color: var(--accent-secondary);
+}
+
+.tree-dir-changed.conflict,
+.tree-file-changed.conflict,
+.git-dot.conflict {
+  color: var(--error);
+}
+
+/* ------------------------------------------------------------------ */
+/* Git status badges (explorer rows + editor tabs) — colors map to    */
+/* the theme variables in both palettes.                              */
+/* ------------------------------------------------------------------ */
+
+.git-badge {
+  flex: none;
+  font-size: 13px;
+  line-height: 1.4;
+  min-width: 16px;
+  text-align: center;
+  user-select: none;
+}
+
+.tree-row .git-badge,
+.tree-row .git-dot,
+.sc-row .git-badge {
+  margin-left: auto;
+  /* right-aligned in explorer / source-control rows */
+}
+
+.git-badge.mod {
+  color: var(--warning);
+}
+
+.git-badge.add {
+  color: var(--success);
+}
+
+.git-badge.del {
+  color: var(--error);
+}
+
+.git-badge.rename {
+  color: var(--accent);
+}
+
+.git-badge.untracked {
+  color: var(--accent-secondary);
+}
+
+.git-badge.conflict {
+  color: var(--error);
+}
+
+/* Directory indicator — the same ● and warning color as the dirty dot
+ * on editor tabs, regardless of what changed inside.  Both inherit the
+ * base font, so the glyph is the same size in both places. */
+.git-dot {
+  flex: none;
+  color: var(--warning);
+  user-select: none;
+}

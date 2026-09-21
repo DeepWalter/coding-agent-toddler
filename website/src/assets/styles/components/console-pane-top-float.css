@@ -1,0 +1,59 @@
+/* ConsolePaneTopFloat.vue — the echo of the input box the fold has scrolled
+      past.  The bubble's own clamp, fade and chip are in
+      console-pane-message-bubble.css; this file adds only the lift and the
+      pointer-events rules that keep a wheel over it scrolling the console. */
+
+/* ------------------------------------------------------------------ */
+/* Console top float (the input box the fold has scrolled past)        */
+/* ------------------------------------------------------------------ */
+
+/* The last user box above the fold, echoed over the console's top edge at
+   the pane's own 14px inset.  Out of flow, and the pane reserves no room for
+   it: a float that moved the content it measures would oscillate — appear →
+   rows shift → the row three lines above the fold is now one line above it →
+   hide → rows shift back.  The lift goes on the bubble rather than on this
+   box, so the shadow hugs the box's own radius instead of the pane's full
+   width.  No z-index, for the dock's reason: .console-wrap is not a stacking
+   context and this is its positioned last child, so it paints over the rows.
+   pointer-events: none is load-bearing — the ancestors here do not scroll, so
+   a wheel over the float would scroll nothing and the console would feel
+   frozen under the cursor — and only the reader's chip and an opened box,
+   the two things here that are meant to be used, take the pointer back. */
+.console-top-float {
+  position: absolute;
+  top: 0px;
+  left: 14px;
+  right: 14px;
+  pointer-events: none;
+}
+
+/* Not up: still laid out — the pane measures this box to know where the next
+   input ends the echo — but out of paint, out of the tab order, and out of the
+   accessibility tree. */
+.console-top-float[data-hidden] {
+  visibility: hidden;
+}
+
+/* The box is the transcript's own user box, clamp, fade and chip included —
+   those rules are up with it, not here.  The float adds only its lift. */
+.console-top-float .message-content {
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.25);
+}
+
+/* Opened: the whole input, capped so the box cannot run past the pane and
+   take its own chip out of reach, and scrollable because a cap without a
+   scroll would hide the rest with nothing to reach it.  This is the one place
+   inside the float that wants the wheel, so it is the one that takes the
+   pointer back.  The transcript's opened box needs no cap — the transcript
+   itself scrolls, and the box is a row in it. */
+.console-top-float .message-content:not(.collapsed) {
+  max-height: 55vh;
+  overflow-y: auto;
+  pointer-events: auto;
+}
+
+/* The chip is the float's one control, and the only other thing in here that
+   is meant to be used. */
+.console-top-float .message-toggle {
+  pointer-events: auto;
+}

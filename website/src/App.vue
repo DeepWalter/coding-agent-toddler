@@ -120,9 +120,9 @@ function writeStored(key: string, value: unknown) {
 
 // Color theme: tokyo-night (dark, default) or github-light, applied as
 // named <html data-theme> values matching the CSS theme blocks.  The choice
-// persists in localStorage and every var(--*) in styles.css — including
-// the CodeMirror theme, which reads the same variables — follows the
-// switch.  Stored values from earlier lineups ('"dark"'/'"light"', then
+// persists in localStorage and every var(--*) in assets/styles/theme.css —
+// including the CodeMirror theme, which reads the same variables — follows
+// the switch.  Stored values from earlier lineups ('"dark"'/'"light"', then
 // '"solarized-dark"'/'"solarized-light"') map to the current pair;
 // anything else falls back to dark.
 const THEME_STORAGE_KEY = 'tod.theme'

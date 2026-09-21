@@ -1,0 +1,64 @@
+/* FileExplorer.vue — the tree rows.  The pane header row the explorer shares
+      with the other panes is in shared/pane-headers.css, and the git badge
+      colours in shared/git.css. */
+
+/* ------------------------------------------------------------------ */
+/* File explorer                                                       */
+/* ------------------------------------------------------------------ */
+
+.explorer {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  padding: 0 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tree-row:hover {
+  background: var(--editor-surface-2);
+}
+
+.tree-row.selected {
+  background: var(--accent-fill);
+  /* --text is unreadable on the accent fill in both palettes (~1.2-1.7:1) —
+     white keeps the same pairing as .btn.primary */
+  color: var(--on-accent);
+}
+
+.tree-row.selected .tree-file,
+.tree-row.selected .tree-chevron {
+  color: var(--on-accent);
+}
+
+.tree-chevron {
+  flex: none;
+  width: 10px;
+  color: var(--text-subtle);
+}
+
+.tree-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tree-dir {
+  font-weight: 600;
+}
+
+.tree-file {
+  color: var(--text-subtle);
+}

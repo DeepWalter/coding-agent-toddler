@@ -1,0 +1,92 @@
+/* ConsolePaneStatusMark.vue — the gutter mark, its per-block-kind first-line
+      offsets, and the spinner.  Kept out of console-pane.css because the
+      offsets are written `.stream-row[data-kind=…]>.status-mark`: they copy the
+      `top:` insets from that file's block rules and must move together. */
+
+/* The mark: one per block, outdented into the gutter.  Its box is exactly
+   one line of the global 13px/1.55 type, so it centres on the block's first
+   line; the per-kind rules below move that box down by the block's own top
+   inset. */
+.status-mark {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 14px;
+  height: 1.55em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  user-select: none;
+}
+
+.status-mark.running {
+  color: var(--accent);
+}
+
+.status-mark.ok {
+  color: var(--success);
+}
+
+.status-mark.error {
+  color: var(--error);
+}
+
+.status-mark.cancelled {
+  color: var(--text-subtle);
+}
+
+/* First-line alignment: each `top` is the block's own top inset, copied from
+   its rule below — a card's border plus its padding, a stream line's own
+   padding.  Assistant content and the thought toggle start their first line
+   flush with the block's top, so they take the default.  Child combinators:
+   nothing inside a block renders a mark, and a nested one must never
+   inherit these offsets. */
+.stream-row[data-kind='tool']>.status-mark {
+  top: 7px;
+  /* 1px card border + 6px header padding */
+}
+
+.stream-row[data-kind='plan']>.status-mark {
+  top: 11px;
+  /* 1px card border + 10px card padding */
+}
+
+.stream-row[data-kind='error']>.status-mark {
+  top: 4px;
+  /* .stream-line.error's own padding */
+}
+
+.stream-row[data-kind='notice']>.status-mark,
+.stream-row[data-kind='fold']>.status-mark {
+  top: 2px;
+  /* .stream-line's own padding */
+}
+
+/* Spinner */
+.spinner {
+  width: 11px;
+  height: 11px;
+  border: 2px solid var(--editor-border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex: none;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* The console's one animation, now on a block's gutter mark.  Reduced motion
+   keeps the ring's shape and drops only the rotation: a still 3/4 accent
+   circle still reads "in progress", whereas hiding it or stopping it on a
+   full circle would erase the running state — the one reading the mark is
+   there to give. */
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
+}

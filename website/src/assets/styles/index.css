@@ -1,0 +1,51 @@
+/* Entry point for the app's stylesheets.  Imported once, from main.ts; Vite
+   inlines every @import below into the single CSS asset the build emits.
+
+   The order here is the cascade order, and two positions in it are
+   LOAD-BEARING.  Both tie their target at equal specificity, so nothing but
+   source order decides which wins — moving them will silently change the UI:
+
+     shared/ask-cards.css         AFTER shared/buttons.css
+       the tool-gate and plan-ask rows override `.btn`'s background and color
+     components/source-control.css  AFTER shared/buttons.css
+       `.sc-commit-btn` overrides `.btn`'s `align-self`
+
+   Everything else is specificity-protected or touches disjoint properties on
+   the elements it shares, so the remaining order is for readability: theme
+   and base first, then the shared vocabulary, then components in the order
+   you read the app — shell, console, dock, left panes, editor, diff. */
+
+@import './theme.css';
+@import './base.css';
+@import './layout.css';
+
+@import './shared/pane-headers.css';
+@import './shared/buttons.css';
+@import './shared/menus.css';
+@import './shared/ask-cards.css';
+@import './shared/markdown.css';
+@import './shared/git.css';
+@import './shared/status-dot.css';
+
+@import './components/topbar.css';
+@import './components/console-header.css';
+@import './components/console-pane.css';
+@import './components/console-pane-status-mark.css';
+@import './components/console-pane-message-bubble.css';
+@import './components/console-pane-thinking-block.css';
+@import './components/console-pane-tool-card.css';
+@import './components/console-pane-plan-card.css';
+@import './components/console-pane-top-float.css';
+
+@import './components/console-dock.css';
+@import './components/console-dock-pause-prompt.css';
+@import './components/console-dock-plan-ask.css';
+@import './components/console-dock-input-bar.css';
+@import './components/console-dock-input-bar-model-picker.css';
+
+@import './components/file-explorer.css';
+@import './components/source-control.css';
+@import './components/file-editor.css';
+@import './components/file-editor-diff-view.css';
+@import './components/session-list.css';
+@import './components/status-bar.css';

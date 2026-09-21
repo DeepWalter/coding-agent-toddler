@@ -1,0 +1,15 @@
+/* The connection dot.  Rendered by BOTH App.vue's topbar and StatusBar.vue,
+      so it lives here rather than in either component's file. */
+
+.status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--error);
+}
+
+.status-dot.on {
+  background: var(--success);
+  box-shadow: 0 0 6px var(--success);
+}

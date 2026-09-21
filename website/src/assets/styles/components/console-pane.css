@@ -1,0 +1,109 @@
+/* ConsolePane.vue — the scroller, its gutter, and the row / stream-line
+      shapes.  `.console-wrap` is the offset parent for ConsolePaneTopFloat;
+      the dock's offset parent is `.pane-console` (layout.css).
+      The gutter mark and its per-kind offsets are in
+      console-pane-status-mark.css, which must stay in step with the `top:`
+      insets of the block rules here. */
+
+/* ------------------------------------------------------------------ */
+/* Console                                                             */
+/* ------------------------------------------------------------------ */
+
+.console-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  /* Offset parent for the console's top float (absolute, top-inset), which
+     ConsolePane renders as the scroller's sibling.  The dock uses .pane-console
+     the same way — but this box starts below the header, which is what lets the
+     float sit at the top of the output without measuring the header. */
+  position: relative;
+}
+
+.console-pane {
+  flex: 1;
+  overflow-y: auto;
+  /* Bottom = 14px base + 14px card inset + the card's own height (--bar-h,
+     set by the console dock on .pane-console): pinned output always ends
+     just above the floating card, whatever height it grew to. */
+  padding: 14px 14px calc(28px + var(--bar-h, 0px));
+  /* The transcript's status gutter: the indent every output block gets,
+     and the column its one status mark is outdented into.  One value, so
+     the row's padding and the mark's own box can never drift apart. */
+  --stream-gutter: 22px;
+  /* One tier below the app base: user bubbles (--editor-bg, like the input
+     field) read as recessed wells inside the console instead of vanishing
+     into it. */
+  background: var(--editor-surface);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.console-empty {
+  color: var(--text-muted);
+  text-align: center;
+  margin-top: 12vh;
+}
+
+/* ------------------------------------------------------------------ */
+/* Stream rows — the transcript's indent and its one status mark        */
+/* ------------------------------------------------------------------ */
+
+/* Every block renders inside a row: the row owns the indent (the gutter is
+   its left padding) and holds the block's one status mark, absolutely
+   positioned in that padding.  The pane stretches the row to the content
+   width, so the row is a block box, never a flex row — a card's `flex: none`
+   would then pin its *width* to max-content and long signatures would
+   overflow.  `flex: none` carries the guard the cards used to carry alone:
+   the console pane is a flex column, and an item with non-visible overflow
+   has an automatic minimum size of zero — without it a row shrinks to its
+   content once the transcript overflows the pane. */
+.stream-row {
+  /* The containing block for the mark.  Load-bearing: without it the mark
+     would anchor to the pane and hang there while the transcript scrolled
+     under it. */
+  position: relative;
+  flex: none;
+}
+
+/* User input is the one row that stays flush left: the box is what marks it
+   as something the human typed, and it lines up with the compose field. */
+.stream-row:not([data-kind='user']) {
+  padding-left: var(--stream-gutter);
+}
+
+/* ------------------------------------------------------------------ */
+/* Stream lines (notices / errors)                                     */
+/* ------------------------------------------------------------------ */
+
+.stream-line {
+  padding: 2px 10px;
+  border-left: 2px solid var(--editor-border);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.stream-line.notice {
+  color: var(--text-muted);
+  border-left-color: var(--editor-border);
+}
+
+/* Fold lines — synthetic markers (turn cancelled, compacted) rendered as a
+   dimmed italic divider between turns.  Plain text only, never markdown. */
+.stream-line.fold {
+  color: var(--text-subtle);
+  font-style: italic;
+  border-left-color: transparent;
+}
+
+/* error banner tint — a dimmed error, derived so the theme blocks stay
+   canonical (dark ≈ old #7a2d2a, light ≈ old pale pink #e3b3ad) */
+.stream-line.error {
+  color: var(--error);
+  border-left-color: var(--error);
+  background: color-mix(in srgb, var(--error) 30%, var(--editor-bg));
+  border-radius: 0 4px 4px 0;
+  padding: 4px 10px;
+}

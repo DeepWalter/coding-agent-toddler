@@ -1,0 +1,90 @@
+/* ConsolePaneToolCard.vue — the collapsible tool call card.
+      `.tool-card-section-title` is also rendered by ConsolePanePlanCard, which
+      points here rather than duplicating the rule. */
+
+/* Code-token colors live in the editor's HighlightStyle (theme.ts) — the
+   console renders the same generated classes, so no token rules here. */
+
+/* ------------------------------------------------------------------ */
+/* Tool cards                                                          */
+/* ------------------------------------------------------------------ */
+
+.tool-card {
+  border: 1px solid var(--editor-border);
+  border-radius: 6px;
+  background: var(--editor-surface-2);
+  overflow: hidden;
+  /* The console pane is a flex column: an item with non-visible overflow
+     has an automatic minimum size of zero, so without this a card shrinks
+     to its borders once the transcript overflows the pane. */
+  flex: none;
+}
+
+.tool-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  background: none;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tool-card-header:hover {
+  background: var(--editor-surface-3);
+}
+
+.tool-card-name {
+  font-weight: 600;
+}
+
+.tool-card-state {
+  color: var(--text-muted);
+  font-size: 11px;
+  margin-left: auto;
+}
+
+.tool-card-chevron {
+  color: var(--text-muted);
+}
+
+.tool-card.error {
+  border-color: color-mix(in srgb, var(--error) 65%, var(--editor-bg));
+}
+
+.tool-card-body {
+  padding: 8px 10px;
+  border-top: 1px solid var(--editor-border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tool-card-section-title {
+  color: var(--text-subtle);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 2px;
+}
+
+.tool-card-pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  font: inherit;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.tool-card-pre.dim {
+  color: var(--text-muted);
+}
+
+.tool-card-pre.error-text {
+  color: var(--error);
+}

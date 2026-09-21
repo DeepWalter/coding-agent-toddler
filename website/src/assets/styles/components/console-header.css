@@ -1,0 +1,110 @@
+/* ConsoleHeader.vue — the in-place editable conversation title.
+      `.console-title`'s weight is set by the shared pane-header row; this file
+      deliberately uses font-family/font-size rather than the `font` shorthand
+      so it does not reset that weight. */
+
+/* The console header has no meta line and no action button, so it is all
+   title.  It is a <button>, so the whole block is the rename target, and it
+   hugs its text: the hover highlight then reads as a block around the title
+   rather than a lit-up row.  A long title still ellipsizes, clamped to the
+   row's width; `font-family/size` rather than the `font` shorthand, which
+   would reset the weight this shares with the explorer's title above.
+   Disabled = no conversation yet (or the socket is down): no highlight, no
+   pen, and a click that edits nothing. */
+.console-title {
+  flex: none;
+  max-width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  /* The padding is what gives the highlight block its body; the negative
+     margins cancel it again, so the title's text keeps the row's own left
+     edge instead of stepping 6px in from it. */
+  margin: 0 -6px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  /* line-height 1 + the 2px padding = a 17px box, inside the row's 21px
+     content box — the header must not grow when the block lights up. */
+  line-height: 1;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.console-title-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Kept in flow at all times — hover only fades the pen in, so the block
+   never changes width under the pointer. */
+.console-title-pen {
+  flex: none;
+  opacity: 0;
+}
+
+.console-title:not(:disabled):hover,
+.console-title:not(:disabled):focus-visible {
+  background: var(--editor-surface-2);
+}
+
+.console-title:not(:disabled):hover .console-title-pen,
+.console-title:not(:disabled):focus-visible .console-title-pen {
+  opacity: 1;
+}
+
+.console-title:disabled {
+  cursor: default;
+}
+
+.console-title:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+/* The same slot in edit mode, sized to the title it holds: the sizer is in
+   flow and invisible, the input is laid over it.  Both carry the same font,
+   padding and border, so the box is exactly as wide as the text inside it —
+   and stays that way as it is typed into.  The 1px transparent border is
+   the sizer's half of that agreement; only the input paints it. */
+.console-title-field {
+  position: relative;
+  display: flex;
+  min-width: 6ch;
+  max-width: 100%;
+  margin: 0 -6px;
+}
+
+.console-title-sizer,
+.console-title-input {
+  font: inherit;
+  line-height: 1;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  white-space: pre;
+}
+
+.console-title-sizer {
+  flex: none;
+  visibility: hidden;
+}
+
+.console-title-input {
+  position: absolute;
+  inset: 0;
+  background: var(--editor-bg);
+  border-color: var(--accent);
+  border-radius: 4px;
+  color: var(--text-bright);
+}
+
+.console-title-input:focus {
+  /* The accent border is the focus indicator; the UA ring would double it. */
+  outline: none;
+}

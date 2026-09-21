@@ -1,0 +1,170 @@
+/* FileEditorDiffView.vue — the side-by-side columns and the hunk action rail.
+      `.diff-tag` is also rendered by FileEditor's tab strip; `.diff-action-btn`
+      (shared with the source control rows) is in shared/git.css. */
+
+/* ------------------------------------------------------------------ */
+/* Side-by-side diff view (diff tabs in the editor pane)               */
+/* ------------------------------------------------------------------ */
+
+.diff {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.diff-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--editor-border);
+  background: var(--editor-surface);
+  flex: none;
+}
+
+.diff-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff-tag {
+  flex: none;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--editor-surface-2);
+  color: var(--text-subtle);
+  user-select: none;
+}
+
+.diff-status {
+  flex: none;
+  max-width: 45%;
+  color: var(--text-muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-subtle);
+  padding: 12px;
+  text-align: center;
+}
+
+.diff-empty.error {
+  color: var(--error);
+}
+
+.diff-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.diff-col {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  background: var(--editor-surface);
+}
+
+/* Sticky column header: stays pinned on vertical scroll inside the
+ * column, scrolls away with the text horizontally (VSCode keeps it too). */
+.diff-col-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--editor-surface-2);
+  color: var(--line-number);
+  font-size: 11px;
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--editor-border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Fixed line-height + `pre` + min-height on empty cells is what makes
+ * both columns' rows pixel-identical, so scroll sync is exact. */
+.diff-row {
+  display: flex;
+  font: 13px/1.5 var(--mono);
+  white-space: pre;
+  min-height: 1.5em;
+}
+
+.diff-gutter {
+  flex: none;
+  min-width: 4ch;
+  padding: 0 8px;
+  text-align: right;
+  color: var(--line-number);
+  /* Opaque + sticky left: line numbers stay pinned while long lines
+   * scroll horizontally underneath them. */
+  background: var(--editor-surface);
+  position: sticky;
+  left: 0;
+  user-select: none;
+}
+
+.diff-text {
+  flex: 1;
+  min-width: 0;
+  color: var(--text);
+}
+
+/* The empty cell on the missing side takes the same class, so a
+ * deletion leaves a red slot on the right and an addition on the left —
+ * the row class rides both columns (rowClass() in DiffView). */
+.diff-row.del .diff-text {
+  background: color-mix(in srgb, var(--error) 12%, transparent);
+}
+
+.diff-row.add .diff-text {
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+}
+
+.diff-noeol {
+  color: var(--text-subtle);
+  font-style: italic;
+}
+
+/* The action rail: a thin fixed column between the two sides.  Each
+ * hunk's button pair is absolutely positioned on it, pinned to the
+ * hunk's middle by --hunk-top (content px, from the row offset math)
+ * minus --scroll-top (rewritten on every scroll); overflow: hidden
+ * clips pairs that scroll out of view. */
+.diff-mid {
+  flex: none;
+  width: 26px;
+  position: relative;
+  overflow: hidden;
+  border-left: 1px solid var(--editor-border);
+  border-right: 1px solid var(--editor-border);
+  background: var(--editor-surface);
+}
+
+.diff-action-group {
+  position: absolute;
+  left: 50%;
+  top: calc(var(--hunk-top) - var(--scroll-top, 0px));
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+/* Apply errors land under the header, between it and the columns —
+ * styling shared with the source-control panel's .sc-error above. */

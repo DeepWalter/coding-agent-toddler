@@ -1,0 +1,229 @@
+/* ConsoleDockInputBarModelPicker.vue — the model/effort pill, its menu rows,
+      and the effort rail.  The popup surface it shares with the mode menu is in
+      shared/menus.css. */
+
+/* ------------------------------------------------------------------ */
+/* Model + effort picker (in the input bar's meta row)                 */
+/* ------------------------------------------------------------------ */
+
+.model-picker {
+  position: relative;
+  display: inline-flex;
+  /* The popup is a child, and the row's name ellipsizes inside the pill —
+     so the shrink has to stop here, not at .input-bar-meta. */
+  min-width: 0;
+}
+
+/* Ellipsized as one line rather than a flex row: a narrow console pane
+   leaves the meta row only so much, and the whole pill truncating reads
+   the way the model text it replaced did — where an unshrinkable part
+   would spill past the border. */
+.model-toggle {
+  min-width: 0;
+  overflow: hidden;
+  padding: 3px 10px;
+  border: 1px solid var(--editor-border);
+  border-radius: 999px;
+  background-color: var(--editor-surface-2);
+  color: var(--text-subtle);
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.model-toggle:hover:not(:disabled) {
+  background-color: var(--editor-surface-3);
+}
+
+.model-toggle:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.model-toggle-effort {
+  color: var(--text-muted);
+}
+
+/* A row: the slot's name, the spec it names, and that spec's window. */
+.model-menu-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.model-menu-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.model-menu-spec {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.model-menu-window {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-subtle);
+}
+
+/* The fourth row: a label that cycles, over the four-stop rail.  It is a
+   group rather than a menuitemradio — the rail is one control, not one
+   more radio — so it gets its own separator above it. */
+.effort-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 2px;
+  padding: 6px 10px 4px;
+  border-top: 1px solid var(--editor-border);
+}
+
+.effort-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* A plain button, not a menu item: clicking it steps the tier. */
+.effort-label {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.effort-label:hover:not(:disabled) {
+  color: var(--accent-hover);
+}
+
+.effort-label:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.effort-value {
+  font-size: 11px;
+  color: var(--accent);
+}
+
+/* Padding only — the rail inside is the measured element, so its 0%…100%
+   span is exactly the stops, and whatever overhangs the rail's ends (the
+   bar, then the knob) draws into this.  Sized to the overhang: half the
+   bar's height, since the bar reaches a cap radius past the rail at each
+   end.  It is the bar and not the knob that sets the number — 8px against
+   the knob's 6px — so a taller bar means a wider padding here, or the ends
+   spill into the row's own. */
+.effort-track {
+  padding: 0 8px;
+}
+
+.effort-rail {
+  position: relative;
+  height: 18px;
+  cursor: pointer;
+  /* A drag must not scroll the console behind the dock, and must not
+     select the menu's text on the way across. */
+  touch-action: none;
+  user-select: none;
+}
+
+.effort-rail[aria-disabled='true'] {
+  cursor: default;
+}
+
+.effort-rail:focus-visible {
+  border-radius: 4px;
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Every decoration is inert to the pointer: a hit must land on the rail
+   itself (which is the drag's capture target), never on the knob that
+   happens to be under the cursor. */
+.effort-line,
+.effort-fill,
+.effort-stop,
+.effort-knob {
+  position: absolute;
+  pointer-events: none;
+}
+
+/* A pill, so both of the bar's ends are round: 999px clamps to half the
+   height, and the fill shares the radius so its left end lands exactly on
+   the bar's instead of squaring off the corner it covers. */
+.effort-line,
+.effort-fill {
+  top: 50%;
+  height: 16px;
+  border-radius: 999px;
+  transform: translateY(-50%);
+}
+
+/* 8px past the rail at each end — half the bar's height, i.e. exactly the
+   cap radius, which is what parks the first and last stops at the *centres*
+   of the two round caps: the markers keep the rail as their coordinate
+   system (its 0%…100%) and the bar grows to cover them, rather than the
+   markers being nudged in to fit.  Being absolutely positioned, the overhang
+   costs the row no width and shifts no layout; .effort-track's padding is
+   what reserves room for it. */
+.effort-line {
+  left: -8px;
+  right: -8px;
+  background: var(--editor-border);
+}
+
+/* --t (0…1) is the knob's position, set inline from the live stop.  Both
+   offsets are the bar's own height: the -8px left (half of it) starts the
+   fill where the bar starts, and the +16px carries its right cap past the
+   knob, which lands that cap concentric with the knob's disc and one cap
+   radius (8px) wide.  The knob is 12px against that radius, so the 2px it
+   falls short by is what shows as accent around the handle — the knob sits
+   in the bar with 2px of it on every side, filled side included.  The
+   extremes fall out of the same numbers: at `none` the fill is a bar-high
+   stub with the knob centred in it, and at the top it is exactly the whole
+   bar. */
+.effort-fill {
+  left: -8px;
+  width: calc(var(--t, 0) * 100% + 16px);
+  background: var(--accent);
+}
+
+/* Each stop carries its own --t fraction, the same one the knob and the
+   fill use — so the count is the component's business, not the sheet's.
+   Centred on its stop, which at the two ends is the rail's own edge: that
+   is the seam the bar reaches across, above. */
+.effort-stop {
+  left: calc(var(--t, 0) * 100%);
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  opacity: 0.55;
+  transform: translate(-50%, -50%);
+}
+
+.effort-knob {
+  left: calc(var(--t, 0) * 100%);
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  /* No transition: the knob tracks a drag, and easing it would leave it
+     lagging behind the pointer for the length of the gesture. */
+  transform: translate(-50%, -50%);
+}

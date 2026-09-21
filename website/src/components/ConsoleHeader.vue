@@ -4,7 +4,8 @@ import { MAX_TITLE_LENGTH } from '../types'
 
 /** The console pane's title row — the live conversation's title, editable
  *  in place.  It renders on the same row as the explorer's and the source
- *  control panel's headers (see .console-header in styles.css). */
+ *  control panel's headers (see .console-header in
+ *  assets/styles/shared/pane-headers.css). */
 const props = defineProps<{
   title: string
   /** False with no conversation to retitle (before the first hello) or with

@@ -1,0 +1,83 @@
+/* Pane chrome shared by FileExplorer, SourceControl, ConsoleHeader and
+      FileEditorDiffView: the one header row, its titles, the refresh button,
+      and the explorer/source-control list and empty states. */
+
+/* One row for every pane header — explorer, source control, console — so
+   the three line up across the split.  min-height holds that row whatever
+   the content: the console header is title-only, and would otherwise come
+   out a few px shorter than the two carrying a refresh button. */
+.explorer-header,
+.sc-header,
+.console-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--editor-border);
+  background: var(--editor-surface);
+  flex: none;
+  min-height: 34px;
+}
+
+.explorer-title,
+.sc-title,
+.console-title {
+  font-weight: 600;
+}
+
+.explorer-root,
+.sc-branch {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-subtle);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.explorer-refresh,
+.sc-refresh,
+.diff-refresh {
+  flex: none;
+  background: none;
+  border: 1px solid var(--editor-border);
+  border-radius: 4px;
+  color: var(--text);
+  font: inherit;
+  line-height: 1;
+  padding: 3px 7px;
+  cursor: pointer;
+}
+
+.explorer-refresh:hover:not(:disabled),
+.sc-refresh:hover:not(:disabled),
+.diff-refresh:hover:not(:disabled) {
+  background: var(--editor-surface-2);
+}
+
+.explorer-refresh:disabled,
+.sc-refresh:disabled,
+.diff-refresh:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.explorer-list,
+.sc-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.explorer-empty,
+.sc-empty {
+  color: var(--text-subtle);
+  padding: 10px;
+}
+
+.explorer-empty.error,
+.sc-empty.error {
+  color: var(--error);
+}

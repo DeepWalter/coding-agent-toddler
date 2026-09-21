@@ -1,0 +1,97 @@
+/* ConsolePanePlanCard.vue — the transcript's plan card and its step statuses.
+      `.plan-card-feedback` is also rendered by ConsoleDockPlanAsk, and
+      `.tool-card-section-title` is borrowed from console-pane-tool-card.css. */
+
+/* ------------------------------------------------------------------ */
+/* Plan card                                                           */
+/* ------------------------------------------------------------------ */
+
+.plan-card {
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--editor-surface-2);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.plan-card-title {
+  font-weight: 600;
+}
+
+.plan-card-summary {
+  color: var(--text-muted);
+}
+
+.plan-card-steps {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.step-status {
+  display: inline-block;
+  min-width: 74px;
+  margin-right: 6px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.step-status.status-in_progress {
+  color: var(--warning);
+}
+
+.step-status.status-completed {
+  color: var(--success);
+}
+
+.step-status.status-failed {
+  color: var(--error);
+}
+
+.plan-card-note {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.plan-card-section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.plan-card-section ul {
+  margin: 2px 0 0;
+  padding-left: 18px;
+}
+
+.plan-card-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.plan-card-feedback {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.plan-card-feedback textarea {
+  background: var(--editor-bg);
+  color: var(--text);
+  border: 1px solid var(--editor-border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: inherit;
+  resize: vertical;
+  outline: none;
+}
+
+.plan-card-feedback textarea:focus {
+  border-color: var(--accent-hover);
+}

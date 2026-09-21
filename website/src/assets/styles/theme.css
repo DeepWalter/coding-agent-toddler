@@ -1,0 +1,207 @@
+/* tod console — monospace, minimal.  Themes are named blocks applied as
+   <html data-theme="..."> by App.vue (before first paint, in index.html).
+   The selectable pair is tokyo-night (dark, default) and github-light,
+   toggled by the sun/moon button; the original solarized dark/light blocks
+   are kept in code below.  Every block defines the same variable set, so
+   each component, the CodeMirror theme, and the console's highlighted code
+   spans follow whichever block is active. */
+
+/* Shared, not theme-specific: the monospace stack and text used on solid
+   accent fills (primary/danger buttons, selected rows). */
+:root {
+  --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+  --on-accent: #fff;
+}
+
+[data-theme="solarized-dark"] {
+  color-scheme: dark;
+  /* Base colors */
+  --editor-bg: #002b36;
+  --editor-surface: #073642;
+  --editor-surface-2: #0a4553;
+  --editor-surface-3: #0f4a58;
+  --editor-border: #586e75;
+
+  /* Text */
+  --text: #839496;
+  --text-bright: #93a1a1;
+  --text-muted: #657b83;
+  --text-subtle: #586e75;
+
+  /* Syntax highlighting */
+  --keyword: #859900;
+  --function: #268bd2;
+  --string: #2aa198;
+  --number: #d33682;
+  --comment: #586e75;
+  --variable: #b58900;
+  --operator: #859900;
+  --tag: #268bd2;
+  --attribute: #b58900;
+  --constant: #d33682;
+  --type: #cb4b16;
+
+  /* Editor states */
+  --selection: #073642;
+  --cursor: #93a1a1;
+  --line-number: #586e75;
+  --line-number-active: #93a1a1;
+  --active-line: #073642;
+
+  /* UI */
+  --accent: #268bd2;
+  --accent-hover: #2aa198;
+  /* solid accent fills (primary buttons, selected rows) — the old
+     accent-dim, deep enough for white text */
+  --accent-fill: #1e6fa5;
+  --accent-secondary: #859900;
+  --error: #dc322f;
+  --warning: #b58900;
+  --success: #859900;
+}
+
+[data-theme="solarized-light"] {
+  color-scheme: light;
+  /* Base colors */
+  --editor-bg: #fdf6e3;
+  --editor-surface: #eee8d5;
+  --editor-surface-2: #e4ddc8;
+  --editor-surface-3: #ddd6c0;
+  --editor-border: #93a1a1;
+
+  /* Text */
+  --text: #657b83;
+  --text-bright: #586e75;
+  --text-muted: #839496;
+  --text-subtle: #93a1a1;
+
+  /* Syntax highlighting */
+  --keyword: #859900;
+  --function: #268bd2;
+  --string: #2aa198;
+  --number: #d33682;
+  --comment: #93a1a1;
+  --variable: #b58900;
+  --operator: #859900;
+  --tag: #268bd2;
+  --attribute: #b58900;
+  --constant: #d33682;
+  --type: #cb4b16;
+
+  /* Editor states */
+  --selection: #eee8d5;
+  --cursor: #586e75;
+  --line-number: #93a1a1;
+  --line-number-active: #586e75;
+  --active-line: #eee8d5;
+
+  /* UI */
+  --accent: #268bd2;
+  --accent-hover: #2aa198;
+  --accent-fill: #1e6fa5;
+  --accent-secondary: #859900;
+  --error: #dc322f;
+  --warning: #b58900;
+  --success: #859900;
+}
+
+[data-theme="tokyo-night"] {
+  color-scheme: dark;
+  --editor-bg: #1a1b26;
+  --editor-surface: #16161e;
+  --editor-surface-2: #24283b;
+  --editor-surface-3: #2c3046;
+  --editor-border: #292e42;
+
+  --text: #c0caf5;
+  /* Retuned from the shipped #565f89/#3b4261 — those read ~2.6:1 and
+     ~1.3:1 on #1a1b26, too dim for the app's chrome roles (bars, meta,
+     file names, inactive tabs).  Both tiers now sit at the bright end of
+     the tokyonight.nvim palette (fg / fg_dark) — white-ish on the dark
+     background. */
+  --text-muted: #c0caf5;
+  --text-subtle: #a9b1d6;
+
+  --keyword: #bb9af7;
+  --function: #7aa2f7;
+  --string: #9ece6a;
+  --number: #ff9e64;
+  /* Retuned from #565f89 (~2.6:1) — a step brighter, still quiet */
+  --comment: #737aa2;
+  --variable: #e0af68;
+  --operator: #89ddff;
+  --tag: #f7768e;
+  --attribute: #7dcfff;
+
+  --selection: #33467c;
+  --cursor: #c0caf5;
+  /* Retuned from #3b4261 (~1.3:1) — one step brighter, still quieter
+     than comments so the gutter stays background chrome */
+  --line-number: #565f89;
+  --line-number-active: #737aa2;
+
+  --accent: #7aa2f7;
+  --accent-hover: #89ddff;
+  /* App-required (the block doesn't ship it): tokyonight blue0 — solid
+     accent fills (primary buttons, selected rows), deep enough for white
+     text (~6.6:1) */
+  --accent-fill: #3d59a1;
+
+  /* Derived — the tokyo-night block above doesn't ship these, but the app
+     needs them; values are the canonical tokyonight.nvim palette so
+     nothing falls through unset. */
+  --text-bright: #c0caf5;
+  --constant: #bb9af7;
+  --type: #e0af68;
+  --active-line: #16161e;
+  --accent-secondary: #9ece6a;
+  --error: #db4b4b;
+  --warning: #e0af68;
+  --success: #9ece6a;
+}
+
+[data-theme="github-light"] {
+  color-scheme: light;
+  /* Base colors */
+  --editor-bg: #ffffff;
+  --editor-surface: #f6f8fa;
+  --editor-surface-2: #eaeef2;
+  --editor-surface-3: #e1e6ec;
+  --editor-border: #d0d7de;
+
+  /* Text */
+  --text: #24292f;
+  --text-bright: #1f2328;
+  --text-muted: #57606a;
+  --text-subtle: #8c959f;
+
+  /* Syntax highlighting */
+  --keyword: #cf222e;
+  --function: #8250df;
+  --string: #0a3069;
+  --number: #0550ae;
+  --comment: #6e7781;
+  --variable: #953800;
+  --operator: #cf222e;
+  --tag: #116329;
+  --attribute: #0550ae;
+  --constant: #0550ae;
+  --type: #953800;
+
+  /* Editor states */
+  --selection: #b6d7ff;
+  --cursor: #24292f;
+  --line-number: #8c959f;
+  --line-number-active: #24292f;
+  --active-line: #f6f8fa;
+
+  /* UI */
+  --accent: #0969da;
+  --accent-hover: #0550ae;
+  /* same as --accent — white text clears on it (~5.5:1) */
+  --accent-fill: #0969da;
+  --accent-secondary: #8250df;
+  --error: #cf222e;
+  --warning: #9a6700;
+  --success: #1a7f37;
+}

@@ -1,0 +1,101 @@
+/* ConsolePaneMessageBubble.vue — the user box, its three-line clamp and fade,
+      and the more/less chip.  Rendered twice: as a transcript row (ConsolePane)
+      and as the echo (ConsolePaneTopFloat), which adds only its lift. */
+
+.message {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-width: 100%;
+}
+
+/* Assistant content is plain — the user box below is the only boxed text,
+   so turns are delimited by the boxes and need no role labels. */
+.message-content {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+/* User input — bordered box.  The accent border is what marks it as
+   something the human typed; the fill matches the input bar's field (both
+   are --editor-bg), so console messages and the compose box read as the
+   same surface.  Relative: the more/less toggle floats inside it. */
+.message.user .message-content {
+  position: relative;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: var(--editor-bg);
+}
+
+/* Collapsed user input: three lines, and the fade below if there are more of
+   them.  The text keeps its own breaks — the base rule's pre-wrap — rather
+   than being flattened into one line, which is what turned the reader's
+   newlines into spaces.  3 × 13px/1.55 mono line-height ≈ 60px, plus the
+   box's 8px padding and 1px border; the second declaration is the same via
+   the modern lh unit, so the cut lands on a line boundary whatever the type
+   scale is. */
+.message.user .message-content.collapsed {
+  max-height: 78px;
+  max-height: calc(3lh + 18px);
+  overflow: hidden;
+}
+
+/* The fade: the box's own fill laid over the bottom 4.5em — the whole of the
+   reading the clamp shows, three lines at the 1.55 line-height — so the cut
+   reads as "there is more" rather than as a message that happens to end
+   there.  It waits on the measure (data-clamped) because a message that fits
+   its three lines has nothing to point at, and on the collapse because an
+   opened box that still overflows scrolls — a gradient over a scroll lies
+   about where the content ends.  The box is position: relative (above), so
+   this rides inside its radius and its clip.
+
+   ::before, not ::after: the chip is positioned in the same corner, and among
+   positioned siblings with no z-index anywhere, tree order is paint order —
+   and a pseudo-element is generated as the first child, or the last. */
+.message.user .message-content.collapsed[data-clamped]::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 4.5em;
+  background: linear-gradient(to bottom, transparent, var(--editor-bg));
+}
+
+/* The floating toggle reserves the box's bottom-right corner (same width in
+   both states, so expanding never reflows the text), leaving the chip clear
+   of the content whether the box is three lines or many.  It is the chip's own
+   width plus a gap: widen the label and this has to follow it. */
+.message.user .message-content.has-toggle {
+  padding-right: 76px;
+}
+
+/* The chip is a target, and it is sized to the box it opens: 1.5 transcript
+   lines — half the three-line box it sits in — which is 1.5 × 13px/1.55 ≈ 30px.
+   Written out rather than derived, because neither unit can say it: `lh` on
+   line-height is self-referential, and `em` would measure the chip's own label
+   rather than the transcript's line.  The label is a step up from that 13px
+   base rather than down from it: the chip carries a word, and at a 30px height
+   a smaller one reads as a caption in a button-shaped hole. */
+.message-toggle {
+  position: absolute;
+  right: 6px;
+  bottom: 5px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text-subtle) 12%, transparent);
+  font-size: 14px;
+  line-height: 30px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+/* Hover takes the fill most of the way to the text tier rather than a nudge:
+   against the box's own --editor-bg, a 12%-to-22% step is barely a shade. */
+.message-toggle:hover {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--text-subtle) 45%, transparent);
+}

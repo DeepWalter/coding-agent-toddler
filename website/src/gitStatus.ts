@@ -5,7 +5,8 @@ import type { GitStatusLetter } from './types'
  * FileExplorer, FileEditor, FileEditorDiffView, and SourceControl.
  */
 
-/** Letter → CSS modifier class (colors in styles.css, both themes). */
+/** Letter → CSS modifier class (colors in assets/styles/shared/git.css,
+ *  both themes). */
 const GIT_LETTER_CLASS: Record<GitStatusLetter, string> = {
   M: 'mod',
   A: 'add',

@@ -1,0 +1,17 @@
+/* SessionList.vue — the session picker in the top bar.
+ */
+
+.session-select select {
+  background: var(--editor-surface-2);
+  color: var(--text);
+  border: 1px solid var(--editor-border);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 8px;
+  max-width: 220px;
+}
+
+.session-select select:disabled {
+  opacity: 0.5;
+}

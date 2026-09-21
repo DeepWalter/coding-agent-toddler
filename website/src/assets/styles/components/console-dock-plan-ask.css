@@ -1,0 +1,51 @@
+/* ConsoleDockPlanAsk.vue — the dock's compact plan decision bar.  Its
+      action-row overrides live in shared/ask-cards.css. */
+
+/* ------------------------------------------------------------------ */
+/* Plan ask (compact decision bar in the console dock)                 */
+/* ------------------------------------------------------------------ */
+
+.plan-ask {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.plan-ask-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.plan-ask-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.plan-ask-label {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.plan-ask-summary {
+  color: var(--text-muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-ask-meta {
+  opacity: 0.7;
+}
+
+.plan-ask-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}

@@ -1,0 +1,40 @@
+/* StatusBar.vue — the bottom bar.  The connection dot it shares with
+      App.vue's topbar is in shared/status-dot.css. */
+
+/* ------------------------------------------------------------------ */
+/* Status bar                                                          */
+/* ------------------------------------------------------------------ */
+
+.status-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 14px;
+  border-top: 1px solid var(--editor-border);
+  background: var(--editor-surface);
+  color: var(--text-muted);
+  font-size: 11px;
+  flex: none;
+}
+
+.status-dim {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.status-branch-icon {
+  flex: none;
+}
+
+.status-busy {
+  margin-left: auto;
+  color: var(--warning);
+}
