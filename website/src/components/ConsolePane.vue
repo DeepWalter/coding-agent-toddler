@@ -3,12 +3,12 @@ import { nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import type { Block } from '../types'
 import { renderMarkdown } from '../markdown'
 import { blockStatus } from '../blockStatus'
-import ConsoleTopFloat from './ConsoleTopFloat.vue'
-import MessageBubble from './MessageBubble.vue'
-import PlanCard from './PlanCard.vue'
-import StatusMark from './StatusMark.vue'
-import ThinkingBlock from './ThinkingBlock.vue'
-import ToolCard from './ToolCard.vue'
+import ConsolePaneTopFloat from './ConsolePaneTopFloat.vue'
+import ConsolePaneMessageBubble from './ConsolePaneMessageBubble.vue'
+import ConsolePanePlanCard from './ConsolePanePlanCard.vue'
+import ConsolePaneStatusMark from './ConsolePaneStatusMark.vue'
+import ConsolePaneThinkingBlock from './ConsolePaneThinkingBlock.vue'
+import ConsolePaneToolCard from './ConsolePaneToolCard.vue'
 
 const props = defineProps<{
   blocks: Block[]
@@ -88,7 +88,7 @@ let floatHint = 0
 const floatText = ref<string | null>(null)
 const floatId = ref<number | null>(null)
 const floatShown = ref(false)
-const floatBox = ref<InstanceType<typeof ConsoleTopFloat> | null>(null)
+const floatBox = ref<InstanceType<typeof ConsolePaneTopFloat> | null>(null)
 
 function toggleFloat() {
   if (floatId.value !== null) toggleExpanded(floatId.value)
@@ -321,23 +321,23 @@ function rowStatus(block: Block) {
            stays flush left.  data-kind carries the Block member rather
            than a class of the same name, which would one day collide with
            a component's own rule (.thinking already exists). -->
-      <StatusMark :status="rowStatus(block)" />
-      <MessageBubble
+      <ConsolePaneStatusMark :status="rowStatus(block)" />
+      <ConsolePaneMessageBubble
         v-if="block.kind === 'user'"
         :role="'user'"
         :text="block.text"
         :expanded="expandedIds.has(block.id)"
         @toggle="toggleExpanded(block.id)"
       />
-      <MessageBubble
+      <ConsolePaneMessageBubble
         v-else-if="block.kind === 'assistant'"
         :role="'assistant'"
         :text="block.content"
         @open-file="(path) => emit('open-file', path)"
       />
-      <ThinkingBlock v-else-if="block.kind === 'thinking'" :block="block" />
-      <ToolCard v-else-if="block.kind === 'tool'" :block="block" />
-      <PlanCard
+      <ConsolePaneThinkingBlock v-else-if="block.kind === 'thinking'" :block="block" />
+      <ConsolePaneToolCard v-else-if="block.kind === 'tool'" :block="block" />
+      <ConsolePanePlanCard
         v-else-if="block.kind === 'plan'"
         :block="block"
         :awaiting="awaitingPlanId === block.id"
@@ -369,7 +369,7 @@ function rowStatus(block: Block) {
        reason it lands below the header without knowing the header's height.
        Outside the scroller: it echoes content that has scrolled away, so it
        must not scroll with it. -->
-  <ConsoleTopFloat
+  <ConsolePaneTopFloat
     v-if="floatText !== null"
     ref="floatBox"
     :text="floatText"

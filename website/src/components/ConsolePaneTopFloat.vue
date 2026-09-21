@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import MessageBubble from './MessageBubble.vue'
+import ConsolePaneMessageBubble from './ConsolePaneMessageBubble.vue'
 
 // The console's top float: the input box the fold has reached, echoed over the
 // pane's top edge.  ConsolePane owns *which* box that is — that part is scroll
@@ -39,7 +39,7 @@ defineExpose({ box })
     class="console-top-float"
     :data-hidden="shown ? undefined : ''"
   >
-    <MessageBubble
+    <ConsolePaneMessageBubble
       :role="'user'"
       :text="text"
       :expanded="expanded"

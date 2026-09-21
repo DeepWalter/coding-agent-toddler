@@ -80,7 +80,7 @@ export interface ReplayMessage {
   fold?: 'cancelled' | 'compacted'
   /**
    * Tool-call replay — present when role === 'tool'.  Mirrors the
-   * tool_call_end payload so the reducer builds the same ToolCard block;
+   * tool_call_end payload so the reducer builds the same ConsolePaneToolCard block;
    * result is null for a use that never executed (cancelled turn).
    */
   tool_id?: string
@@ -98,7 +98,7 @@ export interface PausedFrame {
 
 /** A plan awaiting (or already running under) approval, as replayed by
  * hello.plan — the server snapshots plan_proposed + the latest
- * plan_step_update so a reconnecting tab re-renders its PlanCard. */
+ * plan_step_update so a reconnecting tab re-renders its ConsolePanePlanCard. */
 export interface PlanSnapshot {
   plan: Plan
   steps: PlanStepRow[]
@@ -231,7 +231,7 @@ export type Block =
       reasoning: string
       /** Still streaming; `open` has tool-block semantics (the turn's
        *  terminal frame closes it, user clicks never do).  Expanded or
-       *  collapsed is local to ThinkingBlock. */
+       *  collapsed is local to ConsolePaneThinkingBlock. */
       open: boolean
     }
   | {
