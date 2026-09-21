@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { Mode, ModelSlotInfo } from '../types'
-import ModelPicker from './ModelPicker.vue'
+import ConsoleDockInputBarModelPicker from './ConsoleDockInputBarModelPicker.vue'
 import { usePicker } from '../composables/usePicker'
 
 const props = defineProps<{
@@ -311,7 +311,7 @@ onMounted(() => {
         </div>
         <template v-if="model">
           <span class="input-bar-meta-sep">·</span>
-          <ModelPicker
+          <ConsoleDockInputBarModelPicker
             :model="model"
             :model-slot="modelSlot"
             :effort="effort"

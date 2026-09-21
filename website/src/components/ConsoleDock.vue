@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import type { Block, Mode, ModelSlotInfo, Paused } from '../types'
-import InputBar from './InputBar.vue'
-import PausePrompt from './PausePrompt.vue'
-import PlanAsk from './PlanAsk.vue'
+import ConsoleDockInputBar from './ConsoleDockInputBar.vue'
+import ConsoleDockPausePrompt from './ConsoleDockPausePrompt.vue'
+import ConsoleDockPlanAsk from './ConsoleDockPlanAsk.vue'
 
 // One floating card occupies the console's bottom slot at any time: the tool
 // gate (state.paused), a plan awaiting THIS tab's decision, or the input bar.
@@ -38,13 +38,14 @@ const emit = defineEmits<{
 }>()
 
 // The draft survives the bar being swapped out for a confirmation: the dock
-// stays mounted, so this ref outlives any InputBar instance reading it.
+// stays mounted, so this ref outlives any ConsoleDockInputBar instance
+// reading it.
 const draft = ref('')
 
-// --bar-h handshake, moved up from InputBar: the dock is positioned against
-// .pane-console (its parentElement — the template places it there), and the
-// scroller's bottom padding reads --bar-h so pinned output ends just above
-// whichever card floats, at whatever height it grew to.
+// --bar-h handshake, moved up from ConsoleDockInputBar: the dock is positioned
+// against .pane-console (its parentElement — the template places it there),
+// and the scroller's bottom padding reads --bar-h so pinned output ends just
+// above whichever card floats, at whatever height it grew to.
 const dockEl = ref<HTMLElement | null>(null)
 let dockObserver: ResizeObserver | null = null
 
@@ -62,7 +63,7 @@ onBeforeUnmount(() => dockObserver?.disconnect())
 
 <template>
   <div ref="dockEl" class="console-dock">
-    <PausePrompt
+    <ConsoleDockPausePrompt
       v-if="paused"
       :paused="paused"
       :busy="busy"
@@ -70,7 +71,7 @@ onBeforeUnmount(() => dockObserver?.disconnect())
       @deny="emit('deny-tool')"
       @cancel="emit('cancel')"
     />
-    <PlanAsk
+    <ConsoleDockPlanAsk
       v-else-if="awaitingPlan"
       :key="awaitingPlan.id"
       :block="awaitingPlan"
@@ -79,7 +80,7 @@ onBeforeUnmount(() => dockObserver?.disconnect())
       @reject="(planId, feedback) => emit('reject-plan', planId, feedback)"
       @cancel="emit('cancel')"
     />
-    <InputBar
+    <ConsoleDockInputBar
       v-else
       v-model:draft="draft"
       :busy="busy"
