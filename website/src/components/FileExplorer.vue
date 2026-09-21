@@ -121,6 +121,12 @@ function badgeFor(node: TreeNode): string {
   return letter ?? ''
 }
 
+/** The chevron a row shows: directories open or closed, files neither. */
+function chevronFor(node: TreeNode): string {
+  if (node.type !== 'dir') return ''
+  return expanded.value[node.path] ? '▾' : '▸'
+}
+
 /** Classes for a row's name.  Directories: dir weight plus the badge
  * color of whatever changed underneath them.  Files: their own letter's
  * color when changed (dimmed otherwise, since clean files stay muted). */
@@ -173,9 +179,7 @@ function onRowClick(node: TreeNode) {
           :style="{ paddingLeft: `${10 + depth * 14}px` }"
           @click="onRowClick(node)"
         >
-          <span class="tree-chevron">
-            {{ node.type === 'dir' ? (expanded[node.path] ? '▾' : '▸') : '' }}
-          </span>
+          <span class="tree-chevron">{{ chevronFor(node) }}</span>
           <span class="tree-name" :class="nameClass(node)">
             {{ node.name }}
           </span>

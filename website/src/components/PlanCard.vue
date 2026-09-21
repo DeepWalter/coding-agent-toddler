@@ -25,6 +25,17 @@ const resolved = computed(
     || props.block.steps.some(([, , status]) => status !== 'pending'),
 )
 
+/** The card's reading once the decision has landed — the block's own record
+ *  of it, never re-derived from the steps.  A computed rather than a nested
+ *  ternary in the template: the template says where a reading renders, not
+ *  which one applies. */
+const resolution = computed(() => {
+  if (chosen.value === 'rejected') return 'plan rejected'
+  return chosen.value === 'auto'
+    ? 'approved — running with auto-accept…'
+    : 'approved — running…'
+})
+
 // These are transient editor state, not decisions — local is fine.
 const showFeedback = ref(false)
 const feedback = ref('')
@@ -75,15 +86,7 @@ function submitReject() {
       <button type="button" class="btn" @click="choose('auto')">Approve + auto</button>
       <button type="button" class="btn danger" @click="showFeedback = true">Deny</button>
     </div>
-    <div v-else class="plan-card-note">
-      {{
-        chosen === 'rejected'
-          ? 'plan rejected'
-          : chosen === 'auto'
-            ? 'approved — running with auto-accept…'
-            : 'approved — running…'
-      }}
-    </div>
+    <div v-else class="plan-card-note">{{ resolution }}</div>
 
     <div v-if="showFeedback && !resolved && !awaiting" class="plan-card-feedback">
       <textarea
