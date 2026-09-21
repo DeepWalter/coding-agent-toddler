@@ -44,7 +44,8 @@
 //            selected, even when another row names the same model) and the
 //            effort row, switches the model on a row click, cycles on the
 //            effort label, takes a drag on the rail that tracks live and
-//            reaches the wire exactly once, obeys the busy gate, follows
+//            reaches the wire exactly once, shows the tier it commits before
+//            the server echoes it back, obeys the busy gate, follows
 //            another tab's switch into an open menu, replays the pill and
 //            the picked row from the server after a reload, stops claiming a
 //            conversation whose slot was retargeted, and excludes the mode
@@ -1638,7 +1639,49 @@ await page.waitForSelector('.model-menu')
   if (!ok) fails++
 }
 
-// P11h: the busy gate.  A turn starting anywhere takes the picker's gate
+// P11h: the tier the pointer picks is on screen the moment it is released,
+// not one round trip later.  The rail renders its in-flight stop only while
+// the pointer is down, so a readout that waits for the server's echo falls
+// back to the tier the server is still holding on release — the old one —
+// and blinks the picked one back when the echo finally lands.  The mock
+// parks that echo, so while it is held the tier on screen can only be the
+// client's own; releasing it then confirms rather than moves.
+{
+  await sendControl('hold_effort_echo', { hold: true })
+  const rail = await page.locator('.effort-rail').boundingBox()
+  const cy = rail.y + rail.height / 2
+  const before = (await sendControl('get_mutations')).mutations.length
+  const LAST = 7 // the eighth stop; EFFORT_STOPS has no client-side export here
+  const atStop = (i) => rail.x + 2 + ((rail.width - 4) * i) / LAST
+
+  // A click, not a drag: down and up land on the same stop, so the commit
+  // is the whole gesture — the case where the flash is the only feedback.
+  await page.mouse.move(atStop(6), cy)
+  await page.mouse.down()
+  await page.mouse.up()
+  const state = await effortRow()
+  const pill = await pillText()
+  const after = (await sendControl('get_mutations')).mutations
+  const landed = after[after.length - 1]
+  const ok =
+    state.value === 'max' && state.now === '6' && state.text === 'max' &&
+    pill === 'mock-model[1m] max' &&
+    after.length === before + 1 &&
+    landed.cmd === 'set_effort' && landed.tier === 'max'
+  console.log(`phase11 a click shows the picked tier before the server's echo ${JSON.stringify({ state, pill, landed })} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+
+  // And the echo agrees with it — the optimistic value is not a second,
+  // different answer that the server has to walk back.
+  await sendControl('hold_effort_echo', { hold: false })
+  await page.waitForTimeout(250)
+  const settled = await effortRow()
+  const ok2 = settled.value === 'max' && settled.now === '6' && settled.text === 'max'
+  console.log(`phase11 the parked echo confirms the optimistic tier ${JSON.stringify(settled)} ${ok2 ? 'PASS' : 'FAIL'}`)
+  if (!ok2) fails++
+}
+
+// P11i: the busy gate.  A turn starting anywhere takes the picker's gate
 // away, so the open menu closes rather than offering switches the server
 // would reject — and it comes back when the turn ends.
 {
@@ -1663,7 +1706,7 @@ await page.waitForSelector('.model-menu')
   if (!ok) fails++
 }
 
-// P11i: another tab's switch.  The broadcast updates the pill AND the menu
+// P11j: another tab's switch.  The broadcast updates the pill AND the menu
 // it has open — a session_info is not a reason to close a popup.
 {
   await page.locator('.model-toggle').click()
@@ -1680,7 +1723,7 @@ await page.waitForSelector('.model-menu')
   if (!ok) fails++
 }
 
-// P11j: this tab's own two switches ride the same session_info, so the pill
+// P11k: this tab's own two switches ride the same session_info, so the pill
 // follows the server rather than a local guess — including across a reload,
 // which replays them from the mock's session.
 {
@@ -1703,7 +1746,7 @@ await page.waitForSelector('.model-menu')
   if (!ok) fails++
 }
 
-// P11k: a slot retargeted underneath a live conversation.  The conversation
+// P11l: a slot retargeted underneath a live conversation.  The conversation
 // still runs the model it was created with — the spec is what runs — so the
 // stored slot no longer names it, and highlighting that row would claim a
 // model this conversation has never asked for.  The highlight falls back to
@@ -1730,7 +1773,7 @@ await page.waitForSelector('.model-menu')
   )
 }
 
-// P11l: a tier the scale does not hold.  `TODDLER_EFFORT_LEVEL` is never
+// P11m: a tier the scale does not hold.  `TODDLER_EFFORT_LEVEL` is never
 // validated, so an unrecognized one reaches a conversation row and the
 // picker has to show it: the knob parks at `max` — where the endpoint's own
 // coercion sends the request — while the row still names the tier the
@@ -1756,7 +1799,7 @@ await page.waitForSelector('.model-menu')
   )
 }
 
-// P11m: the two popups exclude each other on the keyboard path as well.
+// P11n: the two popups exclude each other on the keyboard path as well.
 // Tabbing out of the open mode menu reaches the model pill; Enter there
 // must leave exactly one menu on screen.  Two independent `open` refs would
 // leave both up — a few dozen pixels apart and overlapping — because the

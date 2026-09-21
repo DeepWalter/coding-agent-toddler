@@ -116,6 +116,13 @@ const session = {
 // test-only backdoor shape set_context already uses.)
 const mutations = []
 
+// The session_info a `set_effort` would have broadcast, parked by the
+// hold_effort_echo backdoor: the real server's round trip is short enough
+// to hide a client that only shows the picked tier once its echo lands, so
+// a test holds the echo to look at what the client shows on its own.
+let holdingEffortEcho = false
+let heldEffortEcho = null
+
 // The tiers toddler/config/defaults.py accepts — mirrored so a bad tier
 // fails here the way the real server fails it.
 const EFFORT_TIERS = [
@@ -432,7 +439,23 @@ wss.on('connection', (ws) => {
         mutations.push({ cmd: 'set_effort', tier: msg.tier })
         session.effort = msg.tier
         send({ type: 'ack', cmd: 'set_effort', accepted: true })
-        broadcast(sessionInfoFrame())
+        // The ack still goes out: only the broadcast every tab follows is
+        // held, and only when a test asked for it (see hold_effort_echo).
+        if (holdingEffortEcho) heldEffortEcho = sessionInfoFrame()
+        else broadcast(sessionInfoFrame())
+        break
+      }
+      case 'hold_effort_echo': {
+        // Test-only backdoor: park the next set_effort session_info behind
+        // an explicit release.  With it parked, the tier on screen can only
+        // be the client's own — the server has not said anything yet — and
+        // releasing replays exactly what it would have broadcast.
+        holdingEffortEcho = Boolean(msg.hold)
+        if (!holdingEffortEcho && heldEffortEcho) {
+          broadcast(heldEffortEcho)
+          heldEffortEcho = null
+        }
+        send({ type: 'ack', cmd: 'hold_effort_echo', accepted: true })
         break
       }
       case 'set_busy': {
