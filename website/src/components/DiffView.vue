@@ -269,7 +269,11 @@ function onMidWheel(e: WheelEvent) {
   <div class="diff">
     <div class="diff-header">
       <span class="diff-title" :title="tab.path">{{ tab.path }}</span>
-      <span v-if="badgeLetter" class="git-badge" :class="gitBadgeClass(badgeLetter)">
+      <span
+        v-if="badgeLetter"
+        class="git-badge"
+        :class="gitBadgeClass(badgeLetter)"
+      >
         {{ badgeLetter }}
       </span>
       <span class="diff-tag" :class="tab.staged ? 'staged' : 'unstaged'">
@@ -301,7 +305,11 @@ function onMidWheel(e: WheelEvent) {
     <div v-else-if="payload?.binary" class="diff-empty">binary file — diff not shown</div>
     <template v-else-if="payload">
       <div v-if="rows.length" class="diff-body">
-        <div ref="oldCol" class="diff-col" @scroll.passive="onScroll('old')">
+        <div
+          ref="oldCol"
+          class="diff-col"
+          @scroll.passive="onScroll('old')"
+        >
           <div class="diff-col-header">{{ payload.old_path ?? '' }}</div>
           <div
             v-for="(row, i) in rows"
@@ -312,7 +320,11 @@ function onMidWheel(e: WheelEvent) {
             <span class="diff-gutter">{{ row.old?.old_ln ?? '' }}</span>
             <span class="diff-text">
               {{ row.old?.text ?? '' }}
-              <span v-if="row.old?.no_newline" class="diff-noeol" title="no newline at end of file">⏎</span>
+              <span
+                v-if="row.old?.no_newline"
+                class="diff-noeol"
+                title="no newline at end of file"
+              >⏎</span>
             </span>
           </div>
         </div>
@@ -322,7 +334,11 @@ function onMidWheel(e: WheelEvent) {
              --scroll-top.  It is always rendered so the columns never
              shift when actions appear or disappear; wheel over it
              scrolls the diff. -->
-        <div ref="actionsEl" class="diff-mid" @wheel.prevent="onMidWheel">
+        <div
+          ref="actionsEl"
+          class="diff-mid"
+          @wheel.prevent="onMidWheel"
+        >
           <div
             v-for="(b, i) in hunkButtons"
             :key="i"
@@ -343,7 +359,11 @@ function onMidWheel(e: WheelEvent) {
             </button>
           </div>
         </div>
-        <div ref="newCol" class="diff-col" @scroll.passive="onScroll('new')">
+        <div
+          ref="newCol"
+          class="diff-col"
+          @scroll.passive="onScroll('new')"
+        >
           <div class="diff-col-header">{{ payload.new_path ?? '' }}</div>
           <div
             v-for="(row, i) in rows"
@@ -354,7 +374,11 @@ function onMidWheel(e: WheelEvent) {
             <span class="diff-gutter">{{ row.new?.new_ln ?? '' }}</span>
             <span class="diff-text">
               {{ row.new?.text ?? '' }}
-              <span v-if="row.new?.no_newline" class="diff-noeol" title="no newline at end of file">⏎</span>
+              <span
+                v-if="row.new?.no_newline"
+                class="diff-noeol"
+                title="no newline at end of file"
+              >⏎</span>
             </span>
           </div>
         </div>

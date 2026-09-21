@@ -82,9 +82,21 @@ function submitReject() {
       awaiting your decision — approve in the bar below…
     </div>
     <div v-else-if="!resolved" class="plan-card-actions">
-      <button type="button" class="btn primary" @click="choose('manual')">Approve</button>
-      <button type="button" class="btn" @click="choose('auto')">Approve + auto</button>
-      <button type="button" class="btn danger" @click="showFeedback = true">Deny</button>
+      <button
+        type="button"
+        class="btn primary"
+        @click="choose('manual')"
+      >Approve</button>
+      <button
+        type="button"
+        class="btn"
+        @click="choose('auto')"
+      >Approve + auto</button>
+      <button
+        type="button"
+        class="btn danger"
+        @click="showFeedback = true"
+      >Deny</button>
     </div>
     <div v-else class="plan-card-note">{{ resolution }}</div>
 
@@ -95,8 +107,16 @@ function submitReject() {
         placeholder="Feedback — the agent re-explores with a revised plan"
       />
       <div class="plan-card-actions">
-        <button type="button" class="btn primary" @click="submitReject">Reject with feedback</button>
-        <button type="button" class="btn" @click="showFeedback = false">Cancel</button>
+        <button
+          type="button"
+          class="btn primary"
+          @click="submitReject"
+        >Reject with feedback</button>
+        <button
+          type="button"
+          class="btn"
+          @click="showFeedback = false"
+        >Cancel</button>
       </div>
     </div>
   </section>

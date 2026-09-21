@@ -29,10 +29,18 @@ const signature = computed(() => {
 </script>
 
 <template>
-  <div class="tool-card" :class="state" :data-expanded="expanded">
+  <div
+    class="tool-card"
+    :class="state"
+    :data-expanded="expanded"
+  >
     <!-- No status mark in the header: the gutter carries it for every
          block kind, and a second one here would read as a second state. -->
-    <button class="tool-card-header" type="button" @click="expanded = !expanded">
+    <button
+      class="tool-card-header"
+      type="button"
+      @click="expanded = !expanded"
+    >
       <span class="tool-card-name">{{ block.tool_name }}</span>
       <span class="tool-card-state">{{ statusLabel }}</span>
       <span class="tool-card-chevron">{{ expanded ? '▾' : '▸' }}</span>

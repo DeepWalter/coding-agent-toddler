@@ -230,7 +230,11 @@ onMounted(() => {
     />
     <div class="input-bar-footer">
       <div class="input-bar-meta">
-        <div ref="pickerEl" class="mode-picker" @keydown="onPickerKeydown">
+        <div
+          ref="pickerEl"
+          class="mode-picker"
+          @keydown="onPickerKeydown"
+        >
           <button
             ref="pillEl"
             type="button"
@@ -254,11 +258,20 @@ onMounted(() => {
               stroke-linejoin="round"
               aria-hidden="true"
             >
-              <path v-for="d in currentOption?.icon" :key="d" :d="d" />
+              <path
+                v-for="d in currentOption?.icon"
+                :key="d"
+                :d="d"
+              />
             </svg>
             {{ displayMode }}
           </button>
-          <div v-if="open" class="mode-menu" role="menu" aria-label="Workflow mode">
+          <div
+            v-if="open"
+            class="mode-menu"
+            role="menu"
+            aria-label="Workflow mode"
+          >
             <button
               v-for="opt in MODE_OPTIONS"
               :key="opt.value"
@@ -284,7 +297,11 @@ onMounted(() => {
                   stroke-linejoin="round"
                   aria-hidden="true"
                 >
-                  <path v-for="d in opt.icon" :key="d" :d="d" />
+                  <path
+                    v-for="d in opt.icon"
+                    :key="d"
+                    :d="d"
+                  />
                 </svg>
                 {{ opt.value }}
               </span>

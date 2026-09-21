@@ -58,7 +58,11 @@ function onChange(event: Event) {
       :disabled="!connected"
       @change="onChange"
     >
-      <option v-for="s in sessions" :key="s.id" :value="s.id">
+      <option
+        v-for="s in sessions"
+        :key="s.id"
+        :value="s.id"
+      >
         {{ s.title || s.id.slice(0, 8) }} — {{ s.message_count }} msg{{ s.message_count === 1 ? '' : 's' }}
       </option>
     </select>

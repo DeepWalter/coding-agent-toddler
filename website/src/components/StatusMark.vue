@@ -19,12 +19,20 @@ const GLYPHS: Record<BlockStatus, string> = {
 </script>
 
 <template>
-  <span v-if="status" class="status-mark" :class="status">
+  <span
+    v-if="status"
+    class="status-mark"
+    :class="status"
+  >
     <!-- Only the live mark is labelled: it is the one reading a screen
          reader cannot get from the block itself.  The settled glyphs are
          decoration — the block they sit beside already says what it is,
          and a live region per row would announce the whole transcript. -->
-    <span v-if="status === 'running'" class="spinner" aria-label="running" />
+    <span
+      v-if="status === 'running'"
+      class="spinner"
+      aria-label="running"
+    />
     <span v-else aria-hidden="true">{{ GLYPHS[status] }}</span>
   </span>
 </template>

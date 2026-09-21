@@ -84,10 +84,20 @@ function openFeedback() {
       >
         Approve
       </button>
-      <button type="button" class="btn" :disabled="pending" @click="approve('auto')">
+      <button
+        type="button"
+        class="btn"
+        :disabled="pending"
+        @click="approve('auto')"
+      >
         Approve + auto
       </button>
-      <button type="button" class="btn danger" :disabled="pending" @click="openFeedback">
+      <button
+        type="button"
+        class="btn danger"
+        :disabled="pending"
+        @click="openFeedback"
+      >
         Deny
       </button>
     </div>
@@ -100,8 +110,16 @@ function openFeedback() {
         placeholder="Feedback — the agent re-explores with a revised plan"
       />
       <div class="plan-ask-actions">
-        <button type="button" class="btn danger" @click="submitReject">Reject with feedback</button>
-        <button type="button" class="btn" @click="showFeedback = false">Back</button>
+        <button
+          type="button"
+          class="btn danger"
+          @click="submitReject"
+        >Reject with feedback</button>
+        <button
+          type="button"
+          class="btn"
+          @click="showFeedback = false"
+        >Back</button>
       </div>
     </div>
   </div>

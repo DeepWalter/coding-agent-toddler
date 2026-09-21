@@ -158,14 +158,26 @@ function onRefresh() {
         <div class="sc-empty">not a git repository</div>
       </template>
       <template v-else>
-        <section v-for="section in SECTIONS" :key="section.key" class="sc-section">
-          <button type="button" class="sc-section-head" @click="toggle(section.key)">
+        <section
+          v-for="section in SECTIONS"
+          :key="section.key"
+          class="sc-section"
+        >
+          <button
+            type="button"
+            class="sc-section-head"
+            @click="toggle(section.key)"
+          >
             <span class="sc-chevron">{{ collapsed[section.key] ? '▸' : '▾' }}</span>
             <span class="sc-section-title">{{ section.title }}</span>
             <span class="sc-count">{{ rows[section.key].length }}</span>
           </button>
           <div v-if="!collapsed[section.key]" class="sc-section-body">
-            <div v-for="row in rows[section.key]" :key="row.path" class="sc-row">
+            <div
+              v-for="row in rows[section.key]"
+              :key="row.path"
+              class="sc-row"
+            >
               <button
                 type="button"
                 class="sc-row-name"

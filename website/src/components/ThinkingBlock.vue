@@ -78,6 +78,10 @@ function formatSpan(ms: number): string {
          would mangle, so the text is escaped verbatim and only its code —
          fenced blocks and `inline` spans — is lifted out and highlighted.
          The full text renders: it is bounded upstream by max_tokens. -->
-    <pre v-if="expanded" class="thinking-quote" v-html="rendered"></pre>
+    <pre
+      v-if="expanded"
+      class="thinking-quote"
+      v-html="rendered"
+    ></pre>
   </div>
 </template>

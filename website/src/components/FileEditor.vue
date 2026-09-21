@@ -519,7 +519,11 @@ watch(() => props.active, (tab) => {
       <span class="editor-path" :title="activeFilePath ?? undefined">
         {{ activeFilePath ?? 'no file selected' }}
       </span>
-      <span v-if="activeTab && isDirty(activeTab)" class="editor-dirty" title="unsaved changes">●</span>
+      <span
+        v-if="activeTab && isDirty(activeTab)"
+        class="editor-dirty"
+        title="unsaved changes"
+      >●</span>
       <span class="editor-status" :class="{ 'status-error': !!(activeTab?.loadError || activeTab?.saveError) }">
         {{ statusText }}
       </span>

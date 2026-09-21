@@ -248,7 +248,11 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onPointerDown)
 </script>
 
 <template>
-  <div ref="pickerEl" class="model-picker" @keydown="onPickerKeydown">
+  <div
+    ref="pickerEl"
+    class="model-picker"
+    @keydown="onPickerKeydown"
+  >
     <button
       ref="pillEl"
       type="button"
@@ -288,7 +292,11 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onPointerDown)
       <!-- A group, not a menuitem: this row is a four-stop control, not one
            more radio.  Announcing it as a radio would describe a widget the
            user cannot see; role=slider on the rail below says what it is. -->
-      <div class="effort-row" role="group" aria-label="Thinking effort">
+      <div
+        class="effort-row"
+        role="group"
+        aria-label="Thinking effort"
+      >
         <div class="effort-head">
           <button
             type="button"
@@ -325,7 +333,11 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onPointerDown)
             @keydown="onRailKeydown"
           >
             <span class="effort-line" aria-hidden="true" />
-            <span class="effort-fill" :style="{ '--t': knobT }" aria-hidden="true" />
+            <span
+              class="effort-fill"
+              :style="{ '--t': knobT }"
+              aria-hidden="true"
+            />
             <span
               v-for="(s, i) in EFFORT_STOPS"
               :key="s"
@@ -333,7 +345,11 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onPointerDown)
               :style="{ '--t': i / (EFFORT_STOPS.length - 1) }"
               aria-hidden="true"
             />
-            <span class="effort-knob" :style="{ '--t': knobT }" aria-hidden="true" />
+            <span
+              class="effort-knob"
+              :style="{ '--t': knobT }"
+              aria-hidden="true"
+            />
           </div>
         </div>
       </div>

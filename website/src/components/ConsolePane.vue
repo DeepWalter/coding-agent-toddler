@@ -304,7 +304,11 @@ function rowStatus(block: Block) {
 </script>
 
 <template>
-  <div ref="scroller" class="console-pane" @scroll="onScroll">
+  <div
+    ref="scroller"
+    class="console-pane"
+    @scroll="onScroll"
+  >
     <div
       v-for="block in blocks"
       :key="block.id"

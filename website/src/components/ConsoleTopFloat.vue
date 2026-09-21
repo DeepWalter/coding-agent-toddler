@@ -34,7 +34,11 @@ defineExpose({ box })
        out of the accessibility tree.  Its chip, which is inside it and is the
        one thing here that is not a repeat, is not hidden with it: a focusable
        button under aria-hidden is a trap. -->
-  <div ref="box" class="console-top-float" :data-hidden="shown ? undefined : ''">
+  <div
+    ref="box"
+    class="console-top-float"
+    :data-hidden="shown ? undefined : ''"
+  >
     <MessageBubble
       :role="'user'"
       :text="text"
