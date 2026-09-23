@@ -80,6 +80,74 @@ class PermissionManager:
 
 
 # ---------------------------------------------------------------------------
+# Call description — the one parameter every tool call carries
+# ---------------------------------------------------------------------------
+
+#: Key of the parameter every tool call carries.
+CALL_DESCRIPTION_PARAM = "description"
+
+#: Schema for that parameter — injected into every tool's schema by
+#: :meth:`BaseTool.to_api_schema` so one wording governs every tool.
+#: Copied per call: the dict is shared, and one downstream mutation would
+#: corrupt the wording for every tool at once.
+CALL_DESCRIPTION_PROPERTY = {
+    "type": "string",
+    "description": (
+        "One line stating what this specific call does, in terms of the "
+        "values you chose — e.g. \"replace the hardcoded session timeout "
+        "in auth.py\". Not a restatement of the parameters."
+    ),
+}
+
+#: Appended to every tool's description at schema time, so the model is told
+#: how to fill the parameter wherever it reads a tool's schema.
+CALL_DESCRIPTION_USAGE = (
+    f"Always set '{CALL_DESCRIPTION_PARAM}' to a concise, precise line "
+    "describing what this particular call does."
+)
+
+
+def _with_call_description(parameters: dict) -> dict:
+    """Return *parameters* plus the required call-description property.
+
+    Every level is rebuilt — a tool's ``parameters`` is a class attribute
+    shared by all instances, so an in-place edit would mutate it for good
+    (and grow ``required`` by one entry per call).  The property is placed
+    first so the model emits it first, which is the order the panels render
+    the arguments in.
+    """
+    properties = parameters.get("properties", {})
+    if CALL_DESCRIPTION_PARAM in properties:
+        raise ValueError(
+            f"A tool may not declare its own '{CALL_DESCRIPTION_PARAM}' "
+            f"property — the base class adds it to every schema."
+        )
+    return {
+        **parameters,
+        "properties": {
+            CALL_DESCRIPTION_PARAM: dict(CALL_DESCRIPTION_PROPERTY),
+            **properties,
+        },
+        # Not every tool declares a ``required`` list of its own —
+        # synthesized here so the param is required on those too.
+        "required": [CALL_DESCRIPTION_PARAM, *parameters.get("required", [])],
+    }
+
+
+def execution_params(params: dict) -> dict:
+    """Return a copy of *params* without the call-description param.
+
+    A tool's ``execute`` takes its own arguments only.  The copy matters:
+    ``call.parameters`` is the same object the tool-call events, the
+    persisted transcript, and ``get_permission`` read, so the param must
+    survive in it.
+    """
+    return {
+        k: v for k, v in params.items() if k != CALL_DESCRIPTION_PARAM
+    }
+
+
+# ---------------------------------------------------------------------------
 # Tool call / result
 # ---------------------------------------------------------------------------
 
@@ -164,6 +232,12 @@ class BaseTool(ABC):
     def to_api_schema(self) -> dict:
         """Return the OpenAI tool-compatible schema dict.
 
+        The call-description parameter and its usage line are merged in
+        here (see :data:`CALL_DESCRIPTION_PARAM` and
+        :data:`CALL_DESCRIPTION_USAGE`), so both hold for every tool by
+        construction rather than by each tool remembering them.  The
+        tool's own ``parameters`` declaration is left untouched.
+
         Example::
 
             {
@@ -179,8 +253,10 @@ class BaseTool(ABC):
             "type": "function",
             "function": {
                 "name": self.name,
-                "description": self.description,
-                "parameters": self.parameters,
+                "description": (
+                    f"{self.description.rstrip()} {CALL_DESCRIPTION_USAGE}"
+                ),
+                "parameters": _with_call_description(self.parameters),
             },
         }
 

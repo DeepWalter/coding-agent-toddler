@@ -1041,5 +1041,54 @@ class TestMultiIteration:
         assert llm.call_count == 3
 
 
+# ============================================================================
+# Tests: call description
+# ============================================================================
+
+
+class TestCallDescription:
+    """The required call-description param rides through the whole loop."""
+
+    async def test_prompt_shows_it_and_the_call_still_runs(
+        self, registry, executor, settings, conv_ctx
+    ):
+        """WriteTool leaves ``summarize_call`` to the base default, which
+        renders every kwarg — so the param reaches the approval prompt with
+        no display wiring.  It also has to survive into the tool-call event
+        the transcript is built from."""
+        llm = MockLLMProvider(
+            responses=[
+                _make_llm_response(
+                    tool_blocks=[
+                        _make_tool_use_block(
+                            "c1",
+                            "write_stuff",
+                            {
+                                "content": "important data",
+                                "description": "record the deploy token",
+                            },
+                        ),
+                    ],
+                    stop_reason="tool_use",
+                ),
+                _make_llm_response(text="Written!", stop_reason="end_turn"),
+            ]
+        )
+        loop = AgentLoop(llm, registry, executor, settings, context=conv_ctx, permission_manager=PermissionManager())
+        events: list = []
+
+        async for event in loop.run("Write this down", config=TEST_TURN_CONFIG):
+            events.append(event)
+            if isinstance(event, AgentPaused):
+                loop.approve_tool_call()
+
+        paused = [e for e in events if isinstance(e, AgentPaused)]
+        assert "record the deploy token" in paused[0].prompt
+
+        ends = [e for e in events if isinstance(e, ToolCallEnd)]
+        assert ends[0].result.success
+        assert ends[0].input["description"] == "record the deploy token"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

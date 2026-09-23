@@ -12,6 +12,7 @@ from toddler.tools.base import (
     PermissionMode,
     ToolCall,
     ToolResult,
+    execution_params,
 )
 from toddler.tools.registry import ToolRegistry
 
@@ -160,8 +161,11 @@ class ToolExecutor:
             checkpoint_id = self._checkpoint_cb(tool, params)
 
         # --- execute ---
+        # The call description is a record, not an argument: a tool's
+        # ``execute`` takes its own parameters only, and ``params`` itself
+        # has to keep the key (the events and the transcript read it).
         try:
-            result = await tool.execute(**params)
+            result = await tool.execute(**execution_params(params))
             result.checkpoint_id = result.checkpoint_id or checkpoint_id
             return result
         except Exception as exc:
