@@ -10,7 +10,12 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from toddler.tools.base import BaseTool, Permission, ToolResult
+from toddler.tools.base import (
+    CALL_DESCRIPTION_PARAM,
+    BaseTool,
+    Permission,
+    ToolResult,
+)
 
 if TYPE_CHECKING:
     from toddler.agent.planner import Plan
@@ -58,7 +63,9 @@ PLAN_UPDATE_STATUSES = tuple(
 # propagates from one place.  Status literals are interpolated from
 # PlanStepStatus so they stay in sync.  The final-step carve-out (call
 # alone, no text alongside) reconciles the per-step confirmation with
-# the renderer needing the closing snapshot before the summary.
+# the renderer needing the closing snapshot before the summary.  The
+# required call-description param states the update itself; the
+# confirmation stays prose alongside the call, so the carve-out holds.
 PLAN_UPDATE_USAGE = (
     f"Call with status='{PlanStepStatus.IN_PROGRESS.value}' immediately "
     f"before starting a step and status='{PlanStepStatus.COMPLETED.value}' "
@@ -66,7 +73,9 @@ PLAN_UPDATE_USAGE = (
     "marking the final step completed: call plan_update alone in its own "
     "response with no text alongside it, and give the closing summary "
     "once its tool result returns. "
-    "Statuses: " + ", ".join(PLAN_UPDATE_STATUSES) + "."
+    "Statuses: " + ", ".join(PLAN_UPDATE_STATUSES) + ". "
+    f"The call's ``{CALL_DESCRIPTION_PARAM}`` names the step and the "
+    "status it records, e.g. \"mark step 2 (add the parser) completed\"."
 )
 
 
