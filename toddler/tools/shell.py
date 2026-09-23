@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import shlex
 from pathlib import Path
 
 from toddler.tools.base import BaseTool, Permission, ToolResult
@@ -69,14 +70,42 @@ _SAFE_COMMANDS: set[str] = {
     "tar", "gzip", "gunzip", "zip", "unzip",
 }
 
+# Characters the lexer splits on.  Redirections are in here so that
+# ``2>&1`` tokenizes as ``2``, ``>&``, ``1`` instead of splitting at the
+# ``&`` — an ``&`` there is redirection, not a background operator.
+_OPERATOR_CHARS = ";|&()<>\n"
+
+# The subset that ends one command and starts the next: a run of these is
+# a segment boundary, so each side gets classified on its own.  Newlines
+# belong here — a multi-line command is a script, not one command.
+_SEGMENT_OPERATORS = ";|&()\n"
+
+# Redirection tokens — they belong to a segment, and are never the
+# command the segment runs.
+_REDIRECTIONS = {"<", ">", ">>", "<<", "<&", ">&", "<<<"}
+
+# Command substitution (``$(...)`` or backticks) hides a nested command
+# this classifier cannot see, so its mere presence decides the verdict.
+_SUBSTITUTIONS = ("$(", "`")
+
 
 def classify_command(command: str) -> Permission:
     """Classify a shell command as safe or dangerous.
 
+    The command is split into the commands it actually runs, and **every**
+    one of them has to be safe for the whole to be — a safe prefix must
+    not launder what follows it, whether that is on the next line or
+    after an ``&&``.
+
     Rules:
     1. Check against dangerous patterns first (regex).
-    2. Extract the base command (first word) and check against known-safe set.
-    3. Default to dangerous if uncertain.
+    2. A command substitution hides a nested command from this
+       classifier — always dangerous.
+    3. Split into segments and require each one to be safe:
+       - its command must be in the known-safe set,
+       - a ``git`` segment must not mutate,
+       - a ``python``/``node`` segment must not execute code.
+    4. Default to dangerous if uncertain.
     """
     stripped = command.strip()
 
@@ -85,56 +114,109 @@ def classify_command(command: str) -> Permission:
         if re.search(pattern, stripped):
             return Permission.SHELL_DANGEROUS
 
-    # Extract base command (first word, stripping path prefixes and sudo)
-    first_word = stripped.split()[0] if stripped.split() else ""
-    # Strip common path prefixes
-    base = first_word.rsplit("/", 1)[-1] if "/" in first_word else first_word
+    if any(marker in stripped for marker in _SUBSTITUTIONS):
+        return Permission.SHELL_DANGEROUS
 
-    if base in _SAFE_COMMANDS:
-        # Special case: git commands that are mutating
-        if base == "git" and _is_mutating_git_command(stripped):
-            return Permission.SHELL_DANGEROUS
-        # Special case: python/node executing scripts
-        if (
-            base in ("python", "python3", "node") and
-            _is_executing_script(stripped)
-            ):
-            return Permission.SHELL_DANGEROUS
+    segments = _split_segments(stripped)
+    if not segments:
+        return Permission.SHELL_DANGEROUS
+
+    if all(
+        _classify_segment(segment) is Permission.SHELL_SAFE
+        for segment in segments
+    ):
         return Permission.SHELL_SAFE
 
-    # Unknown → dangerous
+    # Unknown or unsafe → dangerous
     return Permission.SHELL_DANGEROUS
 
 
-def _is_mutating_git_command(cmd: str) -> bool:
-    """Check if a git command modifies state (push, commit, etc.)."""
+def _split_segments(command: str) -> list[list[str]] | None:
+    """Split *command* into one token list per command it runs.
+
+    Tokenizing rather than splitting on characters keeps quoting intact:
+    ``echo "a; b"`` is one segment, not two.  Newlines are punctuation
+    here rather than whitespace — otherwise ``ls\\npython x`` would come
+    back as a single segment led by ``ls``.  Returns ``None`` when the
+    command does not tokenize, e.g. on an unbalanced quote.
+    """
+    lexer = shlex.shlex(
+        command, posix=True, punctuation_chars=_OPERATOR_CHARS,
+    )
+    lexer.whitespace = " \t\r"
+    try:
+        tokens = list(lexer)
+    except ValueError:
+        return None
+
+    segments: list[list[str]] = []
+    current: list[str] = []
+    for token in tokens:
+        if token and set(token) <= set(_SEGMENT_OPERATORS):
+            if current:
+                segments.append(current)
+                current = []
+        else:
+            current.append(token)
+    if current:
+        segments.append(current)
+    return segments
+
+
+def _classify_segment(tokens: list[str]) -> Permission:
+    """Classify one command segment, its operators already split off."""
+    # The command is the segment's first token that is not a redirection.
+    command = next((t for t in tokens if t not in _REDIRECTIONS), "")
+    # Strip common path prefixes
+    base = command.rsplit("/", 1)[-1]
+    args = tokens[tokens.index(command) + 1:] if command in tokens else []
+
+    if base not in _SAFE_COMMANDS:
+        # Unknown → dangerous
+        return Permission.SHELL_DANGEROUS
+
+    # Special case: git commands that are mutating
+    if base == "git" and _is_mutating_git_command(args):
+        return Permission.SHELL_DANGEROUS
+    # Special case: python/node executing scripts
+    if base in ("python", "python3", "node") and _is_executing_script(args):
+        return Permission.SHELL_DANGEROUS
+
+    return Permission.SHELL_SAFE
+
+
+def _is_mutating_git_command(args: list[str]) -> bool:
+    """Check if a git segment's arguments modify state (push, commit, …).
+
+    Every argument is scanned rather than just the subcommand position, so
+    a flag in front of the subcommand (``git -C /tmp push``) hides
+    nothing.  Flags are skipped, but a value of theirs is not — the cost
+    of the extra caution is a confirmation for a ref that happens to
+    share a subcommand's name.
+    """
     mutating = {
         "push", "commit", "merge", "rebase", "reset", "stash",
-        "branch -D", "branch -d", "tag", "checkout -b",
-        "add", "rm", "mv",
+        "tag", "add", "rm", "mv",
     }
-    tokens = cmd.split()
-    if len(tokens) < 2:
-        return False
-    sub = tokens[1]
-    # Check two-word subcommands like "branch -D"
-    if len(tokens) >= 3:
-        sub2 = f"{tokens[1]} {tokens[2]}"
-        if sub2 in mutating:
-            return True
-    return sub in mutating
+    words = [a for a in args if not a.startswith("-")]
+    if any(word in mutating for word in words):
+        return True
+    # Creating a branch, or deleting one
+    if "branch" in words and any(a in ("-d", "-D", "--delete") for a in args):
+        return True
+    return "checkout" in words and "-b" in args
 
 
-def _is_executing_script(cmd: str) -> bool:
+def _is_executing_script(args: list[str]) -> bool:
     """Check if python/node invocation is executing something.
 
-    Any non-flag token after the interpreter name is treated as code
-    execution — whether it's a script file (``script.py``), inline code
-    (``-c "..."``), a module (``-m http.server``), or anything else.
-    The only safe forms are version queries (``--version``, ``-V``),
-    help (``--help``, ``-h``), or an interactive REPL (no arguments).
+    Any non-flag argument is treated as code execution — whether it's a
+    script file (``script.py``), inline code (``-c "..."``), a module
+    (``-m http.server``), or anything else.  The only safe forms are
+    version queries (``--version``, ``-V``), help (``--help``, ``-h``),
+    or an interactive REPL (no arguments).
     """
-    for token in cmd.split()[1:]:  # skip the interpreter
+    for token in args:
         if token.startswith("-") and token not in ("-c", "-m"):
             continue  # purely informational flag, e.g. --version, -V, -h
         # Any other token means code is being executed
