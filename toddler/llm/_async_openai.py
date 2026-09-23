@@ -197,17 +197,20 @@ if _TEST == "cli":
         def _chunks_for_read():
             """Emit a text intro, then a ``shell`` tool call to count
             ``*.py`` files."""
+            args = json.dumps(
+                {
+                    "description": "count the Python files in this repo",
+                    "command": "find . -name '*.py' -type f | wc -l",
+                },
+                ensure_ascii=False,
+            )
             blocks: list[tuple[str, str | None]] = [
                 (
                     "text",
                     "Let me count the Python files in this repo.\n\n",
                 ),
                 ("tool_name", "shell"),
-                (
-                    "tool_args",
-                    '{"command": "find . -name '
-                    '\'*.py\' -type f | wc -l"}',
-                ),
+                ("tool_args", args),
                 ("finish", "tool_calls"),
             ]
             return _DummyStream._materialize(blocks)
@@ -218,6 +221,9 @@ if _TEST == "cli":
             this file to ``~/.toddler/test_write.py``."""
             args = json.dumps(
                 {
+                    "description": (
+                        "copy this file to ~/.toddler/test_write.py"
+                    ),
                     "file_path": "~/.toddler/test_write.py",
                     "content": _THIS_CONTENT,
                 },
