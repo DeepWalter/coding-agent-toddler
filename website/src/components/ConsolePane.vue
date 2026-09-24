@@ -3,14 +3,12 @@ import { nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import type { Block, TabEntry } from '../types'
 import { renderMarkdown } from '../markdown'
 import { blockStatus } from '../blockStatus'
-import { isShellCall } from '../shellCall'
 import ConsolePaneTopFloat from './ConsolePaneTopFloat.vue'
 import ConsolePaneMessageBubble from './ConsolePaneMessageBubble.vue'
 import ConsolePanePlanCard from './ConsolePanePlanCard.vue'
-import ConsolePaneShellCard from './ConsolePaneShellCard.vue'
+import ConsolePaneToolCard from './ConsolePaneToolCard.vue'
 import ConsolePaneStatusMark from './ConsolePaneStatusMark.vue'
 import ConsolePaneThinkingBlock from './ConsolePaneThinkingBlock.vue'
-import ConsolePaneToolCard from './ConsolePaneToolCard.vue'
 
 const props = defineProps<{
   blocks: Block[]
@@ -341,14 +339,15 @@ function rowStatus(block: Block) {
         @open-file="(path) => emit('open-file', path)"
       />
       <ConsolePaneThinkingBlock v-else-if="block.kind === 'thinking'" :block="block" />
-      <!-- A shell call reads as its own card: the command and its output are
-           the whole story, where another tool's is its parameters. -->
-      <ConsolePaneShellCard
-        v-else-if="block.kind === 'tool' && isShellCall(block)"
+      <!-- Every tool call reads as its own card: what it ran and what came
+           back are the whole story, and a file call is no more than its
+           title — which opens the file in the editor. -->
+      <ConsolePaneToolCard
+        v-else-if="block.kind === 'tool'"
         :block="block"
         @open-text="(tab) => emit('open-text', tab)"
+        @open-file="(path) => emit('open-file', path)"
       />
-      <ConsolePaneToolCard v-else-if="block.kind === 'tool'" :block="block" />
       <ConsolePanePlanCard
         v-else-if="block.kind === 'plan'"
         :block="block"

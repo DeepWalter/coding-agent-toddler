@@ -50,6 +50,18 @@
 //            the picked row from the server after a reload, stops claiming a
 //            conversation whose slot was retargeted, and excludes the mode
 //            popup from the keyboard
+//  phase 13 — the search card: grep and glob read as a tool card too — a
+//            title over the pattern the call was given and an OUT row under
+//            it, with the same three-line clip and the same click-through to
+//            the editor, nothing to copy, and a row that fits staying plain
+//            text
+//  phase 14 — the git card: a git call reads as its result alone — the title
+//            and one OUT row, no row for what it was passed — openable in
+//            the editor under the card's own name
+//  phase 15 — the file card: a read, an edit and a write read as their titles
+//            alone, naming the file rather than describing the call, and that
+//            path opens the file in the editor — except on a write that
+//            failed, which has nothing behind its path yet
 // Prints PASS/FAIL plus diagnostics; exits 1 on any failure.
 import { chromium } from 'playwright'
 import WebSocket from 'ws'
@@ -664,10 +676,8 @@ await page.waitForSelector('.pause-prompt', { timeout: 15000 })
       lastKind: last?.dataset.kind ?? '?',
       toolLive: has(last, '.status-mark.running'),
       answerSettled: has(rows[rows.length - 2], '.status-mark.ok'),
-      // the mark moved out of the card: nothing inline in its header
-      inline: document.querySelectorAll(
-        '.tool-card-header .spinner, .tool-card-header .tool-card-status',
-      ).length,
+      // the mark lives in the gutter: nothing renders one inside a card
+      inline: document.querySelectorAll('.tool-card .status-mark').length,
     }
   })
   const ok =
@@ -1830,17 +1840,22 @@ await page.waitForSelector('.model-menu')
 // backs onto.
 await page.fill('textarea.input-bar-textarea', 'shell: count the python files')
 await page.click('button:has-text("Send")')
-await page.waitForSelector('.shell-card', { timeout: 8000 })
+await page.waitForSelector('.tool-card', { timeout: 8000 })
 let shellCard = null
 {
   await page.waitForTimeout(300)
-  shellCard = await page.locator('.shell-call').last().evaluate((el) => {
-    const card = el.querySelector('.shell-card')
+  shellCard = await page.locator('.tool-call').last().evaluate((el) => {
+    const card = el.querySelector('.tool-card')
     const row = (side) => {
-      const box = card.querySelector(`.shell-card-row[data-row="${side}"]`)
-      const text = box.querySelector('.shell-card-text')
+      const box = card.querySelector(`.tool-card-row[data-row="${side}"]`)
+      const label = box.querySelector('.tool-card-section-title')
+      const text = box.querySelector('.tool-card-text')
       const line = parseFloat(getComputedStyle(text).lineHeight)
       return {
+        label: label.textContent.trim(),
+        // The label column is sized to its own label, so a label has to sit
+        // wholly left of the text it labels rather than run into it.
+        labelFits: label.getBoundingClientRect().right <= text.getBoundingClientRect().left,
         clamped: box.hasAttribute('data-clamped'),
         role: box.getAttribute('role'),
         lines: Math.round(text.clientHeight / line),
@@ -1853,11 +1868,10 @@ let shellCard = null
       desc: el.querySelector('.tool-call-desc')?.textContent.trim() ?? null,
       nameSize: parseFloat(getComputedStyle(el.querySelector('.tool-call-name')).fontSize),
       bodySize: parseFloat(getComputedStyle(document.body).fontSize),
-      // The title is read as ordinary output — the box holds only the two
-      // rows, and no remnant of the collapsible tool card.
+      // The title is read as ordinary output — the box holds only the rows,
+      // and the heading is above it.
       titleInCard: card.querySelectorAll('.tool-call-heading').length,
-      legacyHeader: card.querySelectorAll('.tool-card-header').length,
-      copy: card.querySelectorAll('.shell-card-copy').length,
+      copy: card.querySelectorAll('.tool-card-copy').length,
       in: row('in'),
       out: row('out'),
     }
@@ -1869,8 +1883,12 @@ let shellCard = null
     // point, and the reason it lives in shared/ for the next tool to use.
     shellCard.nameSize > shellCard.bodySize &&
     shellCard.titleInCard === 0 &&
-    shellCard.legacyHeader === 0 &&
     shellCard.copy === 1 &&
+    // The pair a command reads as, and both labels clear of their text.
+    shellCard.in.label === 'IN' &&
+    shellCard.out.label === 'OUT' &&
+    shellCard.in.labelFits &&
+    shellCard.out.labelFits &&
     // Three lines each, and both cut — the fade and the control follow the
     // clip rather than the text.
     shellCard.in.clamped &&
@@ -1879,7 +1897,7 @@ let shellCard = null
     shellCard.in.role === 'button' &&
     shellCard.out.clamped &&
     shellCard.out.lines === 3
-  console.log(`phase12 a shell call reads as a Bash card ${JSON.stringify({ name: shellCard.name, desc: shellCard.desc, nameSize: shellCard.nameSize, bodySize: shellCard.bodySize, titleInCard: shellCard.titleInCard, legacyHeader: shellCard.legacyHeader, copy: shellCard.copy, inLines: shellCard.in.lines, outLines: shellCard.out.lines })} ${ok ? 'PASS' : 'FAIL'}`)
+  console.log(`phase12 a shell call reads as a Bash card ${JSON.stringify({ name: shellCard.name, desc: shellCard.desc, nameSize: shellCard.nameSize, bodySize: shellCard.bodySize, titleInCard: shellCard.titleInCard, legacyHeader: shellCard.legacyHeader, copy: shellCard.copy, inLabel: shellCard.in.label, outLabel: shellCard.out.label, inLines: shellCard.in.lines, outLines: shellCard.out.lines })} ${ok ? 'PASS' : 'FAIL'}`)
   if (!ok) fails++
 }
 // P12b: the gutter mark lines up with the title, not with the box — the
@@ -1889,7 +1907,7 @@ let shellCard = null
   const marks = await page.locator('.stream-row[data-kind="tool"][data-tool="shell"]').last().evaluate((row) => {
     const mark = row.querySelector('.status-mark')
     const title = row.querySelector('.tool-call-heading')
-    const box = row.querySelector('.shell-card')
+    const box = row.querySelector('.tool-card')
     const mid = (el) => el.getBoundingClientRect().top + el.getBoundingClientRect().height / 2
     return {
       markMid: mark ? mid(mark) : null,
@@ -1925,12 +1943,12 @@ let shellCard = null
       },
     })
   })
-  await page.locator('.shell-card').last().locator('.shell-card-copy').click()
+  await page.locator('.tool-card').last().locator('.tool-card-copy').click()
   await page.waitForTimeout(150)
   const state = await page.evaluate(() => ({
     copied: window.__copied,
     tabs: document.querySelectorAll('.editor-tab').length,
-    icon: document.querySelector('.shell-card-copy')?.classList.contains('copied') ?? false,
+    icon: document.querySelector('.tool-card-copy')?.classList.contains('copied') ?? false,
   }))
   const ok =
     state.copied === shellCard.in.text && state.tabs === 0 && state.icon === true
@@ -1942,7 +1960,7 @@ let shellCard = null
 {
   const title = 'Bash — count the Python files per directory'
   const outTitle = 'Bash output — count the Python files per directory'
-  await page.locator('.shell-card').last().locator('.shell-card-row[data-row="in"]').click()
+  await page.locator('.tool-card').last().locator('.tool-card-row[data-row="in"]').click()
   await page.waitForTimeout(300)
   const opened = await page.evaluate(() => ({
     tabs: [...document.querySelectorAll('.editor-tab-name')].map((el) => el.textContent.trim()),
@@ -1972,7 +1990,7 @@ let shellCard = null
   if (!okRo) fails++
 
   // The OUT row is its own tab; the command's tab stays one tab.
-  await page.locator('.shell-card').last().locator('.shell-card-row[data-row="out"]').click()
+  await page.locator('.tool-card').last().locator('.tool-card-row[data-row="out"]').click()
   await page.waitForTimeout(300)
   const out = await page.evaluate(() => ({
     tabs: [...document.querySelectorAll('.editor-tab-name')].map((el) => el.textContent.trim()),
@@ -1989,7 +2007,7 @@ let shellCard = null
   console.log(`phase12 the OUT row opens the output as its own tab ${JSON.stringify({ tabs: out.tabs, docLines: out.doc.split('\n').length })} ${okOut ? 'PASS' : 'FAIL'}`)
   if (!okOut) fails++
 
-  await page.locator('.shell-card').last().locator('.shell-card-row[data-row="in"]').click()
+  await page.locator('.tool-card').last().locator('.tool-card-row[data-row="in"]').click()
   await page.waitForTimeout(250)
   const again = await page.evaluate(() => ({
     tabs: document.querySelectorAll('.editor-tab').length,
@@ -2005,18 +2023,18 @@ let shellCard = null
   await page.fill('textarea.input-bar-textarea', 'fail: run it')
   await page.click('button:has-text("Send")')
   await page.waitForTimeout(400)
-  const short = await page.locator('.shell-card').last().evaluate((el) => {
-    const box = el.querySelector('.shell-card-row[data-row="in"]')
+  const short = await page.locator('.tool-card').last().evaluate((el) => {
+    const box = el.querySelector('.tool-card-row[data-row="in"]')
     return {
       clamped: box.hasAttribute('data-clamped'),
       role: box.getAttribute('role'),
       error: el.classList.contains('error'),
-      outError: el.querySelector('.shell-card-row[data-row="out"] .shell-card-text')?.classList.contains('error') ?? false,
-      out: el.querySelector('.shell-card-row[data-row="out"] .shell-card-text')?.textContent ?? '',
+      outError: el.querySelector('.tool-card-row[data-row="out"] .tool-card-text')?.classList.contains('error') ?? false,
+      out: el.querySelector('.tool-card-row[data-row="out"] .tool-card-text')?.textContent ?? '',
     }
   })
   const tabsBefore = await page.locator('.editor-tab').count()
-  await page.locator('.shell-card').last().locator('.shell-card-row[data-row="in"]').click()
+  await page.locator('.tool-card').last().locator('.tool-card-row[data-row="in"]').click()
   await page.waitForTimeout(250)
   const tabsAfter = await page.locator('.editor-tab').count()
   const ok =
@@ -2028,6 +2046,363 @@ let shellCard = null
     tabsAfter === tabsBefore
   console.log(`phase12 a row that fits stays plain text, and a failed call reads as one ${JSON.stringify({ clamped: short.clamped, role: short.role, error: short.error, out: short.out, tabsAfter })} ${ok ? 'PASS' : 'FAIL'}`)
   if (!ok) fails++
+}
+
+// --- Phase 13: a search call reads as a Grep card ---
+
+// A search is the second reader of the tool card: the same title and the
+// same clipped rows.  What it was told to do is a pattern rather than a
+// command, so its IN row carries that and its OUT row the matches — and with
+// two rows, each tab names its side, exactly as the Bash card's do.
+const GREP_DESC = 'find every place the search root is resolved'
+await page.fill('textarea.input-bar-textarea', 'grep: find the search root')
+await page.click('button:has-text("Send")')
+// Waiting on `.tool-card` would pass at once — the Bash card's box is still
+// in the DOM — so wait on the new card's own title instead.
+await page.waitForFunction(
+  () => [...document.querySelectorAll('.tool-call-name')].some((el) => el.textContent.trim() === 'Grep'),
+  { timeout: 8000 },
+)
+let grepCard = null
+{
+  await page.waitForTimeout(300)
+  grepCard = await page.locator('.tool-call').last().evaluate((el) => {
+    const card = el.querySelector('.tool-card')
+    const row = (side) => {
+      const box = card.querySelector(`.tool-card-row[data-row="${side}"]`)
+      const label = box.querySelector('.tool-card-section-title')
+      const text = box.querySelector('.tool-card-text')
+      const line = parseFloat(getComputedStyle(text).lineHeight)
+      return {
+        label: label.textContent.trim(),
+        // The label column sizes to its own label, and the label must not
+        // run into the text it labels.
+        labelFits: label.getBoundingClientRect().right <= text.getBoundingClientRect().left,
+        text: text.textContent,
+        clamped: box.hasAttribute('data-clamped'),
+        role: box.getAttribute('role'),
+        lines: Math.round(text.clientHeight / line),
+        faded: getComputedStyle(box, '::before').backgroundImage.includes('linear-gradient'),
+      }
+    }
+    return {
+      name: el.querySelector('.tool-call-name')?.textContent.trim() ?? null,
+      desc: el.querySelector('.tool-call-desc')?.textContent.trim() ?? null,
+      nameSize: parseFloat(getComputedStyle(el.querySelector('.tool-call-name')).fontSize),
+      bodySize: parseFloat(getComputedStyle(document.body).fontSize),
+      // The heading lives above the box rather than inside it.
+      rows: card.querySelectorAll('.tool-card-row').length,
+      // Output is not a thing to paste anywhere: the copy button is the
+      // command's alone, and a search has no command.
+      copy: card.querySelectorAll('.tool-card-copy').length,
+      in: row('in'),
+      out: row('out'),
+    }
+  })
+  const ok =
+    grepCard.name === 'Grep' &&
+    grepCard.desc === GREP_DESC &&
+    grepCard.nameSize > grepCard.bodySize &&
+    // Two rows: the pattern the call was given, and what it found.
+    grepCard.rows === 2 &&
+    grepCard.copy === 0 &&
+    // A search's first row is named for what it holds rather than for its
+    // place in the pair, and the label column has to make room for the word.
+    grepCard.in.label === 'PAT' &&
+    grepCard.in.labelFits &&
+    grepCard.out.label === 'OUT' &&
+    // The pattern fits its three lines, so its row is not a control — the
+    // clip is the affordance, and nothing here is past it.
+    grepCard.in.text === 'search_path' &&
+    grepCard.in.clamped === false &&
+    grepCard.in.role === null &&
+    grepCard.out.clamped &&
+    grepCard.out.role === 'button' &&
+    grepCard.out.lines === 3 &&
+    grepCard.out.faded
+  console.log(`phase13 a search call reads as a Grep card ${JSON.stringify({ name: grepCard.name, desc: grepCard.desc, rows: grepCard.rows, copy: grepCard.copy, inLabel: grepCard.in.label, inFits: grepCard.in.labelFits, inText: grepCard.in.text, inClamped: grepCard.in.clamped, outLabel: grepCard.out.label, outLines: grepCard.out.lines, outRole: grepCard.out.role, faded: grepCard.out.faded })} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+// P13b: a search's first line is its title too, so its mark takes the same
+// inset the Bash card's does — the alignment follows the card, not the tool.
+{
+  const marks = await page.locator('.stream-row[data-kind="tool"][data-tool="grep"]').last().evaluate((row) => {
+    const mark = row.querySelector('.status-mark')
+    const title = row.querySelector('.tool-call-heading')
+    const box = row.querySelector('.tool-card')
+    const mid = (el) => el.getBoundingClientRect().top + el.getBoundingClientRect().height / 2
+    return {
+      markMid: mark ? mid(mark) : null,
+      titleMid: title ? mid(title) : null,
+      titleTop: title ? title.getBoundingClientRect().top : null,
+      boxTop: box ? box.getBoundingClientRect().top : null,
+    }
+  })
+  const ok =
+    marks.markMid !== null &&
+    Math.abs(marks.markMid - marks.titleMid) <= 3 &&
+    marks.titleTop < marks.boxTop
+  console.log(`phase13 the gutter mark aligns with the title, above the box ${JSON.stringify(marks)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+// P13c: the result row opens the whole match list, read-only, while the
+// pattern row — which fits — stays plain text and opens nothing.  The tab
+// counts are relative: earlier phases leave tabs of their own open.
+{
+  const title = `Grep output — ${GREP_DESC}`
+  const tabsBefore = await page.locator('.editor-tab').count()
+  await page.locator('.tool-card').last().locator('.tool-card-row[data-row="in"]').click()
+  await page.waitForTimeout(250)
+  const tabsAfterPattern = await page.locator('.editor-tab').count()
+  const okPattern = tabsAfterPattern === tabsBefore
+  console.log(`phase13 the pattern row is plain text, with nothing to open ${JSON.stringify({ tabsBefore, tabsAfterPattern })} ${okPattern ? 'PASS' : 'FAIL'}`)
+  if (!okPattern) fails++
+
+  await page.locator('.tool-card').last().locator('.tool-card-row[data-row="out"]').click()
+  await page.waitForTimeout(300)
+  const opened = await page.evaluate(() => ({
+    tabs: [...document.querySelectorAll('.editor-tab-name')].map((el) => el.textContent.trim()),
+    active: document.querySelector('.editor-tab.active .editor-tab-name')?.textContent.trim() ?? null,
+    header: document.querySelector('.editor-path')?.textContent.trim() ?? null,
+    doc: document.querySelector('.editor-cm .cm-content')?.textContent ?? '',
+    status: document.querySelector('.editor-status')?.textContent.trim() ?? null,
+  }))
+  // The twelfth match is one the three-line clip never showed, and the tab
+  // names its side — a two-row search card has two tabs to tell apart.
+  const ok =
+    opened.tabs.length === tabsBefore + 1 &&
+    opened.active === title &&
+    opened.header === title &&
+    opened.doc.includes('search.py:98:') &&
+    opened.status?.startsWith('read-only') === true
+  console.log(`phase13 the OUT row opens the whole result in the editor ${JSON.stringify({ tabs: opened.tabs.length, active: opened.active, status: opened.status, docLines: opened.doc.split('\n').length })} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+
+  await page.locator('.tool-card').last().locator('.tool-card-row[data-row="out"]').click()
+  await page.waitForTimeout(250)
+  const again = await page.evaluate(() => ({
+    tabs: document.querySelectorAll('.editor-tab').length,
+    active: document.querySelector('.editor-tab.active .editor-tab-name')?.textContent.trim() ?? null,
+  }))
+  const okAgain = again.tabs === tabsBefore + 1 && again.active === title
+  console.log(`phase13 a second click focuses the tab it already opened ${JSON.stringify(again)} ${okAgain ? 'PASS' : 'FAIL'}`)
+  if (!okAgain) fails++
+}
+// P13d: the other search tool reads under its own name, and a result that
+// fits its three lines stays plain text — no control, and nothing to open.
+{
+  await page.fill('textarea.input-bar-textarea', 'glob: list the search tools')
+  await page.click('button:has-text("Send")')
+  await page.waitForFunction(
+    () => [...document.querySelectorAll('.tool-call-name')].some((el) => el.textContent.trim() === 'Glob'),
+    { timeout: 8000 },
+  )
+  await page.waitForTimeout(300)
+  const tabsBefore = await page.locator('.editor-tab').count()
+  const globCard = await page.locator('.tool-call').last().evaluate((el) => {
+    const card = el.querySelector('.tool-card')
+    const box = card.querySelector('.tool-card-row[data-row="out"]')
+    return {
+      name: el.querySelector('.tool-call-name')?.textContent.trim() ?? null,
+      desc: el.querySelector('.tool-call-desc')?.textContent.trim() ?? null,
+      rows: card.querySelectorAll('.tool-card-row').length,
+      pattern: card.querySelector('.tool-card-row[data-row="in"] .tool-card-text')?.textContent ?? '',
+      patternLabel: card.querySelector('.tool-card-row[data-row="in"] .tool-card-section-title')?.textContent.trim() ?? '',
+      clamped: box.hasAttribute('data-clamped'),
+      role: box.getAttribute('role'),
+      text: box.querySelector('.tool-card-text')?.textContent ?? '',
+    }
+  })
+  await page.locator('.tool-card').last().locator('.tool-card-row[data-row="out"]').click()
+  await page.waitForTimeout(250)
+  const tabsAfter = await page.locator('.editor-tab').count()
+  const ok =
+    globCard.name === 'Glob' &&
+    globCard.desc === 'list the search tools' &&
+    globCard.rows === 2 &&
+    globCard.pattern === 'tools/*.py' &&
+    globCard.patternLabel === 'PAT' &&
+    globCard.clamped === false &&
+    globCard.role === null &&
+    globCard.text.includes('tools/executor.py') &&
+    tabsAfter === tabsBefore
+  console.log(`phase13 the second search tool reads as Glob, and a row that fits stays plain text ${JSON.stringify({ name: globCard.name, rows: globCard.rows, pattern: globCard.pattern, patternLabel: globCard.patternLabel, clamped: globCard.clamped, role: globCard.role, tabsAfter })} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+
+// --- Phase 14: a git call reads as a Git status card ---
+
+// A git call is the plainest reader of the tool card: the title, and one
+// OUT row holding what came back — nothing the call was passed gets a row
+// of its own.  The turn runs two of them, so the name table is read twice and
+// both readings of a single row, the clipped one and the one that fits, are
+// covered.
+const GIT_STATUS_DESC = 'check the working tree before committing'
+await page.fill('textarea.input-bar-textarea', 'git: check the working tree')
+await page.click('button:has-text("Send")')
+await page.waitForFunction(
+  () => [...document.querySelectorAll('.tool-call-name')].some((el) => el.textContent.trim() === 'Git log'),
+  { timeout: 8000 },
+)
+await page.waitForTimeout(300)
+{
+  const read = (tool) =>
+    page.locator(`.stream-row[data-tool="${tool}"]`).last().evaluate((row) => {
+      const card = row.querySelector('.tool-card')
+      const box = card.querySelector('.tool-card-row[data-row="out"]')
+      const text = box.querySelector('.tool-card-text')
+      const line = parseFloat(getComputedStyle(text).lineHeight)
+      return {
+        name: row.querySelector('.tool-call-name')?.textContent.trim() ?? null,
+        desc: row.querySelector('.tool-call-desc')?.textContent.trim() ?? null,
+        rows: card.querySelectorAll('.tool-card-row').length,
+        label: box.querySelector('.tool-card-section-title').textContent.trim(),
+        // Nothing the call was passed gets a row: the box is its result.
+        inputRows: card.querySelectorAll('.tool-card-row[data-row="in"]').length,
+        copy: card.querySelectorAll('.tool-card-copy').length,
+        clamped: box.hasAttribute('data-clamped'),
+        role: box.getAttribute('role'),
+        lines: Math.round(text.clientHeight / line),
+        faded: getComputedStyle(box, '::before').backgroundImage.includes('linear-gradient'),
+        text: text.textContent,
+      }
+    })
+  const status = await read('git_status')
+  const log = await read('git_log')
+  const ok =
+    status.name === 'Git status' &&
+    status.desc === GIT_STATUS_DESC &&
+    status.rows === 1 &&
+    status.label === 'OUT' &&
+    status.inputRows === 0 &&
+    status.copy === 0 &&
+    status.clamped &&
+    status.role === 'button' &&
+    status.lines === 3 &&
+    status.faded &&
+    // The other name off the table, and a result that fits its three lines:
+    // plain text, with nothing to open.
+    log.name === 'Git log' &&
+    log.rows === 1 &&
+    log.label === 'OUT' &&
+    log.clamped === false &&
+    log.role === null &&
+    log.text.includes('3aa5c7c')
+  console.log(`phase14 a git call reads as its result alone ${JSON.stringify({ status: { name: status.name, rows: status.rows, label: status.label, inputRows: status.inputRows, copy: status.copy, lines: status.lines, role: status.role }, log: { name: log.name, rows: log.rows, label: log.label, clamped: log.clamped, role: log.role } })} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+// P14b: the single row opens the whole result in a tab named for the card
+// alone — a card with one row has no side to name.
+{
+  const title = `Git status — ${GIT_STATUS_DESC}`
+  const tabsBefore = await page.locator('.editor-tab').count()
+  await page.locator('.stream-row[data-tool="git_status"] .tool-card-row[data-row="out"]').last().click()
+  await page.waitForTimeout(300)
+  const opened = await page.evaluate(() => ({
+    tabs: [...document.querySelectorAll('.editor-tab-name')].map((el) => el.textContent.trim()),
+    active: document.querySelector('.editor-tab.active .editor-tab-name')?.textContent.trim() ?? null,
+    doc: document.querySelector('.editor-cm .cm-content')?.textContent ?? '',
+    status: document.querySelector('.editor-status')?.textContent.trim() ?? null,
+  }))
+  // The untracked entry is one the three-line clip never showed.
+  const ok =
+    opened.tabs.length === tabsBefore + 1 &&
+    opened.active === title &&
+    opened.doc.includes('console-pane-tool-card.css') &&
+    opened.status?.startsWith('read-only') === true
+  console.log(`phase14 the OUT row opens the whole result in the editor ${JSON.stringify({ tabs: opened.tabs.length, active: opened.active, status: opened.status })} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+
+  await page.locator('.stream-row[data-tool="git_status"] .tool-card-row[data-row="out"]').last().click()
+  await page.waitForTimeout(250)
+  const again = await page.evaluate(() => ({
+    tabs: document.querySelectorAll('.editor-tab').length,
+    active: document.querySelector('.editor-tab.active .editor-tab-name')?.textContent.trim() ?? null,
+  }))
+  const okAgain = again.tabs === tabsBefore + 1 && again.active === title
+  console.log(`phase14 a second click focuses the tab it already opened ${JSON.stringify(again)} ${okAgain ? 'PASS' : 'FAIL'}`)
+  if (!okAgain) fails++
+}
+
+// --- Phase 15: a file call reads as its title alone ---
+
+// A file call draws no box: the path in the title is the whole of it, and a
+// click opens that file in the editor — which is where a file is read, rather
+// than in a row of copied content.  A write only has something behind its
+// path once it has landed, so the turn runs one that did and one that did not.
+const READ_PATH = '/tmp/mock-a.md'
+await page.fill('textarea.input-bar-textarea', 'files: read and write')
+await page.click('button:has-text("Send")')
+await page.waitForFunction(
+  () => [...document.querySelectorAll('.tool-call-name')].some((el) => el.textContent.trim() === 'Write'),
+  { timeout: 8000 },
+)
+await page.waitForTimeout(300)
+{
+  const cards = await page.locator('.tool-call').evaluateAll((els) =>
+    els.slice(-4).map((el) => {
+      const link = el.querySelector('.tool-call-path')
+      return {
+        name: el.querySelector('.tool-call-name')?.textContent.trim() ?? null,
+        // The description gives way to the path in these titles: the path is
+        // the half a reader can act on.
+        desc: el.querySelector('.tool-call-desc')?.textContent.trim() ?? null,
+        path: link?.textContent.trim() ?? null,
+        // A path is a control only where there is a file to open: a button
+        // where there is one, plain text where there is not yet.
+        tag: link?.tagName ?? null,
+        static: link?.classList.contains('static') ?? null,
+        boxes: el.querySelectorAll('.tool-card').length,
+        rows: el.querySelectorAll('.tool-card-row').length,
+      }
+    }),
+  )
+  const [read, edit, write, failed] = cards
+  const ok =
+    read.name === 'Read' &&
+    read.path === READ_PATH &&
+    read.tag === 'BUTTON' &&
+    edit.name === 'Edit' &&
+    edit.path === READ_PATH &&
+    edit.tag === 'BUTTON' &&
+    write.name === 'Write' &&
+    write.path === '/tmp/mock-b.md' &&
+    write.tag === 'BUTTON' &&
+    // The write that failed names a path all the same — it just has nothing
+    // behind it, so it reads as text.
+    failed.name === 'Write' &&
+    failed.path === '/tmp/read-only/mock-c.md' &&
+    failed.tag === 'SPAN' &&
+    failed.static === true &&
+    // No box and no rows on any of them, and no description either.
+    cards.every((c) => c.boxes === 0 && c.rows === 0 && c.desc === null)
+  console.log(`phase15 a file call is its title alone ${JSON.stringify(cards)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+// P15b: the path opens the file in the editor, and the one with nothing
+// behind it opens nothing.
+{
+  await page.locator('.stream-row[data-tool="read_file"] .tool-call-path').last().click()
+  await page.waitForTimeout(400)
+  const opened = await page.evaluate(() => ({
+    tabs: [...document.querySelectorAll('.editor-tab-name')].map((el) => el.textContent.trim()),
+    header: document.querySelector('.editor-path')?.textContent.trim() ?? null,
+    doc: document.querySelector('.editor-cm .cm-content')?.textContent ?? '',
+  }))
+  const ok =
+    opened.tabs.includes('mock-a.md') &&
+    opened.header === READ_PATH &&
+    opened.doc.includes('first seeded file')
+  console.log(`phase15 the path opens that file in the editor ${JSON.stringify(opened)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+
+  const tabsBefore = await page.locator('.editor-tab').count()
+  await page.locator('.stream-row[data-tool="write_file"] .tool-call-path.static').last().click()
+  await page.waitForTimeout(250)
+  const tabsAfter = await page.locator('.editor-tab').count()
+  const okStatic = tabsAfter === tabsBefore
+  console.log(`phase15 a path with no file behind it opens nothing ${JSON.stringify({ tabsBefore, tabsAfter })} ${okStatic ? 'PASS' : 'FAIL'}`)
+  if (!okStatic) fails++
 }
 
 await browser.close()

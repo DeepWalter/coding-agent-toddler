@@ -1,8 +1,7 @@
 /* The heading a tool call reads under: the tool's display name, with the
-   call's own description beside it.  A shell call draws one today — its
-   title sits above the card, as ordinary output, rather than inside a card
-   header like the older `.tool-card-name` — and any tool that stops reading
-   as a card of parameters can reuse this instead of restating the type.
+   call's own description beside it — or, when the call is about a file, the
+   path, which opens in the editor.  A call's title sits above its card, as
+   ordinary output, rather than inside a header of the card's own.
 
    The name is a step above the 13px body (and so above the 12px text in the
    card below it): the line is the call's identity, not more output. */
@@ -27,4 +26,33 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-muted);
+}
+
+/* The path slot: the same shrink-and-ellipsis reading as the description, in
+   the console's link colour — the one a markdown link already wears — so a
+   click looks like the one thing in the line that goes somewhere. */
+.tool-call-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* A button, reset to read as text: it opens a tab, it does not navigate. */
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.tool-call-path:not(.static):hover {
+  text-decoration: underline;
+}
+
+/* A path with nothing behind it yet — a write that has not landed — is plain
+   text, and reads as such. */
+.tool-call-path.static {
+  color: var(--text-muted);
+  cursor: default;
 }

@@ -1,62 +1,65 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import type { Block } from '../types'
+import { computed } from 'vue'
+import type { Block, TabEntry } from '../types'
 import { blockStatus } from '../blockStatus'
+import { toolCard, toolTab, type ToolCardRow } from '../toolCard'
+import ConsolePaneToolCardRow from './ConsolePaneToolCardRow.vue'
 
 const props = defineProps<{ block: Extract<Block, { kind: 'tool' }> }>()
+const emit = defineEmits<{
+  'open-text': [tab: Extract<TabEntry, { kind: 'text' }>]
+  'open-file': [path: string]
+}>()
 
-const expanded = ref(false)
-
-// The console-wide vocabulary, not a card-local one: the header's trailing
-// word and the gutter's mark are two readings of the same state.
+const card = computed(() => toolCard(props.block))
 const state = computed(() => blockStatus(props.block))
 
-const statusLabel = computed(() => {
-  switch (state.value) {
-    case 'running': return 'running…'
-    case 'ok': return 'done'
-    case 'error': return 'failed'
-    case 'cancelled': return 'cancelled'
-  }
-})
+/** The title's second slot, flattened: the file this call is about, or an
+ *  empty one to fall through to the call's own description.  A shape rather
+ *  than a null keeps the template free of narrowing. */
+const path = computed(() => card.value.path ?? { text: '', opens: false })
 
-const signature = computed(() => {
-  const input = props.block.input
-  const keys = Object.keys(input)
-  if (!keys.length) return ''
-  return `${props.block.tool_name}(${JSON.stringify(input)})`
-})
+function open(row: ToolCardRow) {
+  emit('open-text', toolTab(props.block, card.value, row))
+}
+
+/** A title naming a file opens it — the editor is where a path is read, and
+ *  a call that names one has nothing else to offer. */
+function openPath() {
+  emit('open-file', path.value.text)
+}
 </script>
 
 <template>
-  <div
-    class="tool-card"
-    :class="state"
-    :data-expanded="expanded"
-  >
-    <!-- No status mark in the header: the gutter carries it for every
-         block kind, and a second one here would read as a second state. -->
-    <button
-      class="tool-card-header"
-      type="button"
-      @click="expanded = !expanded"
-    >
-      <span class="tool-card-name">{{ block.tool_name }}</span>
-      <span class="tool-card-state">{{ statusLabel }}</span>
-      <span class="tool-card-chevron">{{ expanded ? '▾' : '▸' }}</span>
-    </button>
-    <div v-if="expanded" class="tool-card-body">
-      <div v-if="signature" class="tool-card-section">
-        <div class="tool-card-section-title">input</div>
-        <pre class="tool-card-pre">{{ signature }}</pre>
-      </div>
-      <div class="tool-card-section">
-        <div class="tool-card-section-title">{{ state === 'error' ? 'error' : 'result' }}</div>
-        <pre v-if="state === 'running'" class="tool-card-pre dim">waiting for result…</pre>
-        <pre v-else-if="state === 'error'" class="tool-card-pre error-text">{{ block.result?.error ?? 'tool failed' }}</pre>
-        <pre v-else-if="state === 'cancelled'" class="tool-card-pre dim">cancelled before execution</pre>
-        <pre v-else class="tool-card-pre">{{ block.result?.output ?? '(no output)' }}</pre>
-      </div>
+  <div class="tool-call">
+    <!-- The call's own line about what it does, read as ordinary output —
+         the box is only what ran and what came back.  A call about a file
+         names the file instead: it is the half of the title a reader can
+         act on, and the one they came to check. -->
+    <div class="tool-call-heading">
+      <span class="tool-call-name">{{ card.name }}</span>
+      <button
+        v-if="path.opens"
+        type="button"
+        class="tool-call-path"
+        :title="`Open ${path.text}`"
+        @click="openPath"
+      >{{ path.text }}</button>
+      <!-- A path with nothing behind it yet — a write that failed — reads as
+           plain text: the click would have nowhere to land. -->
+      <span v-else-if="path.text" class="tool-call-path static">{{ path.text }}</span>
+      <span v-else-if="card.description" class="tool-call-desc">{{ card.description }}</span>
+    </div>
+    <!-- A call can be its title alone, and a file call is: the file opens in
+         the editor, so a row of its content here would be a worse copy of
+         the pane beside it.  The box appears only when there are rows. -->
+    <div v-if="card.rows.length" class="tool-card" :class="state">
+      <ConsolePaneToolCardRow
+        v-for="row in card.rows"
+        :key="row.side"
+        :row="row"
+        @open="open(row)"
+      />
     </div>
   </div>
 </template>

@@ -33,6 +33,68 @@ const SHELL_OUTPUT = Array.from(
   (_, i) => `line ${i + 1} of the listing`,
 ).join('\n') + '\n'
 
+// The search card's fixture: a search call has no IN row — the pattern is a
+// parameter, and the matches are the whole of the output — so the card is a
+// title and one OUT row.  Twelve matches is past the card's three-line clip,
+// which is what the fade, the clamped cursor and the click-through to the
+// editor all key on.  The tool is `grep` (what the backend calls it); the card
+// renders it as `Grep`.
+const GREP_DESCRIPTION = 'find every place the search root is resolved'
+const GREP_PATTERN = 'search_path'
+const GREP_OUTPUT = Array.from(
+  { length: 12 },
+  (_, i) => `toddler/tools/search.py:${87 + i}:    search_path = Path(path).expanduser().resolve()`,
+).join('\n') + '\n'
+const GREP_MATCH_COUNT = 12
+
+// A glob call whose result fits its three lines — the row that stays plain
+// text: no fade, no cursor, nothing to open.  Two entries, and no trailing
+// newline, so what the row measures is exactly what it shows.
+const GLOB_DESCRIPTION = 'list the search tools'
+const GLOB_PATTERN = 'tools/*.py'
+const GLOB_OUTPUT = ['tools/base.py', 'tools/executor.py'].join('\n')
+
+// The git cards' fixture: a git call reads as one OUT row under its title,
+// with no row for what it was passed.  The status is past the three-line clip
+// (the fade, the clamped cursor and the click-through all need that) and the
+// log sits inside it, which is the other reading a row can have.  The tools
+// are `git_status` and `git_log`; the cards name them `Git status` and
+// `Git log`.
+const GIT_STATUS_DESCRIPTION = 'check the working tree before committing'
+const GIT_STATUS_OUTPUT = [
+  ' M toddler/tools/git.py',
+  ' M toddler/tools/search.py',
+  ' M website/src/toolCard.ts',
+  ' M website/src/components/ConsolePane.vue',
+  ' M website/scripts/mock-server.mjs',
+  '?? website/src/components/ConsolePaneToolCard.vue',
+  '?? website/src/components/ConsolePaneToolRow.vue',
+  '?? website/src/assets/styles/components/console-pane-tool-card.css',
+].join('\n') + '\n'
+const GIT_LOG_DESCRIPTION = 'list the last few commits'
+// One line per commit and short ones at that: a row that fits its three lines
+// is the other reading the card has to make, and the default long format
+// wraps past the clip even in two entries.
+const GIT_LOG_OUTPUT = [
+  '62847ce fix(tools): cap git output',
+  '3aa5c7c fix(tools): cap grep results',
+].join('\n')
+
+// The file cards' fixture: a file call is its title alone — the path, which
+// opens that file in the editor — so the run covers all three names, two
+// paths that are there to open (the seeded files the editor phase already
+// serves), and one write that failed, whose path therefore has nothing
+// behind it.  The paths are absolute because the tools' schema asks for
+// absolute ones.
+const READ_PATH = '/tmp/mock-a.md'
+const READ_DESCRIPTION = 'read the seeded file'
+const READ_OUTPUT = ['1\t# mock A', '2\t', '3\tfirst seeded file'].join('\n')
+const EDIT_DESCRIPTION = 'tweak the heading'
+const WRITE_PATH = '/tmp/mock-b.md'
+const WRITE_DESCRIPTION = 'write the second seeded file'
+const FAILED_WRITE_PATH = '/tmp/read-only/mock-c.md'
+const FAILED_WRITE_DESCRIPTION = 'write a file that cannot be written'
+
 const TYPES = {
   '.html': 'text/html',
   '.js': 'text/javascript',
@@ -45,8 +107,13 @@ const TYPES = {
   '.map': 'application/json',
 }
 
+// The repo the session runs against.  The agent's own file tools write
+// absolute paths, so the fixture paths below are absolute too and the file
+// handler resolves them against this root.
+const REPO_ROOT = '/tmp'
+
 const API = {
-  '/api/meta': { repo_root: '/tmp', model: 'mock-model', dev: false },
+  '/api/meta': { repo_root: REPO_ROOT, model: 'mock-model', dev: false },
   '/api/sessions': { sessions: [] },
   '/api/tree': { root: '/tmp', entries: [] },
   '/api/git/status': {
@@ -75,7 +142,13 @@ function filePayload(rel, content) {
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://${req.headers.host}`)
   if (url.pathname === '/api/file') {
-    const rel = url.searchParams.get('path') ?? ''
+    // toddler/web/files.resolve_relative joins the request path onto the repo
+    // root, so an in-root absolute path names the same file as its relative
+    // form — which is how the file cards' fixtures reach these entries.
+    const asked = url.searchParams.get('path') ?? ''
+    const rel = asked.startsWith(`${REPO_ROOT}/`)
+      ? asked.slice(REPO_ROOT.length + 1)
+      : asked
     const content = FILES.get(rel)
     const missing = content === undefined
     res.writeHead(missing ? 404 : 200, { 'content-type': 'application/json' })
@@ -305,6 +378,21 @@ wss.on('connection', (ws) => {
         // clip, its copy button and its open-in-editor path all need a call
         // that overflows the clip on both sides.
         const shell = msg.input.startsWith('shell')
+        // A "grep" turn runs one long search call — the search card's clip,
+        // its single OUT row and its open-in-editor path all need matches
+        // that overflow the three lines the card shows.
+        const grep = msg.input.startsWith('grep')
+        // A "glob" turn is the same card with a result that fits: one OUT
+        // row that stays plain text.  It also pins the second name mapping.
+        const glob = msg.input.startsWith('glob')
+        // A "git" turn runs two git calls back to back — a status that
+        // overflows the clip and a log that fits — so one turn covers both
+        // readings of a single OUT row, and two names off the table.
+        const git = msg.input.startsWith('git')
+        // A "files" turn runs the three file calls back to back — a read, an
+        // edit, and a write that lands — plus a write that failed, whose
+        // path has nothing behind it to open.
+        const files = msg.input.startsWith('files')
         // The real server auto-titles a conversation from the first user
         // input of its first turn, before the state change whose observer
         // re-broadcasts session_info — so a live header follows untitled →
@@ -360,6 +448,187 @@ wss.on('connection', (ws) => {
               metadata: { command: SHELL_COMMAND, returncode: 0, cwd: '/tmp' },
             },
           })
+          send({ type: 'agent_finished', reason: 'completed', usage: null })
+          send({ type: 'state', busy: false })
+          break
+        }
+        if (grep) {
+          send({ type: 'content_delta', text_delta: 'searching for the search root\n' })
+          send({
+            type: 'tool_call_start',
+            tool_id: 't4',
+            tool_name: 'grep',
+            partial_input: { description: GREP_DESCRIPTION, pattern: GREP_PATTERN },
+          })
+          send({
+            type: 'tool_call_end',
+            tool_id: 't4',
+            tool_name: 'grep',
+            input: {
+              description: GREP_DESCRIPTION,
+              pattern: GREP_PATTERN,
+              path: '.',
+              max_results: 100,
+              ignore_case: false,
+            },
+            result: {
+              success: true,
+              output: GREP_OUTPUT,
+              error: null,
+              checkpoint_id: null,
+              // What the real Grep returns, capped and count in step: nothing
+              // renders metadata today, but `truncated` has to agree with the
+              // output, which carries no "more matches not shown" line.
+              metadata: {
+                match_count: GREP_MATCH_COUNT,
+                pattern: GREP_PATTERN,
+                path: '/tmp',
+                truncated: false,
+              },
+            },
+          })
+          send({ type: 'agent_finished', reason: 'completed', usage: null })
+          send({ type: 'state', busy: false })
+          break
+        }
+        if (glob) {
+          send({ type: 'content_delta', text_delta: 'listing the tools\n' })
+          send({
+            type: 'tool_call_start',
+            tool_id: 't5',
+            tool_name: 'glob',
+            partial_input: { description: GLOB_DESCRIPTION, pattern: GLOB_PATTERN },
+          })
+          send({
+            type: 'tool_call_end',
+            tool_id: 't5',
+            tool_name: 'glob',
+            input: { description: GLOB_DESCRIPTION, pattern: GLOB_PATTERN, path: 'toddler' },
+            result: {
+              success: true,
+              output: GLOB_OUTPUT,
+              error: null,
+              checkpoint_id: null,
+              metadata: { match_count: 2, pattern: GLOB_PATTERN, path: '/tmp', truncated: false },
+            },
+          })
+          send({ type: 'agent_finished', reason: 'completed', usage: null })
+          send({ type: 'state', busy: false })
+          break
+        }
+        if (git) {
+          send({ type: 'content_delta', text_delta: 'checking the working tree\n' })
+          send({
+            type: 'tool_call_start',
+            tool_id: 't6',
+            tool_name: 'git_status',
+            partial_input: { description: GIT_STATUS_DESCRIPTION },
+          })
+          send({
+            type: 'tool_call_end',
+            tool_id: 't6',
+            tool_name: 'git_status',
+            input: { description: GIT_STATUS_DESCRIPTION },
+            result: {
+              success: true,
+              output: GIT_STATUS_OUTPUT,
+              error: null,
+              checkpoint_id: null,
+              metadata: { repo_path: '/tmp' },
+            },
+          })
+          send({
+            type: 'tool_call_start',
+            tool_id: 't7',
+            tool_name: 'git_log',
+            partial_input: { description: GIT_LOG_DESCRIPTION, max_count: 20, oneline: true },
+          })
+          send({
+            type: 'tool_call_end',
+            tool_id: 't7',
+            tool_name: 'git_log',
+            input: { description: GIT_LOG_DESCRIPTION, max_count: 20, oneline: true },
+            result: {
+              success: true,
+              output: GIT_LOG_OUTPUT,
+              error: null,
+              checkpoint_id: null,
+              metadata: { repo_path: '/tmp', max_count: 20 },
+            },
+          })
+          send({ type: 'agent_finished', reason: 'completed', usage: null })
+          send({ type: 'state', busy: false })
+          break
+        }
+        if (files) {
+          send({ type: 'content_delta', text_delta: 'reading and writing\n' })
+          // Four calls of one shape, so the frames are written once.
+          const call = (id, name, input, result) => {
+            send({
+              type: 'tool_call_start',
+              tool_id: id,
+              tool_name: name,
+              partial_input: input,
+            })
+            send({
+              type: 'tool_call_end',
+              tool_id: id,
+              tool_name: name,
+              input,
+              result,
+            })
+          }
+          call('t8', 'read_file',
+            { description: READ_DESCRIPTION, file_path: READ_PATH },
+            {
+              success: true,
+              output: READ_OUTPUT,
+              error: null,
+              checkpoint_id: null,
+              metadata: { path: READ_PATH, total_lines: 3 },
+            })
+          call('t9', 'edit_file',
+            {
+              description: EDIT_DESCRIPTION,
+              file_path: READ_PATH,
+              old_string: 'first seeded file',
+              new_string: 'first seeded file, edited',
+            },
+            {
+              success: true,
+              output: `Replaced 1 occurrence(s) in ${READ_PATH}.`,
+              error: null,
+              checkpoint_id: null,
+              metadata: { path: READ_PATH, occurrences_replaced: 1, replace_all: false },
+            })
+          call('t10', 'write_file',
+            {
+              description: WRITE_DESCRIPTION,
+              file_path: WRITE_PATH,
+              content: '# mock B\n\nsecond seeded file\n',
+            },
+            {
+              success: true,
+              output: `Wrote 29 bytes to ${WRITE_PATH}.`,
+              error: null,
+              checkpoint_id: null,
+              metadata: { path: WRITE_PATH, bytes: 29 },
+            })
+          // The one write that did not land: its path is named, and there is
+          // nothing behind it to open.
+          call('t11', 'write_file',
+            {
+              description: FAILED_WRITE_DESCRIPTION,
+              file_path: FAILED_WRITE_PATH,
+              content: '# mock C\n',
+            },
+            {
+              success: false,
+              output: null,
+              error: `Failed to write ${FAILED_WRITE_PATH}: read-only file system`,
+              checkpoint_id: null,
+              metadata: null,
+            })
           send({ type: 'agent_finished', reason: 'completed', usage: null })
           send({ type: 'state', busy: false })
           break

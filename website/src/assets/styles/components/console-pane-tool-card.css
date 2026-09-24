@@ -1,69 +1,18 @@
-/* ConsolePaneToolCard.vue — the collapsible tool call card.
-   `.tool-card-section-title` is also rendered by ConsolePanePlanCard, which
-   points here rather than duplicating the rule. */
+/* The tool card — ConsolePaneToolCard.vue with its ConsolePaneToolCardRow.vue.
+   Every tool call reads the same way: the call's own line about what it does,
+   then a box holding what the call was given and what came back.  A shell call
+   was given a command (IN) and a search a pattern (PAT); both end in OUT, the
+   result.  A row is clipped to three lines and openable in full in the editor
+   pane.
 
-/* Code-token colors live in the editor's HighlightStyle (theme.ts) — the
-   console renders the same generated classes, so no token rules here. */
+   The heading (the call's own line about what it does) sits outside the box,
+   as ordinary output, in the shared `.tool-call-heading` vocabulary; only the
+   gap above the box is local.  Code-token colors live in the editor's
+   HighlightStyle (theme.ts) — the console renders the same generated classes,
+   so no token rules here. */
 
-/* ------------------------------------------------------------------ */
-/* Tool cards                                                          */
-/* ------------------------------------------------------------------ */
-
-.tool-card {
-  border: 1px solid var(--editor-border);
-  border-radius: 6px;
-  background: var(--editor-surface-2);
-  overflow: hidden;
-  /* The console pane is a flex column: an item with non-visible overflow
-     has an automatic minimum size of zero, so without this a card shrinks
-     to its borders once the transcript overflows the pane. */
-  flex: none;
-}
-
-.tool-card-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 6px 10px;
-  background: none;
-  border: none;
-  color: var(--text);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.tool-card-header:hover {
-  background: var(--editor-surface-3);
-}
-
-.tool-card-name {
-  font-weight: 600;
-}
-
-.tool-card-state {
-  color: var(--text-muted);
-  font-size: 11px;
-  margin-left: auto;
-}
-
-.tool-card-chevron {
-  color: var(--text-muted);
-}
-
-.tool-card.error {
-  border-color: color-mix(in srgb, var(--error) 65%, var(--editor-bg));
-}
-
-.tool-card-body {
-  padding: 8px 10px;
-  border-top: 1px solid var(--editor-border);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
+/* The console's section-heading rule, which the card's rows wear over each
+   row's text and ConsolePanePlanCard borrows rather than duplicating. */
 .tool-card-section-title {
   color: var(--text-subtle);
   font-size: 11px;
@@ -72,19 +21,120 @@
   margin-bottom: 2px;
 }
 
-.tool-card-pre {
+/* The gap between the title and the box is the box's own: a call that draws
+   no box — a file call, which is its title alone — then leaves no gap behind
+   it either. */
+.tool-card {
+  margin-top: 4px;
+  border: 1px solid var(--editor-border);
+  border-radius: 6px;
+  background: var(--editor-surface-2);
+  overflow: hidden;
+}
+
+.tool-card.error {
+  border-color: color-mix(in srgb, var(--error) 65%, var(--editor-bg));
+}
+
+.tool-card-row {
+  position: relative;
+  /* the fade and the copy button anchor to the row */
+  display: grid;
+  /* One width for every row's label.  Measured at the label's own type — 11px
+     monospace, 0.08em tracked — IN is 15px and PAT and OUT are 22.5px, so
+     24px holds the widest of them with a little air; being fixed rather than
+     sized to each row's own label is what puts a row's text at the same edge
+     as the row above it. */
+  grid-template-columns: 24px minmax(0, 1fr);
+  /* What is left between a label and the text it names: the column ends
+     within a couple of pixels of its widest label. */
+  gap: 4px;
+  align-items: start;
+  padding: 6px 10px;
+  border-top: 1px solid var(--editor-border);
+}
+
+/* Only a row with something past its three lines is a control — the clip is
+   the affordance, so a row that fits stays plain text. */
+.tool-card-row[data-clamped] {
+  cursor: pointer;
+}
+
+.tool-card-row[data-clamped]:hover {
+  background: var(--editor-surface-3);
+}
+
+.tool-card-text {
   margin: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
   white-space: pre-wrap;
-  word-wrap: break-word;
-  font: inherit;
-  max-height: 240px;
-  overflow-y: auto;
+  overflow-wrap: anywhere;
+  /* Three lines.  The row owns the padding, so this is the whole of the
+     clip — no extra term for padding and border as in the message box. */
+  max-height: 3lh;
+  overflow: hidden;
 }
 
-.tool-card-pre.dim {
+/* The fade: the row's own fill over the bottom three lines, so the cut reads
+   as "there is more" rather than as text that happens to end.  It follows
+   the hover fill so it never seams, and it waits on the measure — a row that
+   fits its three lines has nothing to point at. */
+.tool-card-row[data-clamped]::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3lh;
+  pointer-events: none;
+  background: linear-gradient(to bottom, transparent, var(--editor-surface-2));
+}
+
+.tool-card-row[data-clamped]:hover::before {
+  background: linear-gradient(to bottom, transparent, var(--editor-surface-3));
+}
+
+/* A row that offers the copy button keeps its text clear of it.  Keyed on
+   the button rather than on the row's name: a search's pattern row is an
+   input row too, and has no button to clear. */
+.tool-card-row:has(.tool-card-copy) .tool-card-text {
+  padding-right: 24px;
+}
+
+.tool-card-copy {
+  position: absolute;
+  top: 5px;
+  right: 8px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: none;
   color: var(--text-muted);
+  cursor: pointer;
 }
 
-.tool-card-pre.error-text {
+.tool-card-copy:hover {
+  background: var(--editor-surface-3);
+  color: var(--text);
+}
+
+.tool-card-copy.copied {
+  color: var(--success);
+}
+
+/* "waiting for result…" and "cancelled before execution" describe the call,
+   not its output. */
+.tool-card-text.note {
+  color: var(--text-subtle);
+  font-style: italic;
+}
+
+.tool-card-text.error {
   color: var(--error);
 }

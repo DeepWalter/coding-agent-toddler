@@ -1,9 +1,8 @@
 /* ConsolePaneStatusMark.vue — the gutter mark, its per-block-kind first-line
    offsets, and the spinner.  Kept out of console-pane.css because the
    offsets are written `.stream-row[data-kind=…]>.status-mark`: they copy the
-   `top:` insets from that file's block rules and must move together (one of
-   them narrows further, by tool — the shell card's first line sits above its
-   box). */
+   `top:` insets from that file's block rules and must move together (a tool
+   call's first line is its title, which sits above the card's box). */
 
 /* The mark: one per block, outdented into the gutter.  Its box is exactly
    one line of the global 13px/1.55 type, so it centres on the block's first
@@ -44,17 +43,12 @@
    flush with the block's top, so they take the default.  Child combinators:
    nothing inside a block renders a mark, and a nested one must never
    inherit these offsets. */
+/* A tool call's first line is its title ("Bash — what it does", "Grep — …"),
+   ordinary output above the card's box and flush with the row's top, so the
+   mark takes the heading's own inset: the 1px is the heading's larger line
+   box (14px against the mark's own 13px), which straddles the mark's box by
+   about that much. */
 .stream-row[data-kind='tool']>.status-mark {
-  top: 7px;
-  /* 1px card border + 6px header padding */
-}
-
-/* A shell call is the one tool whose first line is not inside its card: the
-   title ("Bash — what it does") is ordinary output above the box, flush
-   with the row's top, so the mark takes the default inset.  The 1px is the
-   heading's larger line box (14px against the mark's own 13px), which
-   straddles the mark's box by about that much. */
-.stream-row[data-kind='tool'][data-tool='shell']>.status-mark {
   top: 1px;
 }
 
