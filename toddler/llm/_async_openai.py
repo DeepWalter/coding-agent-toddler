@@ -77,6 +77,8 @@ if _TEST == "cli":
                     * ``"text"`` — stream the content of *this* file.
                     * ``"read"`` — emit a ``shell`` tool call that counts
                       ``*.py`` files.
+                    * ``"shell"`` — emit a multi-line ``shell`` tool call,
+                      every command in it safe.
                     * ``"write"`` — emit a ``write_file`` tool call that
                       writes this file's content to
                       ``~/.toddler/test_write.py``.
@@ -141,6 +143,8 @@ if _TEST == "cli":
                 return self._chunks_for_text()
             elif content == "read":
                 return self._chunks_for_read()
+            elif content == "shell":
+                return self._chunks_for_shell()
             elif content == "write":
                 return self._chunks_for_write()
             else:
@@ -208,6 +212,40 @@ if _TEST == "cli":
                 (
                     "text",
                     "Let me count the Python files in this repo.\n\n",
+                ),
+                ("tool_name", "shell"),
+                ("tool_args", args),
+                ("finish", "tool_calls"),
+            ]
+            return _DummyStream._materialize(blocks)
+
+        @staticmethod
+        def _chunks_for_shell():
+            """Emit a text intro, then a multi-line ``shell`` tool call.
+
+            Every command in the string is on the safe list, so the call
+            still auto-approves: classification reads each segment, and a
+            safe prefix cannot launder what follows it.
+            """
+            args = json.dumps(
+                {
+                    "description": (
+                        "list the directory, the branch state and the "
+                        "Python file count"
+                    ),
+                    "command": (
+                        "echo hello world\n"
+                        "ls -la\n"
+                        "git status --short\n"
+                        "find . -name '*.py' -type f | wc -l"
+                    ),
+                },
+                ensure_ascii=False,
+            )
+            blocks: list[tuple[str, str | None]] = [
+                (
+                    "text",
+                    "Let me look around the repo.\n\n",
                 ),
                 ("tool_name", "shell"),
                 ("tool_args", args),
