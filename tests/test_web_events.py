@@ -123,6 +123,23 @@ class TestSerializeEvent:
         ))
         assert frame["result"] is None
 
+    def test_quiet_tool_call_gets_no_frame(self):
+        """The plan bookkeeping call is filtered by name: the browser
+        learns what it did from the ``plan_step_update`` frames, so a
+        card for the call itself would only repeat them."""
+        assert serialize_event(ToolCallStart(
+            tool_id="t1", tool_name="plan_update",
+            partial_input={"step_id": "step-1"},
+        )) is None
+        assert serialize_event(ToolCallEnd(
+            tool_id="t1", tool_name="plan_update",
+            input={"step_id": "step-1"},
+            result=ToolResult(
+                tool_id="t1", tool_name="plan_update", success=True,
+                output="Step step-1 → in_progress.",
+            ),
+        )) is None
+
     def test_plan_proposed(self):
         plan = _plan()
         frame = serialize_event(PlanProposed(plan=plan))
@@ -343,6 +360,30 @@ class TestSerializeTranscript:
             "content": "",
             "reasoning": "I need the file first.",
         }
+
+    def test_quiet_tool_call_is_not_replayed(self):
+        """The plan bookkeeping call stays in the stored transcript — the
+        model's context needs it — but no card is rebuilt for it on a
+        reload: its statuses arrive as plan step updates instead.  The
+        prose the model wrote alongside it is untouched."""
+        messages = [
+            Message.assistant([
+                MessageBlock.content_block("marking step 1 in progress"),
+                MessageBlock.tool_use_block(
+                    "t1", "plan_update",
+                    {"step_id": "step-1", "status": "in_progress"},
+                ),
+            ]),
+            Message.tool([
+                MessageBlock.tool_result_block(
+                    "t1", "Step step-1 → in_progress.",
+                ),
+            ]),
+        ]
+        assert serialize_transcript(messages) == [{
+            "role": "assistant",
+            "content": "marking step 1 in progress",
+        }]
 
     def test_reasoning_entry_ordered_before_its_tool_entries(self):
         messages = [Message.assistant([
