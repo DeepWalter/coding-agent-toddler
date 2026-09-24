@@ -49,7 +49,9 @@ from toddler.agent.events import (
     ToolCallEnd,
     ToolCallStart,
 )
+from toddler.tools.base import CALL_DESCRIPTION_PARAM
 from toddler.tools.plan import PlanStepStatus
+from toddler.tools.shell import Shell
 from toddler.utils.format import estimate_tokens, format_span, format_tokens
 
 if TYPE_CHECKING:
@@ -78,9 +80,10 @@ class _ToolRow:
     """Display state for one tool call in the streaming tools panel."""
 
     name: str
-    status: str      # "running", "success", or "error"
-    signature: str   # tool call signature (e.g. "shell(command='ls')")
-    result: str      # result preview (populated once the call completes)
+    status: str        # "running", "success", or "error"
+    signature: str     # what it is doing (e.g. "shell(ls -la)")
+    description: str   # the call's own line about it, "" when it wrote none
+    result: str        # result preview (populated once the call completes)
 
 
 _ICON_RUNNING = Text("▶", style="bold yellow")
@@ -1026,13 +1029,12 @@ class StreamingRenderer(Renderer):
     def on_tool_call_start(self, event: ToolCallStart) -> None:
         """Add a running row to the tools panel."""
         self._close_thinking()
-        signature = _format_tool_signature(
-            event.tool_name, event.partial_input or {},
-        )
+        params = event.partial_input or {}
         self._tools[event.tool_id] = _ToolRow(
             name=event.tool_name,
             status="running",
-            signature=signature,
+            signature=_format_tool_signature(event.tool_name, params),
+            description=_tool_description(params),
             result="",
         )
         if event.tool_id not in self._tool_order:
@@ -1041,22 +1043,34 @@ class StreamingRenderer(Renderer):
 
     def on_tool_call_delta(self, event: ToolCallDelta) -> None:
         """Update the tool row's input signature."""
-        signature = _format_tool_signature("", event.input_delta)
-        if event.tool_id not in self._tools:
-            self._tools[event.tool_id] = _ToolRow(
-                name="", status="running", signature=signature, result="",
+        row = self._tools.get(event.tool_id)
+        if row is None:
+            row = _ToolRow(
+                name="", status="running", signature="", description="",
+                result="",
             )
+            self._tools[event.tool_id] = row
             if event.tool_id not in self._tool_order:
                 self._tool_order.append(event.tool_id)
-        else:
-            self._tools[event.tool_id].signature = signature
+        # Format against the row's own name: the delta carries a parsed
+        # fragment, and a shell call has to keep reading as a command.
+        row.signature = _format_tool_signature(row.name, event.input_delta)
+        row.description = _tool_description(event.input_delta)
         self._refresh()
 
     def on_tool_call_end(self, event: ToolCallEnd) -> None:
-        """Mark the tool row success or error and set the result summary."""
+        """Mark the tool row success or error and set the result summary.
+
+        The end event carries the authoritative parameters, so the row's
+        columns are rebuilt from them — a stream whose last fragment was
+        partial would otherwise leave the row showing that fragment.
+        """
         result = event.result
         if event.tool_id in self._tools:
             row = self._tools[event.tool_id]
+            params = event.input or {}
+            row.signature = _format_tool_signature(row.name, params)
+            row.description = _tool_description(params)
             if result is None:
                 row.status = "error"
             elif result.success:
@@ -1413,6 +1427,13 @@ class StreamingRenderer(Renderer):
             table = Table(show_header=True, box=None, padding=(0, 1))
             table.add_column("St", width=2, justify="center")
             table.add_column("Tool", style="bold cyan", max_width=120)
+            # The call's own line about what it does, between the tool and
+            # what came back.  One line, cut rather than wrapped: a wrapped
+            # description reads as prose that ran out of room, and its own
+            # end is the least useful thing in the panel.
+            table.add_column(
+                "Description", max_width=30, no_wrap=True, overflow="ellipsis",
+            )
             table.add_column("Result", style="dim", max_width=120)
 
             # Tail-first within the cap so the newest tool stays visible.
@@ -1421,7 +1442,7 @@ class StreamingRenderer(Renderer):
                 if row is None:
                     continue
                 icon = _STATUS_STYLES[row.status]
-                table.add_row(icon, row.signature, row.result)
+                table.add_row(icon, row.signature, row.description, row.result)
 
             tools_panel = Panel(
                 table,
@@ -1626,11 +1647,16 @@ class NonStreamingRenderer(Renderer):
         self._console.print(Text(event.text_delta, style="dim italic"))
 
     def on_tool_call_start(self, event: ToolCallStart) -> None:
-        """Announce the tool call with a one-line print."""
-        label = _format_tool_call(
-            event.tool_name, event.partial_input or {},
-        )
-        self._console.print(Text(f"▶ {label}", style=_TOOL_RUNNING))
+        """Announce the tool call with a one-line print.
+
+        The call's description rides along after it — there is no table here
+        to give it a column of its own.
+        """
+        params = event.partial_input or {}
+        label = _format_tool_call(event.tool_name, params)
+        description = _tool_description(params)
+        suffix = f" — {description}" if description else ""
+        self._console.print(Text(f"▶ {label}{suffix}", style=_TOOL_RUNNING))
 
     def on_tool_call_delta(self, event: ToolCallDelta) -> None:
         """No-op — deltas only arrive during streaming LLM calls."""
@@ -1864,17 +1890,48 @@ def _token_text(buf: str) -> str:
     return f"{format_tokens(n)} {'token' if n == 1 else 'tokens'}"
 
 
+def _one_line(text: str) -> str:
+    """Flatten *text* to one line for a table cell.
+
+    Runs of whitespace collapse: a command's own line breaks and indentation
+    are how it was typed, not how it reads in a cell.  (Results keep their
+    spacing — see :func:`_truncate_tool_result`; columnar output means
+    something.)
+    """
+    return " ".join(text.split())
+
+
+def _clip(text: str, limit: int) -> str:
+    """Truncate *text* to *limit* characters, ellipsis included."""
+    return text[: limit - 3] + "..." if len(text) > limit else text
+
+
+def _tool_description(params: dict) -> str:
+    """The call's own line about what it does, as the table's Description
+    column shows it.  Empty for a call made without one."""
+    value = params.get(CALL_DESCRIPTION_PARAM, "")
+    return _clip(_one_line(str(value)), 60) if value else ""
+
+
 def _format_tool_signature(name: str, params: dict) -> str:
-    """Format a tool name + key params for the streaming tools table."""
+    """Format a tool name + key params for the streaming tools table.
+
+    A shell call reads as the command it runs — ``shell(ls -la)`` — rather
+    than as a parameter list, and no tool shows its own description: that is
+    the Description column's to say.
+    """
     if not params and not name:
         return "…"
 
+    if name == Shell.name:
+        command = _one_line(str(params.get("command", "")))
+        return f"{name}({_clip(command, 40)})" if command else name
+
     parts: list[str] = []
     for k, v in params.items():
-        s = str(v)
-        if len(s) > 40:
-            s = s[:37] + "..."
-        parts.append(f"{k}={s}")
+        if k == CALL_DESCRIPTION_PARAM:
+            continue
+        parts.append(f"{k}={_clip(_one_line(str(v)), 40)}")
 
     label = name if name else ""
     args = ", ".join(parts[:3])
@@ -1928,12 +1985,24 @@ def _truncate(text: str, max_lines: int = 5, max_chars: int = 300) -> str:
 
 
 def _format_tool_call(name: str, params: dict) -> str:
-    """Format a tool name + key parameters for display."""
+    """Format a tool name + key parameters for the one-shot print.
+
+    Same reading as the streaming table — a shell call shows the command it
+    runs, nobody shows their own description — but as a single line with
+    quoted string arguments, since it is prose in the scrollback rather than
+    a cell in a table.
+    """
+    if name == Shell.name:
+        command = _one_line(str(params.get("command", "")))
+        return f"{name}({_clip(command, 60)})" if command else name
+
     short: dict[str, str] = {}
     for k, v in params.items():
-        s = str(v)
+        if k == CALL_DESCRIPTION_PARAM:
+            continue
+        s = _one_line(str(v))
         if isinstance(v, str) and len(s) > 60:
-            s = s[:57] + "..."
+            s = _clip(s, 60)
         short[k] = s
 
     args = ", ".join(f"{k}={s!r}" for k, s in short.items())

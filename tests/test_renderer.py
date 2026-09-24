@@ -16,11 +16,13 @@ from toddler.agent.events import (
     PlanProposed,
     PlanStepUpdate,
     ReasoningDelta,
+    ToolCallEnd,
     ToolCallStart,
 )
 from toddler.agent.planner import Plan, PlanStep
 from toddler.cli.renderer import NonStreamingRenderer, StreamingRenderer
 from toddler.llm.responses import TokenUsage
+from toddler.tools.base import ToolResult
 
 
 class _FakeClock:
@@ -575,3 +577,107 @@ class TestUsageLine:
 
         assert "Tokens:" not in output
         assert "Done — completed" in output
+
+
+# ============================================================================
+# The tools panel's columns
+# ============================================================================
+
+
+class TestToolTableColumns:
+    """What a tool call shows in the streaming panel: its own arguments in
+    the Tool column, its own line about the call in Description."""
+
+    @staticmethod
+    def _renderer() -> StreamingRenderer:
+        return StreamingRenderer(console=Console(file=io.StringIO()))
+
+    @staticmethod
+    def _panel_text(renderer: StreamingRenderer) -> str:
+        """The whole renderable, rendered wide enough that a cell cannot
+        wrap mid-phrase and hide the string under test."""
+        buf = io.StringIO()
+        Console(file=buf, width=200).print(renderer._build_renderable())
+        return buf.getvalue()
+
+    def test_the_description_gets_a_column_of_its_own(self):
+        renderer = self._renderer()
+        renderer.on_tool_call_start(ToolCallStart(
+            tool_id="t1",
+            tool_name="shell",
+            partial_input={
+                "description": "count the python files",
+                "command": "ls -la",
+            },
+        ))
+
+        text = self._panel_text(renderer)
+
+        assert "Description" in text              # the column the call fills
+        assert "count the python files" in text
+        assert "shell(ls -la)" in text            # the command alone
+        assert "description=" not in text         # never one of the arguments
+
+    def test_a_multi_line_command_reads_on_one_line(self):
+        renderer = self._renderer()
+        renderer.on_tool_call_start(ToolCallStart(
+            tool_id="t1",
+            tool_name="shell",
+            partial_input={"command": "ls -la\ngit status --short"},
+        ))
+
+        assert "shell(ls -la git status --short)" in self._panel_text(renderer)
+
+    def test_the_end_event_parameters_are_what_the_row_keeps(self):
+        """A stream's fragments can be partial; the end event carries the
+        authoritative input, so the row must be rebuilt from it."""
+        renderer = self._renderer()
+        renderer.on_tool_call_start(ToolCallStart(
+            tool_id="t1", tool_name="shell", partial_input={"command": "ls"},
+        ))
+        renderer.on_tool_call_end(ToolCallEnd(
+            tool_id="t1",
+            tool_name="shell",
+            input={"command": "ls -la", "description": "list the files"},
+            result=ToolResult(
+                tool_id="t1", tool_name="shell", success=True, output="ok",
+            ),
+        ))
+
+        text = self._panel_text(renderer)
+
+        assert "shell(ls -la)" in text
+        assert "list the files" in text
+
+
+class TestOneShotToolLine:
+    """One-shot mode prints prose, not a table — so the description rides
+    along after the call rather than into a column."""
+
+    @staticmethod
+    def _renderer() -> tuple[NonStreamingRenderer, io.StringIO]:
+        buf = io.StringIO()
+        return NonStreamingRenderer(console=Console(file=buf)), buf
+
+    def test_the_line_carries_the_description(self):
+        renderer, buf = self._renderer()
+        renderer.on_tool_call_start(ToolCallStart(
+            tool_id="t1",
+            tool_name="shell",
+            partial_input={
+                "description": "list the files",
+                "command": "ls -la",
+            },
+        ))
+
+        assert "▶ shell(ls -la) — list the files" in buf.getvalue()
+
+    def test_a_call_without_a_description_reads_as_before(self):
+        renderer, buf = self._renderer()
+        renderer.on_tool_call_start(ToolCallStart(
+            tool_id="t1",
+            tool_name="read_file",
+            partial_input={"file_path": "README.md"},
+        ))
+
+        assert "▶ read_file(file_path='README.md')" in buf.getvalue()
