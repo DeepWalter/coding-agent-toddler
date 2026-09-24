@@ -1,0 +1,119 @@
+/* The shell card — a call is the one tool whose parameters are the story, so
+   the command and its result are shown outright rather than behind a
+   disclosure: an IN and an OUT row, each clipped to three lines and openable
+   in full in the editor pane.  The heading (the call's own line about what
+   it does) sits outside the box, as ordinary output, in the shared
+   `.tool-call-heading` vocabulary; only the gap above the box is local.
+   See ConsolePaneShellCard.vue.  The IN/OUT labels are the shared label rule
+   from console-pane-tool-card.css (imported above this file). */
+
+.shell-call .tool-call-heading {
+  margin-bottom: 4px;
+}
+
+/* No `flex: none` here: the stream row is the pane's flex item and carries
+   that guard itself (see console-pane.css). */
+.shell-card {
+  border: 1px solid var(--editor-border);
+  border-radius: 6px;
+  background: var(--editor-surface-2);
+  overflow: hidden;
+}
+
+.shell-card.error {
+  border-color: color-mix(in srgb, var(--error) 65%, var(--editor-bg));
+}
+
+.shell-card-row {
+  position: relative; /* the fade and the copy button anchor to the row */
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  padding: 6px 10px;
+  border-top: 1px solid var(--editor-border);
+}
+
+/* Only a row with something past its three lines is a control — the clip is
+   the affordance, so a row that fits stays plain text. */
+.shell-card-row[data-clamped] {
+  cursor: pointer;
+}
+
+.shell-card-row[data-clamped]:hover {
+  background: var(--editor-surface-3);
+}
+
+.shell-card-text {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  /* Three lines.  The row owns the padding, so this is the whole of the
+     clip — no extra term for padding and border as in the message box. */
+  max-height: 3lh;
+  overflow: hidden;
+}
+
+/* The fade: the row's own fill over the bottom three lines, so the cut reads
+   as "there is more" rather than as text that happens to end.  It follows
+   the hover fill so it never seams, and it waits on the measure — a row that
+   fits its three lines has nothing to point at. */
+.shell-card-row[data-clamped]::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3lh;
+  pointer-events: none;
+  background: linear-gradient(to bottom, transparent, var(--editor-surface-2));
+}
+
+.shell-card-row[data-clamped]:hover::before {
+  background: linear-gradient(to bottom, transparent, var(--editor-surface-3));
+}
+
+/* The copy button rides in the IN row's top-right corner, so the command
+   keeps clear of it. */
+.shell-card-row[data-row='in'] .shell-card-text {
+  padding-right: 24px;
+}
+
+.shell-card-copy {
+  position: absolute;
+  top: 5px;
+  right: 8px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.shell-card-copy:hover {
+  background: var(--editor-surface-3);
+  color: var(--text);
+}
+
+.shell-card-copy.copied {
+  color: var(--success);
+}
+
+/* "waiting for result…" and "cancelled before execution" describe the call,
+   not its output. */
+.shell-card-text.note {
+  color: var(--text-subtle);
+  font-style: italic;
+}
+
+.shell-card-text.error {
+  color: var(--error);
+}

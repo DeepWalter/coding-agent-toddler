@@ -1,0 +1,30 @@
+/* The heading a tool call reads under: the tool's display name, with the
+   call's own description beside it.  A shell call draws one today — its
+   title sits above the card, as ordinary output, rather than inside a card
+   header like the older `.tool-card-name` — and any tool that stops reading
+   as a card of parameters can reuse this instead of restating the type.
+
+   The name is a step above the 13px body (and so above the 12px text in the
+   card below it): the line is the call's identity, not more output. */
+
+.tool-call-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  /* A long description shrinks rather than widening the row. */
+  min-width: 0;
+}
+
+.tool-call-name {
+  flex: none;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.tool-call-desc {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+}

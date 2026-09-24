@@ -1821,5 +1821,214 @@ await page.waitForSelector('.model-menu')
   await page.keyboard.press('Escape')
 }
 
+// --- Phase 12: a shell call reads as a Bash card ---
+
+// The card shows the command and its output outright: a title carrying the
+// call's own description, then IN and OUT rows clipped to three lines.  A
+// clipped row is the control — it copies (IN) and opens its whole content in
+// the editor pane, which is the first thing the editor shows that no path
+// backs onto.
+await page.fill('textarea.input-bar-textarea', 'shell: count the python files')
+await page.click('button:has-text("Send")')
+await page.waitForSelector('.shell-card', { timeout: 8000 })
+let shellCard = null
+{
+  await page.waitForTimeout(300)
+  shellCard = await page.locator('.shell-call').last().evaluate((el) => {
+    const card = el.querySelector('.shell-card')
+    const row = (side) => {
+      const box = card.querySelector(`.shell-card-row[data-row="${side}"]`)
+      const text = box.querySelector('.shell-card-text')
+      const line = parseFloat(getComputedStyle(text).lineHeight)
+      return {
+        clamped: box.hasAttribute('data-clamped'),
+        role: box.getAttribute('role'),
+        lines: Math.round(text.clientHeight / line),
+        text: text.textContent,
+        faded: getComputedStyle(box, '::before').backgroundImage.includes('linear-gradient'),
+      }
+    }
+    return {
+      name: el.querySelector('.tool-call-name')?.textContent.trim() ?? null,
+      desc: el.querySelector('.tool-call-desc')?.textContent.trim() ?? null,
+      nameSize: parseFloat(getComputedStyle(el.querySelector('.tool-call-name')).fontSize),
+      bodySize: parseFloat(getComputedStyle(document.body).fontSize),
+      // The title is read as ordinary output — the box holds only the two
+      // rows, and no remnant of the collapsible tool card.
+      titleInCard: card.querySelectorAll('.tool-call-heading').length,
+      legacyHeader: card.querySelectorAll('.tool-card-header').length,
+      copy: card.querySelectorAll('.shell-card-copy').length,
+      in: row('in'),
+      out: row('out'),
+    }
+  })
+  const ok =
+    shellCard.name === 'Bash' &&
+    shellCard.desc === 'count the Python files per directory' &&
+    // The heading is a step above the body type — the shared rule's whole
+    // point, and the reason it lives in shared/ for the next tool to use.
+    shellCard.nameSize > shellCard.bodySize &&
+    shellCard.titleInCard === 0 &&
+    shellCard.legacyHeader === 0 &&
+    shellCard.copy === 1 &&
+    // Three lines each, and both cut — the fade and the control follow the
+    // clip rather than the text.
+    shellCard.in.clamped &&
+    shellCard.in.lines === 3 &&
+    shellCard.in.faded &&
+    shellCard.in.role === 'button' &&
+    shellCard.out.clamped &&
+    shellCard.out.lines === 3
+  console.log(`phase12 a shell call reads as a Bash card ${JSON.stringify({ name: shellCard.name, desc: shellCard.desc, nameSize: shellCard.nameSize, bodySize: shellCard.bodySize, titleInCard: shellCard.titleInCard, legacyHeader: shellCard.legacyHeader, copy: shellCard.copy, inLines: shellCard.in.lines, outLines: shellCard.out.lines })} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+// P12b: the gutter mark lines up with the title, not with the box — the
+// shell row's first line is the title, so it takes the default inset where
+// every other tool's mark sits inside its card's header.
+{
+  const marks = await page.locator('.stream-row[data-kind="tool"][data-tool="shell"]').last().evaluate((row) => {
+    const mark = row.querySelector('.status-mark')
+    const title = row.querySelector('.tool-call-heading')
+    const box = row.querySelector('.shell-card')
+    const mid = (el) => el.getBoundingClientRect().top + el.getBoundingClientRect().height / 2
+    return {
+      markMid: mark ? mid(mark) : null,
+      titleMid: title ? mid(title) : null,
+      boxTop: box ? box.getBoundingClientRect().top : null,
+      titleTop: title ? title.getBoundingClientRect().top : null,
+      tool: row.getAttribute('data-tool'),
+    }
+  })
+  const ok =
+    marks.tool === 'shell' &&
+    marks.markMid !== null &&
+    // Centred on the title's line, which itself starts at the row's top —
+    // and so, unlike the in-card case, above the box.
+    Math.abs(marks.markMid - marks.titleMid) <= 3 &&
+    marks.titleTop < marks.boxTop
+  console.log(`phase12 the gutter mark aligns with the title, above the box ${JSON.stringify({ markMid: marks.markMid, titleMid: marks.titleMid, titleTop: marks.titleTop, boxTop: marks.boxTop })} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+
+// P12c: the copy button writes the command, and copying is not opening —
+// the click must not reach the row's own handler.
+{
+  await page.evaluate(() => {
+    window.__copied = null
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: (text) => {
+          window.__copied = text
+          return Promise.resolve()
+        },
+      },
+    })
+  })
+  await page.locator('.shell-card').last().locator('.shell-card-copy').click()
+  await page.waitForTimeout(150)
+  const state = await page.evaluate(() => ({
+    copied: window.__copied,
+    tabs: document.querySelectorAll('.editor-tab').length,
+    icon: document.querySelector('.shell-card-copy')?.classList.contains('copied') ?? false,
+  }))
+  const ok =
+    state.copied === shellCard.in.text && state.tabs === 0 && state.icon === true
+  console.log(`phase12 the IN row copies the command without opening it ${JSON.stringify({ chars: state.copied?.length, tabs: state.tabs, icon: state.icon })} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+// P12d: a clipped row opens its whole content in the editor, read-only — and
+// clicking it again focuses that tab rather than opening a second one.
+{
+  const title = 'Bash — count the Python files per directory'
+  const outTitle = 'Bash output — count the Python files per directory'
+  await page.locator('.shell-card').last().locator('.shell-card-row[data-row="in"]').click()
+  await page.waitForTimeout(300)
+  const opened = await page.evaluate(() => ({
+    tabs: [...document.querySelectorAll('.editor-tab-name')].map((el) => el.textContent.trim()),
+    active: document.querySelector('.editor-tab.active .editor-tab-name')?.textContent.trim() ?? null,
+    header: document.querySelector('.editor-path')?.textContent.trim() ?? null,
+    doc: document.querySelector('.editor-cm .cm-content')?.textContent ?? '',
+    status: document.querySelector('.editor-status')?.textContent.trim() ?? null,
+  }))
+  // The doc is the whole command, not the three lines the card showed.
+  const ok =
+    opened.tabs.length === 1 &&
+    opened.active === title &&
+    opened.header === title &&
+    opened.doc.includes('done') &&
+    opened.status?.startsWith('read-only') === true
+  console.log(`phase12 the IN row opens the whole command in the editor ${JSON.stringify({ tabs: opened.tabs, active: opened.active, status: opened.status, docLines: opened.doc.split('\n').length })} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+
+  // Read-only: typing into the buffer must not change it.
+  const before = opened.doc
+  await page.locator('.editor-cm .cm-content').click()
+  await page.keyboard.type('zzz')
+  await page.waitForTimeout(150)
+  const after = await page.evaluate(() => document.querySelector('.editor-cm .cm-content')?.textContent ?? '')
+  const okRo = after === before
+  console.log(`phase12 the text tab refuses edits ${JSON.stringify({ changed: after !== before })} ${okRo ? 'PASS' : 'FAIL'}`)
+  if (!okRo) fails++
+
+  // The OUT row is its own tab; the command's tab stays one tab.
+  await page.locator('.shell-card').last().locator('.shell-card-row[data-row="out"]').click()
+  await page.waitForTimeout(300)
+  const out = await page.evaluate(() => ({
+    tabs: [...document.querySelectorAll('.editor-tab-name')].map((el) => el.textContent.trim()),
+    active: document.querySelector('.editor-tab.active .editor-tab-name')?.textContent.trim() ?? null,
+    doc: document.querySelector('.editor-cm .cm-content')?.textContent ?? '',
+  }))
+  const okOut =
+    out.tabs.length === 2 &&
+    // The output tab names its side — two tabs called the same thing would
+    // be indistinguishable in the strip.
+    out.tabs.includes(outTitle) &&
+    out.active === outTitle &&
+    out.doc.includes('line 10 of the listing')
+  console.log(`phase12 the OUT row opens the output as its own tab ${JSON.stringify({ tabs: out.tabs, docLines: out.doc.split('\n').length })} ${okOut ? 'PASS' : 'FAIL'}`)
+  if (!okOut) fails++
+
+  await page.locator('.shell-card').last().locator('.shell-card-row[data-row="in"]').click()
+  await page.waitForTimeout(250)
+  const again = await page.evaluate(() => ({
+    tabs: document.querySelectorAll('.editor-tab').length,
+    active: document.querySelector('.editor-tab.active .editor-tab-name')?.textContent.trim() ?? null,
+  }))
+  const okAgain = again.tabs === 2 && again.active === title
+  console.log(`phase12 a second click focuses the tab it already opened ${JSON.stringify(again)} ${okAgain ? 'PASS' : 'FAIL'}`)
+  if (!okAgain) fails++
+}
+// P12e: a call that fits its three lines is plain text — no fade, no cursor,
+// no tab.  The failure fixture is also the card's error reading.
+{
+  await page.fill('textarea.input-bar-textarea', 'fail: run it')
+  await page.click('button:has-text("Send")')
+  await page.waitForTimeout(400)
+  const short = await page.locator('.shell-card').last().evaluate((el) => {
+    const box = el.querySelector('.shell-card-row[data-row="in"]')
+    return {
+      clamped: box.hasAttribute('data-clamped'),
+      role: box.getAttribute('role'),
+      error: el.classList.contains('error'),
+      outError: el.querySelector('.shell-card-row[data-row="out"] .shell-card-text')?.classList.contains('error') ?? false,
+      out: el.querySelector('.shell-card-row[data-row="out"] .shell-card-text')?.textContent ?? '',
+    }
+  })
+  const tabsBefore = await page.locator('.editor-tab').count()
+  await page.locator('.shell-card').last().locator('.shell-card-row[data-row="in"]').click()
+  await page.waitForTimeout(250)
+  const tabsAfter = await page.locator('.editor-tab').count()
+  const ok =
+    short.clamped === false &&
+    short.role === null &&
+    short.error &&
+    short.outError &&
+    short.out === 'exit status 1' &&
+    tabsAfter === tabsBefore
+  console.log(`phase12 a row that fits stays plain text, and a failed call reads as one ${JSON.stringify({ clamped: short.clamped, role: short.role, error: short.error, out: short.out, tabsAfter })} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+
 await browser.close()
 process.exit(fails ? 1 : 0)

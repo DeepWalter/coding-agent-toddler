@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import type { Block } from '../types'
+import type { Block, TabEntry } from '../types'
 import { renderMarkdown } from '../markdown'
 import { blockStatus } from '../blockStatus'
+import { isShellCall } from '../shellCall'
 import ConsolePaneTopFloat from './ConsolePaneTopFloat.vue'
 import ConsolePaneMessageBubble from './ConsolePaneMessageBubble.vue'
 import ConsolePanePlanCard from './ConsolePanePlanCard.vue'
+import ConsolePaneShellCard from './ConsolePaneShellCard.vue'
 import ConsolePaneStatusMark from './ConsolePaneStatusMark.vue'
 import ConsolePaneThinkingBlock from './ConsolePaneThinkingBlock.vue'
 import ConsolePaneToolCard from './ConsolePaneToolCard.vue'
@@ -23,6 +25,7 @@ const emit = defineEmits<{
   'approve-plan': [planId: string, mode: 'manual' | 'auto']
   'reject-plan': [planId: string, feedback: string]
   'open-file': [path: string]
+  'open-text': [tab: Extract<TabEntry, { kind: 'text' }>]
 }>()
 
 const scroller = ref<HTMLElement | null>(null)
@@ -315,6 +318,7 @@ function rowStatus(block: Block) {
       :key="block.id"
       class="stream-row"
       :data-kind="block.kind"
+      :data-tool="block.kind === 'tool' ? block.tool_name : undefined"
     >
       <!-- One mark per block, outdented into the row's left padding: the
            indent every output block gets is what makes room for it, and
@@ -337,6 +341,13 @@ function rowStatus(block: Block) {
         @open-file="(path) => emit('open-file', path)"
       />
       <ConsolePaneThinkingBlock v-else-if="block.kind === 'thinking'" :block="block" />
+      <!-- A shell call reads as its own card: the command and its output are
+           the whole story, where another tool's is its parameters. -->
+      <ConsolePaneShellCard
+        v-else-if="block.kind === 'tool' && isShellCall(block)"
+        :block="block"
+        @open-text="(tab) => emit('open-text', tab)"
+      />
       <ConsolePaneToolCard v-else-if="block.kind === 'tool'" :block="block" />
       <ConsolePanePlanCard
         v-else-if="block.kind === 'plan'"

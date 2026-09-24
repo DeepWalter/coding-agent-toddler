@@ -35,8 +35,10 @@ export function formatTokens(n: number): string {
 }
 
 /** Identity of a tab-strip entry — the same file can be open as a file
- * tab AND as a staged/unstaged diff, so the kind + side prefix the path. */
+ * tab AND as a staged/unstaged diff, so the kind + side prefix the path.
+ * A text tab has no path; its id is what names it. */
 export function tabKey(tab: TabEntry): string {
   if (tab.kind === 'file') return `f:${tab.path}`
-  return `d:${tab.staged ? 's' : 'u'}:${tab.path}`
+  if (tab.kind === 'diff') return `d:${tab.staged ? 's' : 'u'}:${tab.path}`
+  return `t:${tab.id}`
 }

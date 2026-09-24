@@ -6,7 +6,7 @@ import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { forceParsing } from '@codemirror/language'
 import type { Language } from '@codemirror/language'
 import { api } from '../api'
-import { languageForPath } from '../editor/languages'
+import { languageForName, languageForPath } from '../editor/languages'
 import { editorTheme, highlightExt } from '../editor/theme'
 import { gitBadgeClass } from '../gitStatus'
 import type { GitStatusState, TabEntry } from '../types'
@@ -14,10 +14,11 @@ import { basename, tabKey } from '../utils'
 import FileEditorDiffView from './FileEditorDiffView.vue'
 
 /**
- * Editor pane with one tab per open entry — a regular file tab or a
+ * Editor pane with one tab per open entry — a regular file tab, a
+ * read-only text tab (content the app holds rather than the disk), or a
  * read-only diff tab.  The tab list and active tab live in App.vue; this
- * component owns per-file CodeMirror state.  A single EditorView serves
- * all file tabs — switching tabs swaps its state via `view.setState`,
+ * component owns per-entry CodeMirror state.  A single EditorView serves
+ * them all — switching tabs swaps its state via `view.setState`,
  * which carries each tab's doc, undo history, and cursor.  While a diff
  * tab is active the CM host stays mounted but hidden (`display: none`)
  * and FileEditorDiffView takes over the pane — the EditorView's parent must
@@ -39,6 +40,11 @@ const emit = defineEmits<{
 }>()
 
 interface EditorTab {
+  // Where the buffer came from: a file tab is fetched from disk (and saved
+  // back to it), a text tab holds content the app handed over and only ever
+  // reads it.  The record outlives the open-tab list, so the prune needs to
+  // know which orphans are worth keeping.
+  kind: 'file' | 'text'
   // CodeMirror state for the tab.  `markRaw`'d — CM state objects must
   // never be wrapped in Vue proxies.  null until the first load succeeds.
   state: EditorState | null
@@ -60,10 +66,11 @@ const tabs = ref<Record<string, EditorTab>>(Object.create(null))
 const editorHost = ref<HTMLElement | null>(null)
 let view: EditorView | null = null
 
-// Path whose state the view currently displays — the flush-on-switch needs
-// to know which tab to write the live view state back into (the watcher's
-// `props.active` is already the NEW path by the time it fires).
-let currentPath: string | null = null
+// Record key whose state the view currently displays — the flush-on-switch
+// needs to know which tab to write the live view state back into (the
+// watcher's `props.active` is already the NEW tab by the time it fires).  A
+// file tab's key is its path; a text tab's is its id.
+let currentKey: string | null = null
 
 // Restore-vs-user-input race guard: wheel/touch timestamps mirror CM's own
 // approach in the measure's anchor logic.  A restore that's still converging
@@ -80,12 +87,12 @@ let lastRestoreWrite = 0
  * the scroll — the anchored block is measured by then, the re-anchor is
  * exact, and the loop exits.  The guard stops the loop if the user scrolls.
  */
-function restoreScroll(path: string, target: number) {
-  if (!view || currentPath !== path) return
+function restoreScroll(key: string, target: number) {
+  if (!view || currentKey !== key) return
   lastRestoreWrite = performance.now() // the restore owns the scroll from here
   const step = (left: number) => {
     const v = view
-    if (!v || currentPath !== path || left <= 0) return
+    if (!v || currentKey !== key || left <= 0) return
     if (lastUserScroll > lastRestoreWrite) return // user took over — their scroll wins
     v.scrollDOM.scrollTop = target
     requestAnimationFrame(() => {
@@ -114,12 +121,21 @@ function isStale(path: string, seq: number): boolean {
   return fetchTokens.get(path) !== seq
 }
 
-// The file tab whose CodeMirror machinery is live (null while a diff tab
-// or nothing is active).  `tabs` is keyed by path, so a diff tab for a
-// path that is also open as a file shares the key — every per-file lookup
-// below must gate on `kind === 'file'` first.
+/** The record key a tab's buffer lives under, or null for a kind that owns
+ *  no CodeMirror state (diffs render themselves). */
+function bufferKey(tab: TabEntry | null): string | null {
+  if (!tab) return null
+  if (tab.kind === 'file') return tab.path
+  if (tab.kind === 'text') return tab.id
+  return null
+}
+
+// The buffered tab whose CodeMirror machinery is live (null while a diff tab
+// or nothing is active).  A diff tab for a path that is also open as a file
+// shares `tabs`' key space — every lookup below must gate on the kind first.
+const activeBufferKey = computed(() => bufferKey(props.active))
 const activeTab = computed(() =>
-  props.active?.kind === 'file' ? (tabs.value[props.active.path] ?? null) : null,
+  activeBufferKey.value ? (tabs.value[activeBufferKey.value] ?? null) : null,
 )
 const isDirty = (tab: EditorTab | null | undefined) => !!tab && tab.dirty
 
@@ -137,11 +153,6 @@ const dirtyCount = computed(() => {
 })
 watch(dirtyCount, (count) => emit('dirty-count', count))
 
-/** Active file path — the header, explorer highlight, and save target. */
-const activeFilePath = computed(() =>
-  props.active?.kind === 'file' ? props.active.path : null,
-)
-
 /** Active diff tab (or null) — when set, FileEditorDiffView replaces the
  *  header+body. */
 const activeDiff = computed<Extract<TabEntry, { kind: 'diff' }> | null>(() =>
@@ -151,9 +162,29 @@ const activeDiff = computed<Extract<TabEntry, { kind: 'diff' }> | null>(() =>
 /** Strip highlight: a tab is active when its key equals the active key. */
 const activeKey = computed(() => (props.active ? tabKey(props.active) : null))
 
+/** What the strip calls a tab: a file reads as its basename, a text tab as
+ *  the title it was opened with. */
+function tabLabel(tab: TabEntry): string {
+  return tab.kind === 'text' ? tab.title : basename(tab.path)
+}
+
+/** The strip's hover text — the full identity, which for a file is its path. */
+function tabTitle(tab: TabEntry): string {
+  return tab.kind === 'text' ? tab.title : tab.path
+}
+
+/** What the header names — a text tab's title, else the file's path.  (A
+ *  diff tab replaces the header, so it never reaches here.) */
+const activeTitle = computed(() => {
+  const tab = props.active
+  if (!tab) return null
+  return tab.kind === 'text' ? tab.title : tab.path
+})
+
 const statusText = computed(() => {
   const t = activeTab.value
   if (!t) return ''
+  if (t.kind === 'text') return `read-only · ${t.totalLines} lines`
   if (t.loadError) return t.loadError
   if (t.saveError) return t.saveError
   if (t.loading) return 'loading…'
@@ -162,10 +193,11 @@ const statusText = computed(() => {
   return `${t.totalLines} lines`
 })
 
-function ensureTab(path: string): EditorTab {
-  const existing = tabs.value[path]
+function ensureTab(key: string, kind: 'file' | 'text'): EditorTab {
+  const existing = tabs.value[key]
   if (existing) return existing
-  tabs.value[path] = {
+  tabs.value[key] = {
+    kind,
     state: null, dirty: false, totalLines: 0,
     loading: false, loadError: null, saving: false, saveError: null,
     saved: false, flashTimer: null, scrollTop: 0,
@@ -173,48 +205,72 @@ function ensureTab(path: string): EditorTab {
   // Re-read: the store wraps the literal in a reactive proxy on get, and
   // callers must mutate the proxy — writes to the raw literal would not
   // trigger re-renders.
-  return tabs.value[path]
+  return tabs.value[key]
 }
 
 // The update listener closes over its tab, so typing always updates the
 // right entry — the view only ever displays the active tab's state, so
 // the listener facet in force is the active tab's.
-function buildExtensions(tab: EditorTab, language: Language | null): Extension[] {
+function buildExtensions(
+  tab: EditorTab,
+  language: Language | null,
+  readOnly = false,
+): Extension[] {
+  // A read-only buffer keeps every reader's affordance — selection, copy,
+  // scrolling, highlighting, the line numbers — and drops the ones that
+  // write back: undo history, the save and indent bindings, the dirty
+  // tracker.  `EditorState.readOnly` blocks the dispatches themselves, so
+  // the doc cannot move even if some binding did fire.
+  const editing: Extension[] = readOnly
+    ? [EditorState.readOnly.of(true)]
+    : [
+        history(),
+        keymap.of([
+          // Ctrl/Cmd+S saves — explicit Ctrl-s keeps "Ctrl works on Mac too"
+          // parity with the old onKeydown, which accepted either modifier.
+          { key: 'Mod-s', run: () => { void save(); return true } },
+          { key: 'Ctrl-s', run: () => { void save(); return true } },
+          // Tab indents two spaces and stays in the editor.
+          { key: 'Tab', run: (v) => {
+            v.dispatch(v.state.replaceSelection('  '))
+            return true
+          } },
+          ...defaultKeymap,
+          ...historyKeymap,
+        ]),
+        EditorView.updateListener.of((update) => {
+          if (update.docChanged) tab.dirty = true
+        }),
+      ]
+
   return [
-    history(),
+    ...editing,
     drawSelection(),
     lineNumbers(),
     EditorView.lineWrapping,
-    keymap.of([
-      // Ctrl/Cmd+S saves — explicit Ctrl-s keeps "Ctrl works on Mac too"
-      // parity with the old onKeydown, which accepted either modifier.
-      { key: 'Mod-s', run: () => { void save(); return true } },
-      { key: 'Ctrl-s', run: () => { void save(); return true } },
-      // Tab indents two spaces and stays in the editor.
-      { key: 'Tab', run: (v) => {
-        v.dispatch(v.state.replaceSelection('  '))
-        return true
-      } },
-      ...defaultKeymap,
-      ...historyKeymap,
-    ]),
-    EditorView.updateListener.of((update) => {
-      if (update.docChanged) tab.dirty = true
-    }),
     editorTheme,
     highlightExt,
     ...(language ? [language] : []), // no language → plain text
   ]
 }
 
-function buildState(tab: EditorTab, doc: string, language: Language | null): EditorState {
-  return EditorState.create({ doc, extensions: buildExtensions(tab, language) })
+function buildState(
+  tab: EditorTab,
+  doc: string,
+  language: Language | null,
+  readOnly = false,
+): EditorState {
+  return EditorState.create({
+    doc,
+    extensions: buildExtensions(tab, language, readOnly),
+  })
 }
 
 // Empty doc shown when no tab is active — built once so the "no file
 // selected" view keeps the theme.  The doc never changes, so its update
 // listener (closed over noopTab) never fires.
 const noopTab: EditorTab = {
+  kind: 'file',
   state: null, dirty: false, totalLines: 0,
   loading: false, loadError: null, saving: false, saveError: null,
   saved: false, flashTimer: null, scrollTop: 0,
@@ -227,8 +283,8 @@ const emptyState = markRaw(EditorState.create({ doc: '', extensions: buildExtens
 // is replaced — that keeps tab.state ≡ the view state last shown for it.
 // (dirty needs no capture: the update listener has kept it current.)
 function flushCurrentFile() {
-  if (!view || !currentPath) return
-  const prevTab = tabs.value[currentPath]
+  if (!view || !currentKey) return
+  const prevTab = tabs.value[currentKey]
   if (prevTab?.state) {
     prevTab.state = markRaw(view.state)
     prevTab.scrollTop = view.scrollDOM.scrollTop
@@ -237,7 +293,7 @@ function flushCurrentFile() {
 
 function switchToTab(path: string) {
   if (!view) return
-  if (currentPath && currentPath !== path) flushCurrentFile()
+  if (currentKey && currentKey !== path) flushCurrentFile()
   const tab = tabs.value[path]
   if (tab?.state) {
     showTab(tab, path, true)
@@ -248,26 +304,44 @@ function switchToTab(path: string) {
     // keyboard focus; typing into an untracked doc is impossible.
     const focusOnLoad = view.hasFocus // re-focus on arrival iff we had focus
     view.contentDOM.blur()
-    currentPath = null
+    currentKey = null
     void loadTab(path, focusOnLoad)
   }
 }
 
+/** Display the read-only tab `entry` names.  There is nothing to fetch: the
+ *  content arrived with the tab, and the buffer is rebuilt from it. */
+function showTextTab(entry: Extract<TabEntry, { kind: 'text' }>) {
+  if (!view) return
+  flushCurrentFile()
+  const tab = ensureTab(entry.id, 'text')
+  const language = entry.language ? languageForName(entry.language) : null
+  tab.state = markRaw(buildState(tab, entry.content, language, true))
+  tab.totalLines = entry.content ? entry.content.split('\n').length : 0
+  tab.loading = false
+  tab.loadError = null
+  tab.dirty = false
+  showTab(tab, entry.id, true)
+  // Parse synchronously so the highlight is complete from the first paint,
+  // as a file load does.
+  if (language) forceParsing(view, tab.state.doc.length, 500)
+}
+
 /** Display `tab` in the single view.  Caller guarantees `tab.state` is set. */
-function showTab(tab: EditorTab, path: string, focus: boolean) {
+function showTab(tab: EditorTab, key: string, focus: boolean) {
   if (!view || !tab.state) return
   view.setState(tab.state)
-  currentPath = path
+  currentKey = key
   if (focus) view.focus()
   // setState keeps the DOM's current scroll, and the new content height only
   // lands during the post-setState measure — writing scrollTop synchronously
   // would clamp it against the previous tab's stale scrollHeight.  restoreScroll
   // defers past that measure and then converges on the exact position.
-  restoreScroll(path, tab.scrollTop)
+  restoreScroll(key, tab.scrollTop)
 }
 
 async function loadTab(path: string, focusOnLoad = false) {
-  const tab = ensureTab(path)
+  const tab = ensureTab(path, 'file')
   if (tab.state || tab.loading) return // already loaded or in flight
   const seq = beginFetch(path)
   tab.loading = true
@@ -306,7 +380,7 @@ async function loadTab(path: string, focusOnLoad = false) {
 // their edits — possibly already saved — must never be replaced by a
 // response that predates them.
 async function refreshTab(path: string) {
-  const tab = ensureTab(path)
+  const tab = ensureTab(path, 'file')
   if (tab.loading || tab.dirty) return
   const seq = beginFetch(path)
   const startText = tab.state ? tab.state.doc.toString() : null
@@ -315,7 +389,7 @@ async function refreshTab(path: string) {
     if (isStale(path, seq) || tabs.value[path] !== tab) return
     if (tab.dirty) return // user typed while we fetched — keep their edits
     const current =
-      currentPath === path && view
+      currentKey === path && view
         ? view.state.doc.toString()
         : (tab.state?.doc.toString() ?? null)
     if (startText !== null && current !== startText) return
@@ -331,7 +405,7 @@ async function refreshTab(path: string) {
     }
     tab.state = markRaw(buildState(tab, res.content, language))
     tab.dirty = false
-    if (currentPath === path && view) {
+    if (currentKey === path && view) {
       // Live swap while the user looks at the tab — keep their scroll.
       const savedTop = view.scrollDOM.scrollTop
       view.setState(tab.state)
@@ -366,7 +440,7 @@ async function save() {
     // live doc (or the flushed state, if the user switched away mid-save)
     // instead of trusting the flag.
     const now =
-      currentPath === path && view
+      currentKey === path && view
         ? view.state.doc.toString()
         : (tab.state?.doc.toString() ?? text)
     tab.dirty = now !== text
@@ -383,24 +457,41 @@ async function save() {
 }
 
 function requestClose(tabEntry: TabEntry) {
-  // Diff tabs hold no CodeMirror state — close immediately.  File tabs
-  // with unsaved edits ask first, as before.
-  if (tabEntry.kind === 'file') {
-    const tab = tabs.value[tabEntry.path]
-    if (tab && isDirty(tab)) {
-      if (!window.confirm(`Close ${tabEntry.path}? Unsaved changes will be lost.`)) return
+  // Diff tabs hold no CodeMirror state — close immediately.  File tabs with
+  // unsaved edits ask first, as before; a text tab is read-only, so its
+  // buffer just goes.
+  const key = bufferKey(tabEntry)
+  if (key) {
+    const tab = tabs.value[key]
+    if (tab && tab.kind === 'file' && isDirty(tab)) {
+      if (!window.confirm(`Close ${key}? Unsaved changes will be lost.`)) return
     }
-    removeTab(tabEntry.path)
+    removeTab(key)
   }
   emit('close-tab', tabEntry)
 }
 
-function removeTab(path: string) {
-  const tab = tabs.value[path]
+function removeTab(key: string) {
+  const tab = tabs.value[key]
   if (tab?.flashTimer) clearTimeout(tab.flashTimer)
-  fetchTokens.delete(path) // any in-flight fetch for it is now stale
-  delete tabs.value[path]
+  fetchTokens.delete(key) // any in-flight fetch for it is now stale
+  delete tabs.value[key]
 }
+
+// A text tab's buffer holds the content itself, so an orphan left by a
+// session or repo switch is dead weight that the file buffers'
+// keep-on-purpose rule (see `dirtyCount`) does not cover.
+watch(
+  () => props.files,
+  (files) => {
+    const live = new Set(
+      files.map((tab) => bufferKey(tab)).filter((key): key is string => !!key),
+    )
+    for (const key of Object.keys(tabs.value)) {
+      if (tabs.value[key].kind === 'text' && !live.has(key)) removeTab(key)
+    }
+  },
+)
 
 // Refresh/close guard: reloading silently discards unsaved edits (tabs
 // persist, content refetches from disk), so ask first when any tab is
@@ -446,7 +537,7 @@ watch(() => props.active, (tab) => {
       view.setState(emptyState)
       view.contentDOM.blur()
     }
-    currentPath = null
+    currentKey = null
     return
   }
   if (tab.kind === 'diff') {
@@ -458,11 +549,33 @@ watch(() => props.active, (tab) => {
       view.setState(emptyState)
       view.contentDOM.blur()
     }
-    currentPath = null
+    currentKey = null
+    return
+  }
+  if (tab.kind === 'text') {
+    showTextTab(tab)
     return
   }
   switchToTab(tab.path)
 })
+
+// A text tab's content can move after it opens — a command still streaming
+// when the row was clicked, a result that lands while the tab is watched.
+// The doc swaps in place; the reader keeps their scroll.
+watch(
+  () => (props.active?.kind === 'text' ? props.active.content : null),
+  (content) => {
+    const tab = activeTab.value
+    if (!view || content === null || !tab?.state) return
+    if (content === view.state.doc.toString()) return
+    const savedTop = view.scrollDOM.scrollTop
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: content },
+    })
+    tab.totalLines = content ? content.split('\n').length : 0
+    view.scrollDOM.scrollTop = savedTop
+  },
+)
 </script>
 
 <template>
@@ -473,10 +586,10 @@ watch(() => props.active, (tab) => {
         :key="tabKey(tab)"
         class="editor-tab"
         :class="{ active: activeKey === tabKey(tab), dirty: tab.kind === 'file' && isDirty(tabs[tab.path]) }"
-        :title="tab.path"
+        :title="tabTitle(tab)"
         @click="emit('activate-tab', tab)"
       >
-        <span class="editor-tab-name">{{ basename(tab.path) }}</span>
+        <span class="editor-tab-name">{{ tabLabel(tab) }}</span>
         <span
           v-if="tab.kind === 'file' && git.files[tab.path]"
           class="git-badge"
@@ -496,7 +609,7 @@ watch(() => props.active, (tab) => {
         <button
           type="button"
           class="editor-tab-close"
-          :aria-label="`close ${tab.path}`"
+          :aria-label="`close ${tabTitle(tab)}`"
           @click.stop="requestClose(tab)"
         >
           ×
@@ -517,8 +630,8 @@ watch(() => props.active, (tab) => {
     />
 
     <div v-else class="editor-header">
-      <span class="editor-path" :title="activeFilePath ?? undefined">
-        {{ activeFilePath ?? 'no file selected' }}
+      <span class="editor-path" :title="activeTitle ?? undefined">
+        {{ activeTitle ?? 'no file selected' }}
       </span>
       <span
         v-if="activeTab && isDirty(activeTab)"

@@ -26,6 +26,7 @@
 @import './shared/markdown.css';
 @import './shared/git.css';
 @import './shared/status-dot.css';
+@import './shared/tool-call-heading.css';
 
 @import './components/topbar.css';
 @import './components/console-header.css';
@@ -34,6 +35,7 @@
 @import './components/console-pane-message-bubble.css';
 @import './components/console-pane-thinking-block.css';
 @import './components/console-pane-tool-card.css';
+@import './components/console-pane-shell-card.css';
 @import './components/console-pane-plan-card.css';
 @import './components/console-pane-top-float.css';
 

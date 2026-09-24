@@ -275,7 +275,9 @@ const openTabs = ref<TabEntry[]>(restoredTabs.open.map((p) => ({ kind: 'file', p
 // reload then restores a path no longer in `open`).
 const activeTab = ref<TabEntry | null>(
   restoredTabs.active
-    ? (openTabs.value.find((t) => t.path === restoredTabs.active) ?? null)
+    ? (openTabs.value.find(
+        (t) => t.kind === 'file' && t.path === restoredTabs.active,
+      ) ?? null)
     : null,
 )
 
@@ -329,6 +331,21 @@ function openDiff(path: string, staged: boolean) {
   const entry: TabEntry = { kind: 'diff', path, staged }
   const existing = openTabs.value.find((t) => tabKey(t) === tabKey(entry))
   if (existing) {
+    activeTab.value = existing
+  } else if (openTabs.value.length < MAX_OPEN_TABS) {
+    activeTab.value = entry
+    openTabs.value.push(entry)
+  }
+  persistTabs()
+}
+
+/** Open content the app holds — a tool call's command or output — read-only
+ *  in the editor.  Ephemeral like a diff tab, and refreshed on a hit: the
+ *  call may have finished, or moved on, since the tab was opened. */
+function openText(entry: Extract<TabEntry, { kind: 'text' }>) {
+  const existing = openTabs.value.find((t) => tabKey(t) === tabKey(entry))
+  if (existing) {
+    if (existing.kind === 'text') existing.content = entry.content
     activeTab.value = existing
   } else if (openTabs.value.length < MAX_OPEN_TABS) {
     activeTab.value = entry
@@ -547,6 +564,7 @@ function onDividerUp(event: PointerEvent) {
             @approve-plan="approvePlan"
             @reject-plan="rejectPlan"
             @open-file="openFile"
+            @open-text="openText"
           />
         </div>
         <!-- One floating card occupies the bottom slot: the tool gate, an

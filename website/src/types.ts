@@ -374,12 +374,23 @@ export interface GitDiffPayload {
   hunks: DiffHunk[]
 }
 
-/** One entry in the editor tab strip: a regular file tab or a read-only
- * diff tab (side-by-side view of one file).  Type, not interface, so the
- * `kind` discriminant narrows in template/type checks. */
+/** One entry in the editor tab strip: a regular file tab, a read-only diff
+ * tab (side-by-side view of one file), or a read-only text tab — content
+ * the app holds rather than the disk, such as a tool call's command or
+ * output.  Type, not interface, so the `kind` discriminant narrows in
+ * template/type checks. */
 export type TabEntry =
   | { kind: 'file'; path: string }
   | { kind: 'diff'; path: string; staged: boolean }
+  | {
+      kind: 'text'
+      id: string
+      title: string
+      // A language *name* (`'bash'`), resolved by the editor — this module
+      // imports no CodeMirror.
+      language: string | null
+      content: string
+    }
 
 // ---------------------------------------------------------------------------
 // Git hunk apply (POST /api/git/hunk)

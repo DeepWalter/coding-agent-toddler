@@ -17,6 +17,22 @@ const PORT = 8100
 // change, and a fresh hello after a conversation-changing slash command).
 const COMPACT_TO_PCT = Number(process.env.MOCK_COMPACT_TO_PCT ?? 34)
 
+// The shell card's fixture: a command and an output both longer than the
+// card's three-line clip, so the fade, the copy button and the click-through
+// to the editor all have something to act on.  The tool is `shell` (what the
+// backend calls it); the card renders it as `Bash`.
+const SHELL_DESCRIPTION = 'count the Python files per directory'
+const SHELL_COMMAND = [
+  'for dir in toddler tests; do',
+  '  echo "== $dir"',
+  "  find \"$dir\" -name '*.py' -type f | wc -l",
+  'done',
+].join('\n')
+const SHELL_OUTPUT = Array.from(
+  { length: 10 },
+  (_, i) => `line ${i + 1} of the listing`,
+).join('\n') + '\n'
+
 const TYPES = {
   '.html': 'text/html',
   '.js': 'text/javascript',
@@ -285,6 +301,10 @@ wss.on('connection', (ws) => {
         // 26 lines end just short of it, at the tail where the harness has to
         // see the difference.
         const long = msg.input.startsWith('long')
+        // A "shell" turn runs one long shell call — the card's three-line
+        // clip, its copy button and its open-in-editor path all need a call
+        // that overflows the clip on both sides.
+        const shell = msg.input.startsWith('shell')
         // The real server auto-titles a conversation from the first user
         // input of its first turn, before the state change whose observer
         // re-broadcasts session_info — so a live header follows untitled →
@@ -299,20 +319,45 @@ wss.on('connection', (ws) => {
           send({
             type: 'tool_call_start',
             tool_id: 't2',
-            tool_name: 'Bash',
-            partial_input: { command: 'false' },
+            tool_name: 'shell',
+            partial_input: { description: 'run the failing command', command: 'false' },
           })
           send({
             type: 'tool_call_end',
             tool_id: 't2',
-            tool_name: 'Bash',
-            input: { command: 'false' },
+            tool_name: 'shell',
+            input: { description: 'run the failing command', command: 'false' },
             result: {
               success: false,
               output: null,
               error: 'exit status 1',
               checkpoint_id: null,
               metadata: null,
+            },
+          })
+          send({ type: 'agent_finished', reason: 'completed', usage: null })
+          send({ type: 'state', busy: false })
+          break
+        }
+        if (shell) {
+          send({ type: 'content_delta', text_delta: 'counting the Python files\n' })
+          send({
+            type: 'tool_call_start',
+            tool_id: 't3',
+            tool_name: 'shell',
+            partial_input: { description: SHELL_DESCRIPTION, command: SHELL_COMMAND },
+          })
+          send({
+            type: 'tool_call_end',
+            tool_id: 't3',
+            tool_name: 'shell',
+            input: { description: SHELL_DESCRIPTION, command: SHELL_COMMAND },
+            result: {
+              success: true,
+              output: SHELL_OUTPUT,
+              error: null,
+              checkpoint_id: null,
+              metadata: { command: SHELL_COMMAND, returncode: 0, cwd: '/tmp' },
             },
           })
           send({ type: 'agent_finished', reason: 'completed', usage: null })
@@ -343,8 +388,8 @@ wss.on('connection', (ws) => {
         send({
           type: 'tool_call_start',
           tool_id: 't1',
-          tool_name: 'Bash',
-          partial_input: { command: 'ls -la' },
+          tool_name: 'shell',
+          partial_input: { description: 'list the files', command: 'ls -la' },
         })
         send({
           type: 'agent_paused',
@@ -360,8 +405,8 @@ wss.on('connection', (ws) => {
         send({
           type: 'tool_call_end',
           tool_id: 't1',
-          tool_name: 'Bash',
-          input: { command: 'ls -la' },
+          tool_name: 'shell',
+          input: { description: 'list the files', command: 'ls -la' },
           result: { success: true, output: 'ok\n', error: null, checkpoint_id: null, metadata: null },
         })
         send({ type: 'content_delta', text_delta: 'done.\n' })
