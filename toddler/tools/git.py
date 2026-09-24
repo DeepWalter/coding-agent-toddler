@@ -1,4 +1,9 @@
-"""Git tools — status, diff, log, commit, and branch operations."""
+"""Git tools — status, diff, log, commit, and branch operations.
+
+Shared behaviour lives in this module's helpers: every command runs under
+``LC_ALL=C`` so its messages are always English and classifiable, and every
+stdout is capped by :func:`_truncate` before it reaches the model.
+"""
 
 from __future__ import annotations
 
@@ -25,7 +30,10 @@ async def _git(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=cwd,
-        env={**os.environ},
+        # C locale — a localized git would answer in a language the rest of
+        # the model's context is not in, and error text that a caller wants
+        # to classify (toddler.web.git sniffs git's messages) would miss.
+        env={**os.environ, "LC_ALL": "C"},
     )
     try:
         stdout_bytes, stderr_bytes = await asyncio.wait_for(
@@ -59,6 +67,23 @@ def _git_error(tool_name: str, stderr: str, returncode: int) -> ToolResult:
         success=False,
         output="",
         error=stderr.strip() or f"git exited with code {returncode}",
+    )
+
+
+#: Char cap for a git tool's output.  A diff of a large refactor, or a
+#: status listing a tree of untracked files, would otherwise arrive whole
+#: and fill the context window in one call.  Matches the shell tool's
+#: default, so both surfaces cut at the same size.
+_MAX_OUTPUT = 50_000
+
+
+def _truncate(text: str) -> str:
+    """Cut *text* to :data:`_MAX_OUTPUT`, saying how much was cut."""
+    if len(text) <= _MAX_OUTPUT:
+        return text
+    return (
+        text[:_MAX_OUTPUT]
+        + f"\n\n... (truncated {len(text) - _MAX_OUTPUT} chars)"
     )
 
 
@@ -105,7 +130,7 @@ class GitStatus(BaseTool):
             tool_id="",
             tool_name=self.name,
             success=True,
-            output=stdout.strip() or "Working tree clean.",
+            output=_truncate(stdout.strip()) or "Working tree clean.",
             metadata={"repo_path": cwd},
         )
 
@@ -188,7 +213,7 @@ class GitDiff(BaseTool):
             tool_id="",
             tool_name=self.name,
             success=True,
-            output=stdout.strip() or "(no changes)",
+            output=_truncate(stdout.strip()) or "(no changes)",
             metadata={"repo_path": cwd, "staged": staged},
         )
 
@@ -271,7 +296,7 @@ class GitLog(BaseTool):
             tool_id="",
             tool_name=self.name,
             success=True,
-            output=stdout.strip() or "(no commits)",
+            output=_truncate(stdout.strip()) or "(no commits)",
             metadata={"repo_path": cwd, "max_count": max_count},
         )
 
@@ -334,7 +359,7 @@ class GitCommit(BaseTool):
             tool_id="",
             tool_name=self.name,
             success=True,
-            output=stdout.strip(),
+            output=_truncate(stdout.strip()),
             metadata={"repo_path": cwd, "message": message},
         )
 
@@ -426,7 +451,7 @@ class GitBranch(BaseTool):
             tool_id="",
             tool_name=self.name,
             success=True,
-            output=stdout.strip() or "(no branches)",
+            output=_truncate(stdout.strip()) or "(no branches)",
             metadata={"repo_path": cwd, "remote": remote},
         )
 
@@ -462,7 +487,7 @@ class GitBranch(BaseTool):
             tool_id="",
             tool_name=self.name,
             success=True,
-            output=stdout.strip() or f"Deleted branch '{name}'.",
+            output=_truncate(stdout.strip()) or f"Deleted branch '{name}'.",
             metadata={"repo_path": cwd, "branch": name},
         )
 
