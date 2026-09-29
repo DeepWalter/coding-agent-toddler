@@ -16,6 +16,7 @@ from toddler.agent.events import (
     PlanProposed,
     PlanStepUpdate,
     ReasoningDelta,
+    ToolCallDelta,
     ToolCallEnd,
     ToolCallStart,
 )
@@ -681,3 +682,97 @@ class TestOneShotToolLine:
         ))
 
         assert "▶ read_file(file_path='README.md')" in buf.getvalue()
+
+
+# ============================================================================
+# Hidden tool calls
+# ============================================================================
+
+
+class TestHiddenToolCallInPanel:
+    """A tool that declares itself invisible (``plan_update``) draws no row:
+    its statuses are already on screen as plan step updates, so a row would
+    say the same thing twice."""
+
+    @staticmethod
+    def _renderer() -> StreamingRenderer:
+        return StreamingRenderer(console=Console(file=io.StringIO()))
+
+    @staticmethod
+    def _panel_text(renderer: StreamingRenderer) -> str:
+        buf = io.StringIO()
+        Console(file=buf, width=200).print(renderer._build_renderable())
+        return buf.getvalue()
+
+    def test_the_start_draws_no_row(self):
+        renderer = self._renderer()
+        renderer.on_tool_call_start(ToolCallStart(
+            tool_id="t1",
+            tool_name="plan_update",
+            partial_input={"step_id": "step-1"},
+        ))
+
+        assert renderer._tools == {}
+        assert "plan_update" not in self._panel_text(renderer)
+
+    def test_the_rest_of_the_call_leaves_no_trace_either(self):
+        """Deltas carry no tool name, so the id is what keeps a nameless
+        row from being drawn for a call the start turned away."""
+        renderer = self._renderer()
+        renderer.on_tool_call_start(ToolCallStart(
+            tool_id="t1",
+            tool_name="plan_update",
+            partial_input={"step_id": "step-1"},
+        ))
+
+        renderer.on_tool_call_delta(ToolCallDelta(
+            tool_id="t1", input_delta='{"status": "in_progress"}',
+        ))
+        renderer.on_tool_call_end(ToolCallEnd(
+            tool_id="t1",
+            tool_name="plan_update",
+            input={"step_id": "step-1", "status": "in_progress"},
+            result=ToolResult(
+                tool_id="t1", tool_name="plan_update", success=True,
+                output="Step step-1 → in_progress.",
+            ),
+        ))
+
+        assert renderer._tools == {}
+        text = self._panel_text(renderer)
+        assert "plan_update" not in text
+        assert "in_progress" not in text
+
+    def test_a_tool_that_declares_nothing_still_draws_its_row(self):
+        """The filter is the declaration's, not every tool's."""
+        renderer = self._renderer()
+        renderer.on_tool_call_start(ToolCallStart(
+            tool_id="t1", tool_name="shell", partial_input={"command": "ls"},
+        ))
+
+        assert renderer._tools["t1"].name == "shell"
+
+
+class TestOneShotHiddenToolCall:
+    """One-shot mode prints prose per call, and prints none for a hidden
+    one — the plan step lines are the whole story there too."""
+
+    def test_a_hidden_call_prints_nothing(self):
+        buf = io.StringIO()
+        renderer = NonStreamingRenderer(console=Console(file=buf))
+        renderer.on_tool_call_start(ToolCallStart(
+            tool_id="t1",
+            tool_name="plan_update",
+            partial_input={"step_id": "step-1"},
+        ))
+        renderer.on_tool_call_end(ToolCallEnd(
+            tool_id="t1",
+            tool_name="plan_update",
+            input={"step_id": "step-1", "status": "completed"},
+            result=ToolResult(
+                tool_id="t1", tool_name="plan_update", success=True,
+                output="Step step-1 → completed.",
+            ),
+        ))
+
+        assert buf.getvalue() == ""

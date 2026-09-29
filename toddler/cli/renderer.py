@@ -49,6 +49,7 @@ from toddler.agent.events import (
     ToolCallEnd,
     ToolCallStart,
 )
+from toddler.tools import HIDDEN_TOOL_NAMES
 from toddler.tools.base import CALL_DESCRIPTION_PARAM
 from toddler.tools.plan import PlanStepStatus
 from toddler.tools.shell import Shell
@@ -582,6 +583,10 @@ class StreamingRenderer(Renderer):
         self._plan_steps: list[tuple[str, str, str]] | None = None
         # Plan rows visible under the current height budget.
         self._max_plan_visible: int = 0
+        # Ids of calls to tools that declare themselves invisible.  Held by
+        # id rather than name because deltas and ends carry no name, and a
+        # delta for an unknown id would otherwise draw a nameless row.
+        self._hidden_ids: set[str] = set()
 
         # -- confirmation state (set when confirm() is active) --------------
         self._confirming: bool = False
@@ -642,6 +647,7 @@ class StreamingRenderer(Renderer):
         self._max_errors_visible = 0
         self._plan_steps = None
         self._max_plan_visible = 0
+        self._hidden_ids.clear()
         self._live.start()
         self._refresh(force=True)
 
@@ -1027,7 +1033,15 @@ class StreamingRenderer(Renderer):
         self._refresh()
 
     def on_tool_call_start(self, event: ToolCallStart) -> None:
-        """Add a running row to the tools panel."""
+        """Add a running row to the tools panel.
+
+        A tool that declares itself invisible gets no row: what it does
+        is already on screen as an event of its own (see
+        :data:`~toddler.tools.HIDDEN_TOOL_NAMES`).
+        """
+        if event.tool_name in HIDDEN_TOOL_NAMES:
+            self._hidden_ids.add(event.tool_id)
+            return
         self._close_thinking()
         params = event.partial_input or {}
         self._tools[event.tool_id] = _ToolRow(
@@ -1043,6 +1057,8 @@ class StreamingRenderer(Renderer):
 
     def on_tool_call_delta(self, event: ToolCallDelta) -> None:
         """Update the tool row's input signature."""
+        if event.tool_id in self._hidden_ids:
+            return
         row = self._tools.get(event.tool_id)
         if row is None:
             row = _ToolRow(
@@ -1065,6 +1081,9 @@ class StreamingRenderer(Renderer):
         columns are rebuilt from them — a stream whose last fragment was
         partial would otherwise leave the row showing that fragment.
         """
+        if event.tool_id in self._hidden_ids:
+            self._hidden_ids.discard(event.tool_id)
+            return
         result = event.result
         if event.tool_id in self._tools:
             row = self._tools[event.tool_id]
@@ -1650,8 +1669,12 @@ class NonStreamingRenderer(Renderer):
         """Announce the tool call with a one-line print.
 
         The call's description rides along after it — there is no table here
-        to give it a column of its own.
+        to give it a column of its own.  A tool that declares itself
+        invisible prints nothing: what it does is already printed as an
+        event of its own (see :data:`~toddler.tools.HIDDEN_TOOL_NAMES`).
         """
+        if event.tool_name in HIDDEN_TOOL_NAMES:
+            return
         params = event.partial_input or {}
         label = _format_tool_call(event.tool_name, params)
         description = _tool_description(params)
@@ -1663,6 +1686,8 @@ class NonStreamingRenderer(Renderer):
 
     def on_tool_call_end(self, event: ToolCallEnd) -> None:
         """Print the tool result (or error) inline."""
+        if event.tool_name in HIDDEN_TOOL_NAMES:
+            return
         result = event.result
 
         if result is None:
