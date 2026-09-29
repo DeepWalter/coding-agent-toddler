@@ -9,6 +9,7 @@ import shlex
 from pathlib import Path
 
 from toddler.tools.base import BaseTool, Permission, ToolResult
+from toddler.tools.registry import TOOL_CATALOG
 
 # ---------------------------------------------------------------------------
 # Command classification — patterns for safe vs dangerous commands
@@ -229,6 +230,7 @@ def _is_executing_script(args: list[str]) -> bool:
 # ---------------------------------------------------------------------------
 
 
+@TOOL_CATALOG.register()
 class Shell(BaseTool):
     """Execute a shell command with timeout and working-directory support.
 

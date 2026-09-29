@@ -6,6 +6,7 @@ import asyncio
 from pathlib import Path
 
 from toddler.tools.base import BaseTool, Permission, ToolResult
+from toddler.tools.registry import TOOL_CATALOG
 
 # Directories never worth searching — build artifacts, caches, and vendored
 # dependency trees.  Grep passes each one to ``--exclude-dir``, so grep never
@@ -22,6 +23,7 @@ _IGNORED_DIRS = frozenset({
 # ---------------------------------------------------------------------------
 
 
+@TOOL_CATALOG.register()
 class Grep(BaseTool):
     """Search file contents using ``grep -rn`` with configurable options.
 
@@ -286,6 +288,7 @@ def _match_result(
 # ---------------------------------------------------------------------------
 
 
+@TOOL_CATALOG.register()
 class Glob(BaseTool):
     """Find files matching a glob pattern using ``pathlib.glob``.
 

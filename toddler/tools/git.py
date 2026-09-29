@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 
 from toddler.tools.base import BaseTool, Permission, ToolResult
+from toddler.tools.registry import TOOL_CATALOG
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -92,6 +93,7 @@ def _truncate(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+@TOOL_CATALOG.register()
 class GitStatus(BaseTool):
     """Show the working tree status."""
 
@@ -143,6 +145,7 @@ class GitStatus(BaseTool):
 # ---------------------------------------------------------------------------
 
 
+@TOOL_CATALOG.register()
 class GitDiff(BaseTool):
     """Show changes between commits, the index, or the working tree."""
 
@@ -227,6 +230,7 @@ class GitDiff(BaseTool):
 # ---------------------------------------------------------------------------
 
 
+@TOOL_CATALOG.register()
 class GitLog(BaseTool):
     """Show the commit history."""
 
@@ -310,6 +314,7 @@ class GitLog(BaseTool):
 # ---------------------------------------------------------------------------
 
 
+@TOOL_CATALOG.register()
 class GitCommit(BaseTool):
     """Create a new commit with staged changes."""
 
@@ -374,6 +379,7 @@ class GitCommit(BaseTool):
 # ---------------------------------------------------------------------------
 
 
+@TOOL_CATALOG.register()
 class GitBranch(BaseTool):
     """List, create, or delete branches."""
 

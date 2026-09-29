@@ -5,12 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from toddler.tools.base import BaseTool, Permission, ToolResult
+from toddler.tools.registry import TOOL_CATALOG
 
 # ---------------------------------------------------------------------------
 # ReadFile
 # ---------------------------------------------------------------------------
 
 
+@TOOL_CATALOG.register()
 class ReadFile(BaseTool):
     """Read a file from the local filesystem and return its contents.
 
@@ -115,6 +117,7 @@ class ReadFile(BaseTool):
 # ---------------------------------------------------------------------------
 
 
+@TOOL_CATALOG.register()
 class WriteFile(BaseTool):
     """Write (create or overwrite) a file on disk.
 
@@ -179,6 +182,7 @@ class WriteFile(BaseTool):
 # ---------------------------------------------------------------------------
 
 
+@TOOL_CATALOG.register()
 class EditFile(BaseTool):
     """Perform exact string replacement in an existing file.
 

@@ -16,6 +16,7 @@ from toddler.tools.base import (
     Permission,
     ToolResult,
 )
+from toddler.tools.registry import TOOL_CATALOG
 
 if TYPE_CHECKING:
     from toddler.agent.planner import Plan
@@ -216,13 +217,16 @@ class PlanState:
         return tuple(self._statuses.items())
 
 
+@TOOL_CATALOG.register()
 class PlanUpdateTool(BaseTool):
     """Update the status of a step in the approved execution plan.
 
     Mutates the shared :class:`PlanState` it was given.  The session
-    the session manager arms that state only while PLAN_EXECUTING is active, and
+    manager arms that state only while PLAN_EXECUTING is active, and
     registers this tool dynamically for that phase alone, so the LLM sees
-    the tool schema only when a plan is being executed.
+    the tool schema only when a plan is being executed — which is why the
+    definition-time registration above opts this tool out of the default
+    registry (see :attr:`BaseTool.in_default_registry`).
     """
 
     name = "plan_update"
@@ -246,8 +250,15 @@ class PlanUpdateTool(BaseTool):
         "required": ["step_id", "status"],
     }
 
-    def __init__(self, plan_state: PlanState) -> None:
-        self._plan_state = plan_state
+    #: Registered per plan phase by the session manager, never handed to
+    #: every session like a default tool.
+    in_default_registry = False
+
+    def __init__(self, plan_state: PlanState | None = None) -> None:
+        # The default covers definition-time registration, which constructs
+        # with no arguments; a session always passes the state it shares
+        # with the agent loop.
+        self._plan_state = plan_state if plan_state is not None else PlanState()
 
     @property
     def permission(self) -> Permission:

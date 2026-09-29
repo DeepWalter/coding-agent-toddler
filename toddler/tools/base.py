@@ -188,12 +188,21 @@ class BaseTool(ABC):
     - ``parameters`` (JSON Schema dict)
     - ``execute(**kwargs)`` → ToolResult
 
-    They MAY override ``permission`` (default: READ).
+    They MAY override ``permission`` (default: READ) and
+    ``in_default_registry`` (default: True).
     """
 
     name: str
     description: str
     parameters: dict  # JSON Schema for the tool's input
+
+    #: Whether :func:`~toddler.tools.create_default_registry` hands this
+    #: tool to every session.  Default tools declare nothing; a tool that
+    #: only makes sense once a session arms it — ``plan_update``, live for
+    #: a plan phase alone — sets this ``False``.  It still registers itself
+    #: at definition time either way, so the catalog stays a complete
+    #: inventory of the toolbox.
+    in_default_registry: bool = True
 
     @abstractmethod
     async def execute(self, **kwargs) -> ToolResult:
