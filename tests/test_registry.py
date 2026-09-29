@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from toddler.tools import create_default_registry
+from toddler.tools import HIDDEN_TOOL_NAMES, create_default_registry
 from toddler.tools.base import BaseTool, ToolResult
 from toddler.tools.plan import PlanUpdateTool
 from toddler.tools.registry import TOOL_CATALOG, ToolRegistry
@@ -174,6 +174,37 @@ class TestRegisterDecorator:
 # ---------------------------------------------------------------------------
 # The built-in catalog
 # ---------------------------------------------------------------------------
+
+
+class TestHiddenToolNames:
+    """Which calls the front-ends draw a row for is a tool's own
+    declaration, read off the catalog — not a name list either of them
+    carries."""
+
+    def test_the_plan_tool_declares_itself_invisible(self):
+        """Its statuses arrive as plan step updates, so a row for the call
+        itself would repeat them."""
+        assert PlanUpdateTool.visible is False
+        assert "plan_update" in HIDDEN_TOOL_NAMES
+
+    def test_a_tool_that_declares_nothing_is_drawn(self):
+        assert "shell" not in HIDDEN_TOOL_NAMES
+        assert "read_file" not in HIDDEN_TOOL_NAMES
+
+    def test_the_set_cannot_drift_from_the_declarations(self):
+        """A name listed by hand, or a declaration the set ignores, both
+        fail."""
+        declared = {
+            tool.name for tool in TOOL_CATALOG.list_all() if not tool.visible
+        }
+        assert declared == HIDDEN_TOOL_NAMES
+
+    def test_hidden_is_not_the_same_question_as_not_default(self):
+        """Two declarations, two questions: what a session is handed, and
+        what the front-ends draw.  ``plan_update`` answers no to both, but
+        nothing ties the two together."""
+        assert set(HIDDEN_TOOL_NAMES) == {"plan_update"}
+        assert set(create_default_registry().list_names()) == BUILTIN_NAMES
 
 
 class TestDefaultRegistry:

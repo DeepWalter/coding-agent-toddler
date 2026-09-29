@@ -29,7 +29,7 @@ from toddler.agent.events import (
 from toddler.agent.planner import Plan
 from toddler.llm import TokenUsage
 from toddler.llm.messages import Message
-from toddler.tools.base import ToolResult
+from toddler.tools import HIDDEN_TOOL_NAMES, ToolResult
 
 __all__ = [
     "serialize_event",
@@ -137,14 +137,14 @@ def serialize_transcript(messages: list[Message]) -> list[dict]:  # noqa: C901
                 entry["reasoning"] = msg.reasoning
             entries.append(entry)
         for block in msg.blocks:
-            # No card is rebuilt for the plan bookkeeping call, matching
-            # the live stream — the statuses it carries arrive as plan
-            # step updates instead.  The call itself stays in the stored
-            # transcript; the model's context needs it.
+            # No card is rebuilt for a hidden tool, matching the live
+            # stream — its effect arrives as a frame of its own instead.
+            # The call itself stays in the stored transcript; the model's
+            # context needs it.
             if (
                 block.type == "tool_use"
                 and block.tool_id
-                and block.tool_name != "plan_update"
+                and block.tool_name not in HIDDEN_TOOL_NAMES
             ):
                 entries.append({
                     "role": "tool",
@@ -177,15 +177,15 @@ def serialize_event(event: AgentEvent) -> dict | None:  # noqa: C901
 
     Returns ``None`` for event classes this server doesn't know about
     (forward compatibility) so the runner can skip them instead of
-    dropping the whole turn — and for the plan bookkeeping call, which
-    the browser draws no card for.
+    dropping the whole turn — and for calls to hidden tools, which the
+    browser draws no card for.
     """
-    # ``plan_update`` says nothing the browser needs: what it does
-    # reaches the UI as ``plan_step_update`` frames, so a card for the
-    # call itself would only say the same thing a second time.
+    # A hidden tool says nothing the browser needs: what it does reaches
+    # the UI as a frame of its own, so a card for the call itself would
+    # only say the same thing a second time.
     if (
         isinstance(event, (ToolCallStart, ToolCallEnd))
-        and event.tool_name == "plan_update"
+        and event.tool_name in HIDDEN_TOOL_NAMES
     ):
         return None
 

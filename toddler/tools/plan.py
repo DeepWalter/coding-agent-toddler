@@ -254,6 +254,10 @@ class PlanUpdateTool(BaseTool):
     #: every session like a default tool.
     in_default_registry = False
 
+    #: No card in the console: the statuses this call records arrive as
+    #: plan step updates, so a card would only say it a second time.
+    visible = False
+
     def __init__(self, plan_state: PlanState | None = None) -> None:
         # The default covers definition-time registration, which constructs
         # with no arguments; a session always passes the state it shares

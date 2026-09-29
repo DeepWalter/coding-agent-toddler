@@ -188,8 +188,9 @@ class BaseTool(ABC):
     - ``parameters`` (JSON Schema dict)
     - ``execute(**kwargs)`` → ToolResult
 
-    They MAY override ``permission`` (default: READ) and
-    ``in_default_registry`` (default: True).
+    They MAY override ``permission`` (default: READ),
+    ``in_default_registry`` (default: True) and ``visible`` (default:
+    True).
     """
 
     name: str
@@ -203,6 +204,14 @@ class BaseTool(ABC):
     #: at definition time either way, so the catalog stays a complete
     #: inventory of the toolbox.
     in_default_registry: bool = True
+
+    #: Whether the console draws a card for calls to this tool.  A tool
+    #: whose effect already reaches the browser as a frame of its own —
+    #: ``plan_update``, whose statuses arrive as ``plan_step_update`` —
+    #: sets this ``False``, so the console says it once rather than twice.
+    #: The call is still made, executed, and stored in the transcript;
+    #: only its card is withheld.
+    visible: bool = True
 
     @abstractmethod
     async def execute(self, **kwargs) -> ToolResult:

@@ -124,9 +124,9 @@ class TestSerializeEvent:
         assert frame["result"] is None
 
     def test_quiet_tool_call_gets_no_frame(self):
-        """The plan bookkeeping call is filtered by name: the browser
-        learns what it did from the ``plan_step_update`` frames, so a
-        card for the call itself would only repeat them."""
+        """The plan bookkeeping call is hidden by its own declaration: the
+        browser learns what it did from the ``plan_step_update`` frames,
+        so a card for the call itself would only repeat them."""
         assert serialize_event(ToolCallStart(
             tool_id="t1", tool_name="plan_update",
             partial_input={"step_id": "step-1"},

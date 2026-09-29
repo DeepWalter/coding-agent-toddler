@@ -28,6 +28,7 @@ __all__ = [
     # Registry
     "ToolRegistry",
     "TOOL_CATALOG",
+    "HIDDEN_TOOL_NAMES",
     # Executor
     "ToolExecutor",
     "CheckpointCallback",
@@ -53,6 +54,23 @@ __all__ = [
     # Factory
     "create_default_registry",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Visibility
+# ---------------------------------------------------------------------------
+
+#: Tool names no front-end draws a call row for: what the tool does reaches
+#: the user as an event or a print of its own, so a row would say it a
+#: second time.
+#:
+#: Derived from :attr:`~toddler.tools.base.BaseTool.visible` after the
+#: imports above have registered every tool — the catalog is empty while
+#: ``registry`` is being imported, which is why this constant waits until
+#: the whole package is built.
+HIDDEN_TOOL_NAMES = frozenset(
+    tool.name for tool in TOOL_CATALOG.list_all() if not tool.visible
+)
 
 
 # ---------------------------------------------------------------------------
