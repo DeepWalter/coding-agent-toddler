@@ -35,15 +35,31 @@ from toddler.web.app import create_app
 # ============================================================================
 
 
-def _app(tmp_path, llm):
+#: What every web test's settings start from.  The slot specs and the
+#: effort tier reach the UI through the session's turn config, so leaving
+#: them unset would let an ambient ``TODDLER_*`` setting or
+#: ``DEEPSEEK_MODEL`` — ``~/.toddler/.env`` is loaded at import — decide
+#: what a frame assertion sees.  ``pro`` is retargeted so the live slot is
+#: answerable by spec alone; ``default`` and ``flash`` name the same id, as
+#: they do on a fresh install, which is the case ``model_slot`` exists to
+#: tell apart.
+_PINNED_SETTINGS = {
+    "model": "pro",
+    "model_default": "deepseek-flash",
+    "model_pro": "test-model",
+    "model_flash": "deepseek-flash",
+    "reasoning_effort": "high",
+}
+
+
+def _app(tmp_path, llm, **overrides):
     """An app with a tmp session dir, tmp repo root, and the mock LLM.
 
-    The model is pinned here: it reaches the UI through the session's
-    turn config, so an ambient ``DEEPSEEK_MODEL`` would otherwise decide
-    what the frames assert against.
+    Keyed on :data:`_PINNED_SETTINGS`; an override pins one of them
+    differently for a single test.
     """
     settings = Settings(
-        session_dir=tmp_path, model="pro", model_pro="test-model",
+        session_dir=tmp_path, **{**_PINNED_SETTINGS, **overrides},
     )
     return create_app(settings, repo_root=tmp_path, llm=llm)
 
@@ -1759,10 +1775,7 @@ class TestModelSelectionPayload:
     def test_a_suffix_names_its_slots_window(self, tmp_path):
         """The window is computed server-side — ``[1m]`` is Toddler's own
         notation, so the frontend cannot derive it from the spec."""
-        settings = Settings(
-            session_dir=tmp_path, model="pro", model_pro="test-model[1m]",
-        )
-        app = create_app(settings, repo_root=tmp_path, llm=make_mock_llm())
+        app = _app(tmp_path, make_mock_llm(), model_pro="test-model[1m]")
         with TestClient(app) as client, client.websocket_connect("/ws") as ws:
             session = ws.receive_json()["session"]
             windows = {
