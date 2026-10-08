@@ -17,11 +17,13 @@ from types import SimpleNamespace
 __all__ = ["AsyncOpenAI"]
 
 # ---------------------------------------------------------------------------
-# Path to *this* file — used by the "text" / "write" canned responses
+# Paths to the files the canned responses reach for — this file is used by
+# "text" / "write", the repo README by "read"
 # ---------------------------------------------------------------------------
 
 _THIS_FILE = Path(__file__).resolve()
 _THIS_CONTENT = _THIS_FILE.read_text(encoding="utf-8")
+_README_FILE = _THIS_FILE.parents[2] / "README.md"
 
 # ---------------------------------------------------------------------------
 # Guard: which AsyncOpenAI to export
@@ -75,8 +77,8 @@ if _TEST == "cli":
                     response is chosen by inspecting the last message:
 
                     * ``"text"`` — stream the content of *this* file.
-                    * ``"read"`` — emit a ``shell`` tool call that counts
-                      ``*.py`` files.
+                    * ``"read"`` — emit a ``read_file`` tool call that reads
+                      the repo's ``README.md``.
                     * ``"shell"`` — emit a multi-line ``shell`` tool call,
                       every command in it safe.
                     * ``"write"`` — emit a ``write_file`` tool call that
@@ -199,21 +201,20 @@ if _TEST == "cli":
 
         @staticmethod
         def _chunks_for_read():
-            """Emit a text intro, then a ``shell`` tool call to count
-            ``*.py`` files."""
+            """Emit a text intro, then a ``read_file`` tool call to read
+            the repo's ``README.md``."""
             args = json.dumps(
                 {
-                    "description": "count the Python files in this repo",
-                    "command": "find . -name '*.py' -type f | wc -l",
+                    "file_path": str(_README_FILE),
                 },
                 ensure_ascii=False,
             )
             blocks: list[tuple[str, str | None]] = [
                 (
                     "text",
-                    "Let me count the Python files in this repo.\n\n",
+                    "Let me read the README.\n\n",
                 ),
-                ("tool_name", "shell"),
+                ("tool_name", "read_file"),
                 ("tool_args", args),
                 ("finish", "tool_calls"),
             ]
