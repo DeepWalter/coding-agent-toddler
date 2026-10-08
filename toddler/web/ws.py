@@ -70,6 +70,7 @@ def _hello_frame(state: WebAppState) -> dict:
             state.storage_mgr.get_messages(
                 session.id, conversation_id=conv.id,
             ),
+            state.repo_root,
         )
     return {
         "type": "hello",

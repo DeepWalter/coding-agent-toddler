@@ -19,6 +19,8 @@ __all__ = [
     "build_file_tree",
     "read_file",
     "resolve_relative",
+    "tool_path",
+    "tool_path_abs",
     "write_file",
 ]
 
@@ -68,6 +70,55 @@ def resolve_relative(root: Path, rel: str) -> Path:
     if not candidate.is_relative_to(root_abs):
         raise FileApiError(400, f"path escapes the repository root: {rel!r}")
     return candidate
+
+
+def tool_path_abs(root: Path, raw: object) -> str | None:
+    """Where a path a tool call named actually is — or ``None`` when it
+    names nothing at all.
+
+    A call may name an absolute path, one relative to the agent's own cwd
+    (which is the served root), or ``~``.  The file tools expand and
+    resolve all three before touching the disk, and this is that same
+    resolution, so the file the browser is told about is the file the
+    call touched.  ``~`` is the case the browser could never work out for
+    itself: expanding it needs the home directory, which only this side
+    of the wire knows.
+    """
+    if not isinstance(raw, str) or not raw.strip() or "\x00" in raw:
+        return None
+    try:
+        candidate = Path(raw).expanduser()
+    except RuntimeError:  # ``~user`` for a user this machine hasn't got
+        return None
+    if not candidate.is_absolute():
+        candidate = root.resolve() / candidate
+    return str(candidate.resolve())
+
+
+def tool_path(root: Path, raw: object) -> str | None:
+    """The same file for a tab to hold: *root*-relative, or ``None`` when
+    it lands outside the root, or names nothing at all.
+
+    Every other pane names a file the way the tree does — POSIX, relative
+    to the root — so a card that opens a tab names it that way too.  A
+    call that resolved elsewhere has no such name, and no tab here to
+    open in.
+
+    Containment is :func:`resolve_relative`'s property, but this is not
+    that call: a request naming a path outside the root is a 400, where a
+    call that already ran has simply nothing here to open.
+    """
+    absolute = tool_path_abs(root, raw)
+    if absolute is None:
+        return None
+    root_abs = root.resolve()
+    candidate = Path(absolute)
+    if not candidate.is_relative_to(root_abs):
+        return None
+    # A path that lands ON the root — ``.``, or the root spelled out —
+    # names no file to open.
+    rel = candidate.relative_to(root_abs)
+    return rel.as_posix() if rel.parts else None
 
 
 # ---------------------------------------------------------------------------

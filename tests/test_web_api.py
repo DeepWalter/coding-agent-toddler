@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from tests.mocks import make_mock_llm, text_response
 from toddler.config.settings import Settings
 from toddler.web.app import create_app
+from toddler.web.files import tool_path, tool_path_abs
 
 # ============================================================================
 # Helpers
@@ -238,6 +239,80 @@ class TestPathEscape:
         with TestClient(app) as client:
             resp = client.get("/api/file", params={"path": "link.txt"})
         assert resp.status_code == 400
+
+
+# ============================================================================
+# Tool-call paths
+# ============================================================================
+
+
+class TestToolPath:
+    """A path a tool call named, as the card needs it: root-relative, or
+    nothing at all.  Unlike a request, it is not an error to be outside —
+    there is just no tab here for it to land in."""
+
+    def test_shape_every_tool_call_writes(self, tmp_path):
+        """The tools' schema asks for an absolute path and the model
+        usually complies; relative ones resolve against the agent's cwd,
+        which is the served root."""
+        root = _repo(tmp_path)
+        absolute = str(root / "src" / "a.py")
+        assert tool_path(root, absolute) == "src/a.py"
+        assert tool_path(root, "src/a.py") == "src/a.py"
+        assert tool_path(root, "./src/../src/a.py") == "src/a.py"
+        assert tool_path_abs(root, "src/a.py") == str(root / "src" / "a.py")
+
+    def test_expanded_home_reaches_the_root(self, tmp_path, monkeypatch):
+        """``~`` is the shape the browser could never resolve — expanding
+        it needs the home directory, which only the server has."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        root = _repo(tmp_path)
+        assert tool_path(root, "~/repo/src/a.py") == "src/a.py"
+        assert tool_path_abs(root, "~/repo/src/a.py") == str(tmp_path / "repo/src/a.py")
+
+    def test_path_outside_the_root_has_a_location_but_no_tab(self, tmp_path):
+        """A call that reached outside has nowhere here to open — but it
+        still resolved somewhere, and that is what the card hovers.  The
+        answer is the resolved one, symlinks and all: the file the call
+        touched is the file the tools resolved it to."""
+        root = _repo(tmp_path)
+        assert tool_path(root, "/etc/passwd") is None
+        assert tool_path_abs(root, "/etc/passwd") == str(Path("/etc/passwd").resolve())
+        assert tool_path(root, "../outside.txt") is None
+        assert tool_path_abs(root, "../outside.txt") == str(tmp_path / "outside.txt")
+
+    def test_a_tilde_path_outside_expands_all_the_same(self, tmp_path, monkeypatch):
+        """The whole point of resolving here: the browser is told where a
+        file it cannot open actually lives."""
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        root = _repo(tmp_path)
+        assert tool_path(root, "~/.toddler/notes.md") is None
+        assert tool_path_abs(root, "~/.toddler/notes.md") == (
+            str(tmp_path / "home/.toddler/notes.md")
+        )
+
+    def test_nothing_named_is_no_path(self, tmp_path):
+        """A call may carry no ``file_path`` at all, or a blank one."""
+        root = _repo(tmp_path)
+        assert tool_path(root, None) is None
+        assert tool_path(root, "") is None
+        assert tool_path(root, "   ") is None
+        assert tool_path(root, ".") is None
+        assert tool_path(root, 7) is None
+        assert tool_path_abs(root, None) is None
+        assert tool_path_abs(root, "   ") is None
+
+    def test_the_root_itself_is_no_file_but_is_a_location(self, tmp_path):
+        root = _repo(tmp_path)
+        assert tool_path(root, ".") is None
+        assert tool_path_abs(root, ".") == str(root.resolve())
+
+    def test_unknown_user_in_a_tilde_path_is_no_path(self, tmp_path):
+        """``~user`` for a user this machine hasn't got raises rather than
+        resolving; a model-written path must not take the frame down."""
+        root = _repo(tmp_path)
+        assert tool_path(root, "~nosuchuser9977/notes.md") is None
+        assert tool_path_abs(root, "~nosuchuser9977/notes.md") is None
 
 
 # ============================================================================

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from toddler.agent.events import (
     AgentEvent,
     AgentFinished,
@@ -29,6 +31,11 @@ from toddler.web.events import (
     serialize_transcript,
 )
 
+# The root every frame is serialized against.  Nothing under it exists on
+# disk: what the root decides is the shape of a call's resolved ``path``,
+# and the same one has to reach a live frame and a replayed entry.
+ROOT = Path("/repo")
+
 
 def _plan() -> Plan:
     return Plan(
@@ -53,7 +60,7 @@ class TestSerializeEvent:
     """Frame type + payload for every event class."""
 
     def test_content_delta(self):
-        assert serialize_event(ContentDelta(text_delta="hi")) == {
+        assert serialize_event(ContentDelta(text_delta="hi"), ROOT) == {
             "type": "content_delta",
             "text_delta": "hi",
         }
@@ -61,7 +68,7 @@ class TestSerializeEvent:
     def test_reasoning_delta(self):
         # Same payload key as content_delta — the frame type carries the
         # kind, the key is named after the shared ``text`` slot it feeds.
-        assert serialize_event(ReasoningDelta(text_delta="hmm")) == {
+        assert serialize_event(ReasoningDelta(text_delta="hmm"), ROOT) == {
             "type": "reasoning_delta",
             "text_delta": "hmm",
         }
@@ -70,7 +77,7 @@ class TestSerializeEvent:
         frame = serialize_event(ToolCallStart(
             tool_id="t1", tool_name="read_file",
             partial_input={"path": "a.py"},
-        ))
+        ), ROOT)
         assert frame == {
             "type": "tool_call_start",
             "tool_id": "t1",
@@ -81,13 +88,13 @@ class TestSerializeEvent:
     def test_tool_call_start_without_partial_input(self):
         frame = serialize_event(ToolCallStart(
             tool_id="t1", tool_name="read_file",
-        ))
+        ), ROOT)
         assert frame["partial_input"] is None
 
     def test_tool_call_delta(self):
         assert serialize_event(ToolCallDelta(
             tool_id="t1", input_delta={"path": "a.p"},
-        )) == {
+        ), ROOT) == {
             "type": "tool_call_delta",
             "tool_id": "t1",
             "input_delta": {"path": "a.p"},
@@ -101,13 +108,18 @@ class TestSerializeEvent:
         )
         frame = serialize_event(ToolCallEnd(
             tool_id="t1", tool_name="read_file",
-            input={"path": "a.py"}, result=result,
-        ))
+            input={"file_path": "a.py"}, result=result,
+        ), ROOT)
         assert frame == {
             "type": "tool_call_end",
             "tool_id": "t1",
             "tool_name": "read_file",
-            "input": {"path": "a.py"},
+            "input": {"file_path": "a.py"},
+            # The call's file in both spellings: what a tab opens (relative
+            # to the served root) and where the file is (what the title
+            # offers on hover) — not the string the model wrote.
+            "path": "a.py",
+            "path_abs": "/repo/a.py",
             "result": {
                 "success": True,
                 "output": "content",
@@ -120,8 +132,36 @@ class TestSerializeEvent:
     def test_tool_call_end_without_result(self):
         frame = serialize_event(ToolCallEnd(
             tool_id="t1", tool_name="read_file", input={},
-        ))
+        ), ROOT)
         assert frame["result"] is None
+
+    def test_tool_call_end_names_the_file_it_was_about(self):
+        """The card opens the file, so the frame carries where it landed —
+        the root-relative spelling a tab holds and the absolute one the
+        title offers on hover, whichever way the call spelled it."""
+        frame = serialize_event(ToolCallEnd(
+            tool_id="t1", tool_name="read_file",
+            input={"file_path": "/repo/src/a.py"},
+        ), ROOT)
+        assert frame["path"] == "src/a.py"
+        assert frame["path_abs"] == "/repo/src/a.py"
+
+    def test_tool_call_end_outside_the_root_names_nothing_to_open(self):
+        """A file outside the served root has no tab to open in — but it
+        still has a location, and that is what the card shows."""
+        frame = serialize_event(ToolCallEnd(
+            tool_id="t1", tool_name="read_file",
+            input={"file_path": "/etc/passwd"},
+        ), ROOT)
+        assert frame["path"] is None
+        assert frame["path_abs"] == str(Path("/etc/passwd").resolve())
+
+    def test_tool_call_end_without_a_file_path(self):
+        frame = serialize_event(ToolCallEnd(
+            tool_id="t1", tool_name="shell", input={"command": "ls"},
+        ), ROOT)
+        assert frame["path"] is None
+        assert frame["path_abs"] is None
 
     def test_quiet_tool_call_gets_no_frame(self):
         """The plan bookkeeping call is hidden by its own declaration: the
@@ -130,7 +170,7 @@ class TestSerializeEvent:
         assert serialize_event(ToolCallStart(
             tool_id="t1", tool_name="plan_update",
             partial_input={"step_id": "step-1"},
-        )) is None
+        ), ROOT) is None
         assert serialize_event(ToolCallEnd(
             tool_id="t1", tool_name="plan_update",
             input={"step_id": "step-1"},
@@ -138,11 +178,11 @@ class TestSerializeEvent:
                 tool_id="t1", tool_name="plan_update", success=True,
                 output="Step step-1 → in_progress.",
             ),
-        )) is None
+        ), ROOT) is None
 
     def test_plan_proposed(self):
         plan = _plan()
-        frame = serialize_event(PlanProposed(plan=plan))
+        frame = serialize_event(PlanProposed(plan=plan), ROOT)
         assert frame == {
             "type": "plan_proposed",
             "plan": serialize_plan(plan),
@@ -158,7 +198,7 @@ class TestSerializeEvent:
         frame = serialize_event(PlanStepUpdate(steps=[
             ("step-1", "Read the code", PlanStepStatus.IN_PROGRESS),
             ("step-2", "Edit", PlanStepStatus.PENDING),
-        ]))
+        ]), ROOT)
         assert frame == {
             "type": "plan_step_update",
             "steps": [
@@ -170,7 +210,7 @@ class TestSerializeEvent:
     def test_agent_paused(self):
         assert serialize_event(AgentPaused(
             prompt="Allow write_file(x)?", choices=["approve", "deny"],
-        )) == {
+        ), ROOT) == {
             "type": "agent_paused",
             "prompt": "Allow write_file(x)?",
             "choices": ["approve", "deny"],
@@ -183,7 +223,7 @@ class TestSerializeEvent:
         )
         frame = serialize_event(AgentFinished(
             reason="LLM finished its turn.", usage=usage,
-        ))
+        ), ROOT)
         assert frame == {
             "type": "agent_finished",
             "reason": "LLM finished its turn.",
@@ -199,24 +239,24 @@ class TestSerializeEvent:
     def test_agent_finished_without_usage(self):
         frame = serialize_event(AgentFinished(
             reason="Plan rejected by user.",
-        ))
+        ), ROOT)
         assert frame["usage"] is None
 
     def test_recoverable_error(self):
         assert serialize_event(RecoverableAgentError(
             message="API hiccup",
-        )) == {"type": "recoverable_error", "message": "API hiccup"}
+        ), ROOT) == {"type": "recoverable_error", "message": "API hiccup"}
 
     def test_fatal_error(self):
         assert serialize_event(FatalAgentError(
             message="Unparseable plan",
-        )) == {"type": "fatal_error", "message": "Unparseable plan"}
+        ), ROOT) == {"type": "fatal_error", "message": "Unparseable plan"}
 
     def test_unknown_event_returns_none(self):
         class UnknownEvent(AgentEvent):
             pass
 
-        assert serialize_event(UnknownEvent()) is None
+        assert serialize_event(UnknownEvent(), ROOT) is None
 
 
 class TestSerializeTranscript:
@@ -235,7 +275,7 @@ class TestSerializeTranscript:
         return [
             Message.assistant([
                 MessageBlock.tool_use_block(
-                    tool_id, name, tool_input or {"path": "a.py"},
+                    tool_id, name, tool_input or {"file_path": "a.py"},
                 ),
             ]),
             Message.tool([
@@ -251,7 +291,7 @@ class TestSerializeTranscript:
             Message.user("hi"),
             Message.assistant([MessageBlock.content_block("hello")]),
         ]
-        assert serialize_transcript(messages) == [
+        assert serialize_transcript(messages, ROOT) == [
             {"role": "user", "content": "hi"},
             {"role": "assistant", "content": "hello"},
         ]
@@ -262,13 +302,17 @@ class TestSerializeTranscript:
             *self._tool_pair("t1"),
             Message.assistant([MessageBlock.content_block("done")]),
         ]
-        assert serialize_transcript(messages) == [
+        assert serialize_transcript(messages, ROOT) == [
             {"role": "user", "content": "read it"},
             {
                 "role": "tool",
                 "tool_id": "t1",
                 "tool_name": "read_file",
-                "input": {"path": "a.py"},
+                "input": {"file_path": "a.py"},
+                # Recomputed here rather than replayed: the stored
+                # transcript keeps no resolved path.
+                "path": "a.py",
+                "path_abs": "/repo/a.py",
                 "result": {
                     "success": True,
                     "output": "content",
@@ -283,9 +327,9 @@ class TestSerializeTranscript:
     def test_failed_tool_result_maps_error(self):
         messages = self._tool_pair(
             "t1", name="write_file",
-            tool_input={"path": "b.py"}, result="denied", is_error=True,
+            tool_input={"file_path": "b.py"}, result="denied", is_error=True,
         )
-        entry = serialize_transcript(messages)[0]
+        entry = serialize_transcript(messages, ROOT)[0]
         assert entry["result"] == {
             "success": False,
             "output": None,
@@ -299,7 +343,7 @@ class TestSerializeTranscript:
         messages = [Message.assistant([
             MessageBlock.tool_use_block("t1", "write_file", {}),
         ])]
-        entry = serialize_transcript(messages)[0]
+        entry = serialize_transcript(messages, ROOT)[0]
         assert entry["tool_id"] == "t1"
         assert entry["result"] is None
 
@@ -308,14 +352,14 @@ class TestSerializeTranscript:
         messages = [Message.tool([
             MessageBlock.tool_result_block("t1", "content"),
         ])]
-        assert serialize_transcript(messages) == []
+        assert serialize_transcript(messages, ROOT) == []
 
     def test_assistant_text_and_use_keep_live_order(self):
         messages = [Message.assistant([
             MessageBlock.content_block("checking…"),
-            MessageBlock.tool_use_block("t1", "read_file", {"path": "a.py"}),
+            MessageBlock.tool_use_block("t1", "read_file", {"file_path": "a.py"}),
         ])]
-        assert [e["role"] for e in serialize_transcript(messages)] == [
+        assert [e["role"] for e in serialize_transcript(messages, ROOT)] == [
             "assistant", "tool",
         ]
 
@@ -325,7 +369,7 @@ class TestSerializeTranscript:
             MessageBlock.reasoning_block("step 2"),
             MessageBlock.content_block("the answer"),
         ])]
-        assert serialize_transcript(messages) == [{
+        assert serialize_transcript(messages, ROOT) == [{
             "role": "assistant",
             "content": "the answer",
             "reasoning": "step 1: step 2",
@@ -334,7 +378,7 @@ class TestSerializeTranscript:
     def test_reasoning_key_absent_without_reasoning(self):
         entry = serialize_transcript([
             Message.assistant([MessageBlock.content_block("plain")]),
-        ])[0]
+        ], ROOT)[0]
         assert entry == {"role": "assistant", "content": "plain"}
         assert "reasoning" not in entry
 
@@ -346,14 +390,14 @@ class TestSerializeTranscript:
             Message.assistant([
                 MessageBlock.reasoning_block("I need the file first."),
                 MessageBlock.tool_use_block(
-                    "t1", "read_file", {"path": "a.py"},
+                    "t1", "read_file", {"file_path": "a.py"},
                 ),
             ]),
             Message.tool([
                 MessageBlock.tool_result_block("t1", "content"),
             ]),
         ]
-        entries = serialize_transcript(messages)
+        entries = serialize_transcript(messages, ROOT)
         assert [e["role"] for e in entries] == ["user", "assistant", "tool"]
         assert entries[1] == {
             "role": "assistant",
@@ -380,7 +424,7 @@ class TestSerializeTranscript:
                 ),
             ]),
         ]
-        assert serialize_transcript(messages) == [{
+        assert serialize_transcript(messages, ROOT) == [{
             "role": "assistant",
             "content": "marking step 1 in progress",
         }]
@@ -389,9 +433,9 @@ class TestSerializeTranscript:
         messages = [Message.assistant([
             MessageBlock.reasoning_block("cot"),
             MessageBlock.content_block("done"),
-            MessageBlock.tool_use_block("t1", "read_file", {"path": "a.py"}),
+            MessageBlock.tool_use_block("t1", "read_file", {"file_path": "a.py"}),
         ])]
-        entries = serialize_transcript(messages)
+        entries = serialize_transcript(messages, ROOT)
         assert entries[0]["reasoning"] == "cot"
         assert entries[0]["content"] == "done"
         assert entries[1]["role"] == "tool"
@@ -404,7 +448,7 @@ class TestSerializeTranscript:
             Message.user("hi"),
             Message.user(marker),
         ]
-        assert serialize_transcript(messages) == [
+        assert serialize_transcript(messages, ROOT) == [
             {"role": "user", "content": "hi"},
             {"role": "user", "content": marker, "fold": "cancelled"},
         ]
@@ -414,14 +458,14 @@ class TestSerializeTranscript:
             "[Compacted history — summary of the conversation so far]\n\n"
             "user wanted x; agent did y."
         )
-        entry = serialize_transcript([Message.user(marker)])[0]
+        entry = serialize_transcript([Message.user(marker)], ROOT)[0]
         assert entry["fold"] == "compacted"
         assert entry["content"] == marker
 
     def test_bracket_text_without_marker_stays_fold_free(self):
         # Only the known repair prefixes fold — ordinary bracketed text the
         # user actually typed must keep replaying as a user entry.
-        entry = serialize_transcript([Message.user("[Just a bracket note]")])[0]
+        entry = serialize_transcript([Message.user("[Just a bracket note]")], ROOT)[0]
         assert entry == {"role": "user", "content": "[Just a bracket note]"}
 
 

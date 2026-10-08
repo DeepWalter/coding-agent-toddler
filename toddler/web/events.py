@@ -12,6 +12,8 @@ are mapped explicitly here.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from toddler.agent.events import (
     AgentEvent,
     AgentFinished,
@@ -30,6 +32,7 @@ from toddler.agent.planner import Plan
 from toddler.llm import TokenUsage
 from toddler.llm.messages import Message
 from toddler.tools import HIDDEN_TOOL_NAMES, ToolResult
+from toddler.web.files import tool_path, tool_path_abs
 
 __all__ = [
     "serialize_event",
@@ -37,6 +40,7 @@ __all__ = [
     "serialize_token_usage",
     "serialize_tool_result",
     "serialize_transcript",
+    "tool_card_paths",
 ]
 
 
@@ -95,7 +99,26 @@ def _tool_results(messages: list[Message]) -> dict[str, dict]:
     return results
 
 
-def serialize_transcript(messages: list[Message]) -> list[dict]:  # noqa: C901
+def tool_card_paths(root: Path, input: dict) -> dict:
+    """The file a tool call names, resolved for the card that draws it —
+    both spellings of it.  Any tool whose parameters carry a
+    ``file_path`` — the file tools, and nothing else — gets them; a call
+    that names no file gets two ``None``s, and the browser draws its
+    title from whatever else the call said.
+
+    ``path`` is where a tab opens it, relative to the served root, and is
+    ``None`` for a file the root cannot hold.  ``path_abs`` is where the
+    file actually is, which the card offers on hover: a reader who cannot
+    open it still wants to know where it lives.
+    """
+    raw = input.get("file_path")
+    return {
+        "path": tool_path(root, raw),
+        "path_abs": tool_path_abs(root, raw),
+    }
+
+
+def serialize_transcript(messages: list[Message], root: Path) -> list[dict]:  # noqa: C901
     """Flatten stored messages into transcript replay entries.
 
     Called for ``hello`` (WS reconnect) and ``/api/sessions/.../messages``.
@@ -106,6 +129,10 @@ def serialize_transcript(messages: list[Message]) -> list[dict]:  # noqa: C901
     foldable cards the live stream did.  A use whose result was never
     persisted (cancelled mid-execution) replays with ``result: null`` —
     the frontend renders that as cancelled.
+
+    *root* resolves each call's ``file_path`` for the card (see
+    :func:`tool_card_paths`); the stored transcript no longer carries that
+    answer, so it is recomputed on both paths rather than replayed.
     """
     results = _tool_results(messages)
     entries: list[dict] = []
@@ -146,11 +173,13 @@ def serialize_transcript(messages: list[Message]) -> list[dict]:  # noqa: C901
                 and block.tool_id
                 and block.tool_name not in HIDDEN_TOOL_NAMES
             ):
+                tool_input = block.tool_input or {}
                 entries.append({
                     "role": "tool",
                     "tool_id": block.tool_id,
                     "tool_name": block.tool_name or "",
-                    "input": block.tool_input or {},
+                    "input": tool_input,
+                    **tool_card_paths(root, tool_input),
                     "result": results.get(block.tool_id),
                 })
     return entries
@@ -172,13 +201,17 @@ def serialize_token_usage(usage: TokenUsage | None) -> dict | None:
     }
 
 
-def serialize_event(event: AgentEvent) -> dict | None:  # noqa: C901
+def serialize_event(event: AgentEvent, root: Path) -> dict | None:  # noqa: C901
     """Serialize one :class:`AgentEvent` to its protocol frame.
 
     Returns ``None`` for event classes this server doesn't know about
     (forward compatibility) so the runner can skip them instead of
     dropping the whole turn — and for calls to hidden tools, which the
     browser draws no card for.
+
+    *root* is the served repo root, which resolves the ``file_path`` a
+    tool call completed with: the browser cannot resolve one itself, and
+    a replayed call has to land on the same answer as a live one.
     """
     # A hidden tool says nothing the browser needs: what it does reaches
     # the UI as a frame of its own, so a card for the call itself would
@@ -229,6 +262,7 @@ def serialize_event(event: AgentEvent) -> dict | None:  # noqa: C901
                 "tool_id": tool_id,
                 "tool_name": tool_name,
                 "input": input,
+                **tool_card_paths(root, input),
                 "result": serialize_tool_result(result),
             }
 

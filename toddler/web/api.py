@@ -165,6 +165,7 @@ async def get_messages(
             state.storage_mgr.get_messages(
                 sid, conversation_id=conversation_id,
             ),
+            state.repo_root,
         ),
     }
 

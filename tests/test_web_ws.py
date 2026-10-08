@@ -193,7 +193,12 @@ class TestTurnStream:
                 ws.send_json({
                     "cmd": "approve_tool", "tool_id": "call_write",
                 })
-                _wait_for(ws, "tool_call_end")
+                # The live card is handed the file the call was about, in
+                # both spellings: the tool wrote an absolute path, and the
+                # browser opens the root-relative one and hovers the other.
+                end = _wait_for(ws, "tool_call_end")
+                assert end["path"] == "out.txt"
+                assert end["path_abs"] == str(out)
                 _wait_for(ws, "agent_finished")
 
             # Reconnect — the foldable tool card replays from storage as
@@ -210,6 +215,11 @@ class TestTurnStream:
                 assert tool["input"] == {
                     "file_path": str(out), "content": "hello",
                 }
+                # Recomputed from the stored input, not replayed: the
+                # transcript keeps no resolved path, and the replayed card
+                # has to open (and name) what the live one did.
+                assert tool["path"] == "out.txt"
+                assert tool["path_abs"] == str(out)
                 assert tool["result"]["success"] is True
                 assert tool["result"]["output"] is not None
                 assert tool["result"]["error"] is None

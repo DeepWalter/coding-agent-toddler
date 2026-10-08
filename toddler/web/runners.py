@@ -23,6 +23,7 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 from toddler.agent.events import (
     AgentEvent,
@@ -319,7 +320,7 @@ class TurnRunner:
         self._gen = gen
         try:
             async for event in gen:
-                frame = serialize_event(event)
+                frame = serialize_event(event, Path(self._cwd))
                 if frame is None:
                     continue
                 if isinstance(event, AgentPaused):
