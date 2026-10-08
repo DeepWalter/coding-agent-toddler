@@ -149,12 +149,25 @@ state              {busy: true|false}
 text_delta         {text}
 tool_call_start    {tool_id, tool_name, partial_input}
 tool_call_delta    {tool_id, input_delta}
-tool_call_end      {tool_id, tool_name, input, result: {success, output, error, checkpoint_id, metadata}}
+tool_call_end      {tool_id, tool_name, input, path, path_abs, result: {success, output, error, checkpoint_id, metadata}}
 
 Note: streaming mode emits `tool_call_start` **twice per call** — once
 live from the stream handler and again from the execution phase, same
 `tool_id` — followed by a single `tool_call_end`.  Clients must upsert
 cards keyed by `tool_id`, not append.
+
+`path` and `path_abs` are the file the call was about, both spellings of
+it: where a tab opens it (relative to the served root, the shape every
+other pane names a file in) and where it actually is.  `path` is null when
+the call named no file, or named one outside the root, which the editor
+has no tab to hold — `path_abs` still says where that file is, since the
+card offers the location on hover.  The resolution happens on the server
+because only the server can do it: `~` needs the home directory, and a
+relative path starts at the agent's cwd.  It is the same resolution the
+file tools themselves apply (`toddler.web.files.tool_path`), symlinks
+followed and all.  A replayed `tool` entry carries the keys too, recomputed
+from the stored input rather than stored with it, so a refreshed card opens
+exactly what the live one opened.
 
 `new_conversation` and `switch_session` ack directly, then **broadcast a
 full `hello` frame** (session + conversation + transcript replay) so
