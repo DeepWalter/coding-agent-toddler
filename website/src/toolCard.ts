@@ -1,13 +1,16 @@
 import { blockStatus } from './blockStatus'
 import type { Block, TabEntry } from './types'
+import { basename } from './utils'
 
 type ToolBlock = Extract<Block, { kind: 'tool' }>
 
 interface CardSpec {
   /** What the reader calls the tool — the backend's `shell` is `Bash`. */
   name: string
-  /** The path this call is about, named in the title in place of the
-   *  description and opening in the editor on a click.
+  /** The path this call is about: named in the title in place of the
+   *  description — by its basename, since the heading is a glance and the
+   *  directory is usually the same one the call beside it names — and
+   *  opening in the editor on a click.
    *
    *  `written` marks the calls that bring the file into being: a read or an
    *  edit names a path that is already there, whatever the call itself did,
@@ -103,10 +106,18 @@ export interface ToolCard {
   name: string
   /** The call's own line about what it does; empty when it made none. */
   description: string
-  /** The path this call is about, when it is about a file: the text the
-   *  title shows in place of the description, and whether a click opens it
-   *  in the editor.  Null for a call that names no file. */
-  path: { text: string; opens: boolean } | null
+  /** The file this call is about, when it is about one: what the title
+   *  prints in place of the description, and what it does.  Three spellings
+   *  of the same file, because a card does three things with it — `label`
+   *  is the basename the title shows, `rel` the root-relative path a click
+   *  hands the editor, and `abs` where it actually is, which the title
+   *  offers on hover.  Null for a call that names no file. */
+  path: {
+    label: string
+    rel: string | null
+    abs: string
+    opens: boolean
+  } | null
   /** Top to bottom: what ran, then what came back. */
   rows: ToolCardRow[]
 }
@@ -167,16 +178,30 @@ export function toolCard(block: ToolBlock): ToolCard {
       error: blockStatus(block) === 'error',
     })
   }
-  const pathParam = spec?.path ? param(block, spec.path.param) : ''
+  const named = spec?.path ? param(block, spec.path.param) : ''
   return {
     name: spec?.name ?? block.tool_name,
     description: param(block, 'description'),
     // A path the model left out is no path: the title falls back to the
     // call's own description rather than showing an empty link.
-    path: spec?.path && pathParam
+    //
+    // Both spellings come from the server, which is the only side that can
+    // resolve what the call named: `~` needs the home directory, and a
+    // relative path starts at its cwd.  What it resolved is a whole path —
+    // the hover names it, which is where a reader checks a file they cannot
+    // open — but the title prints the basename and the click hands over the
+    // root-relative form, the one every pane names a file by.  A call whose
+    // file lies outside the root has no such form, and no tab here to open
+    // in: it reads as the failed write does.  Until the call ends nothing
+    // has resolved, so the title names the file as the call spelled it and
+    // offers no click.
+    path: spec?.path && named
       ? {
-          text: pathParam,
-          opens: !spec.path.written || blockStatus(block) === 'ok',
+          abs: block.path_abs ?? named,
+          label: basename(block.path_abs ?? named),
+          rel: block.path,
+          opens: block.path !== null
+            && (!spec.path.written || blockStatus(block) === 'ok'),
         }
       : null,
     rows,

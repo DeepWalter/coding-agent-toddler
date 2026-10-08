@@ -94,6 +94,11 @@ const WRITE_PATH = '/tmp/mock-b.md'
 const WRITE_DESCRIPTION = 'write the second seeded file'
 const FAILED_WRITE_PATH = '/tmp/read-only/mock-c.md'
 const FAILED_WRITE_DESCRIPTION = 'write a file that cannot be written'
+// A file the repository does not hold.  The tools take the model's `~`
+// paths literally, so this is the shape a call names whenever it reaches
+// outside the project — and the editor has no tab to put it in.
+const OUTSIDE_PATH = '~/.toddler/notes.md'
+const OUTSIDE_DESCRIPTION = 'read a file outside the repository'
 
 const TYPES = {
   '.html': 'text/html',
@@ -131,6 +136,26 @@ const FILES = new Map([
   ['mock-a.md', '# mock A\n\nfirst seeded file\n'],
   ['mock-b.md', '# mock B\n\nsecond seeded file\n'],
 ])
+
+// The home directory a `~` path expands against.  The real server asks the
+// machine; the mock names one, so the fixture can show where a file outside
+// the project actually lives.
+const MOCK_HOME = '/home/mock'
+
+// toddler/web/files.tool_path_abs: where a call's `file_path` actually is.
+function absolutePath(raw) {
+  if (typeof raw !== 'string' || !raw.trim()) return null
+  if (raw.startsWith('~/')) return `${MOCK_HOME}/${raw.slice(2)}`
+  return raw.startsWith('/') ? raw : `${REPO_ROOT}/${raw}`
+}
+
+// toddler/web/files.tool_path: the same file for a tab to hold — null when it
+// lands outside the root, which is the case the outside fixture draws.
+function rootRelative(raw) {
+  const abs = absolutePath(raw)
+  if (abs === null || !abs.startsWith(`${REPO_ROOT}/`)) return null
+  return abs.slice(REPO_ROOT.length + 1)
+}
 
 function filePayload(rel, content) {
   // Same line count as read_file: newlines, plus one for a trailing line
@@ -562,8 +587,16 @@ wss.on('connection', (ws) => {
         }
         if (files) {
           send({ type: 'content_delta', text_delta: 'reading and writing\n' })
-          // Four calls of one shape, so the frames are written once.
+          // Five calls of one shape, so the frames are written once.  Each
+          // lands in the transcript as well, which is where a reload's hello
+          // replays them from — with the same resolved paths the live frame
+          // carried, since the real server recomputes them rather than
+          // storing them.
           const call = (id, name, input, result) => {
+            const paths = {
+              path: rootRelative(input.file_path),
+              path_abs: absolutePath(input.file_path),
+            }
             send({
               type: 'tool_call_start',
               tool_id: id,
@@ -575,9 +608,19 @@ wss.on('connection', (ws) => {
               tool_id: id,
               tool_name: name,
               input,
+              ...paths,
+              result,
+            })
+            transcript.push({
+              role: 'tool',
+              tool_id: id,
+              tool_name: name,
+              input,
+              ...paths,
               result,
             })
           }
+          transcript.push({ role: 'assistant', content: 'reading and writing' })
           call('t8', 'read_file',
             { description: READ_DESCRIPTION, file_path: READ_PATH },
             {
@@ -628,6 +671,18 @@ wss.on('connection', (ws) => {
               error: `Failed to write ${FAILED_WRITE_PATH}: read-only file system`,
               checkpoint_id: null,
               metadata: null,
+            })
+          // A read that ran and returned content, of a file the served root
+          // cannot hold: no path reaches the card, so its title names the
+          // file and offers nothing to click.
+          call('t12', 'read_file',
+            { description: OUTSIDE_DESCRIPTION, file_path: OUTSIDE_PATH },
+            {
+              success: true,
+              output: '1\t# notes\n2\toutside the repo\n',
+              error: null,
+              checkpoint_id: null,
+              metadata: { path: OUTSIDE_PATH, total_lines: 2 },
             })
           send({ type: 'agent_finished', reason: 'completed', usage: null })
           send({ type: 'state', busy: false })

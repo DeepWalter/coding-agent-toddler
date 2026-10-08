@@ -17,16 +17,21 @@ const state = computed(() => blockStatus(props.block))
 /** The title's second slot, flattened: the file this call is about, or an
  *  empty one to fall through to the call's own description.  A shape rather
  *  than a null keeps the template free of narrowing. */
-const path = computed(() => card.value.path ?? { text: '', opens: false })
+const path = computed(
+  () => card.value.path ?? { label: '', rel: null, abs: '', opens: false },
+)
 
 function open(row: ToolCardRow) {
   emit('open-text', toolTab(props.block, card.value, row))
 }
 
 /** A title naming a file opens it — the editor is where a path is read, and
- *  a call that names one has nothing else to offer. */
+ *  a call that names one has nothing else to offer.  What it hands over is
+ *  the root-relative path, the one every pane opens a file by; the heading
+ *  prints the basename of it and the hover names where the file really is. */
 function openPath() {
-  emit('open-file', path.value.text)
+  const rel = path.value.rel
+  if (rel) emit('open-file', rel)
 }
 </script>
 
@@ -35,19 +40,27 @@ function openPath() {
     <!-- The call's own line about what it does, read as ordinary output —
          the box is only what ran and what came back.  A call about a file
          names the file instead: it is the half of the title a reader can
-         act on, and the one they came to check. -->
+         act on, and the one they came to check.  Named by its basename —
+         the directory it sits in is rarely the question, and the whole path
+         is a hover away. -->
     <div class="tool-call-heading">
       <span class="tool-call-name">{{ card.name }}</span>
       <button
         v-if="path.opens"
         type="button"
         class="tool-call-path"
-        :title="`Open ${path.text}`"
+        :title="`Open ${path.abs}`"
         @click="openPath"
-      >{{ path.text }}</button>
-      <!-- A path with nothing behind it yet — a write that failed — reads as
-           plain text: the click would have nowhere to land. -->
-      <span v-else-if="path.text" class="tool-call-path static">{{ path.text }}</span>
+      >{{ path.label }}</button>
+      <!-- A path with nothing behind it — a write that failed, a file
+           outside the project — reads as plain text: the click would have
+           nowhere to land.  The hover still names where the file is, which
+           is what a reader wants most about one they cannot open. -->
+      <span
+        v-else-if="path.label"
+        class="tool-call-path static"
+        :title="path.abs"
+      >{{ path.label }}</span>
       <span v-else-if="card.description" class="tool-call-desc">{{ card.description }}</span>
     </div>
     <!-- A call can be its title alone, and a file call is: the file opens in

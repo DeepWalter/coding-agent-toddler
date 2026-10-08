@@ -86,6 +86,9 @@ export interface ReplayMessage {
   tool_id?: string
   tool_name?: string
   input?: Record<string, unknown>
+  /** See the tool_call_end frame. */
+  path?: string | null
+  path_abs?: string | null
   result?: ToolResult | null
 }
 
@@ -176,6 +179,16 @@ export type Frame =
       tool_id: string
       tool_name: string
       input: Record<string, unknown>
+      /**
+       * The file the call was about, in the two spellings a card needs.
+       * `path` is the one a tab holds — relative to the served root, null
+       * when the call named none or named one the root cannot hold —
+       * and `path_abs` is where it actually is.  Resolving is the server's
+       * job: it alone knows the home directory a `~` path needs, and where
+       * a relative path starts.
+       */
+      path: string | null
+      path_abs: string | null
       result: ToolResult | null
     }
   | { type: 'plan_proposed'; plan: Plan }
@@ -240,6 +253,11 @@ export type Block =
       tool_id: string
       tool_name: string
       input: Record<string, unknown>
+      /** The call's file, as the server resolved it — null until the call
+       *  ends and the resolution arrives.  `path` is the root-relative one a
+       *  tab holds; `path_abs` is where the file actually is. */
+      path: string | null
+      path_abs: string | null
       result: ToolResult | null
       open: boolean
     }

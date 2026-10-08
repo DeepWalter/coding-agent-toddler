@@ -156,6 +156,8 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
             tool_id: msg.tool_id ?? '',
             tool_name: msg.tool_name ?? '',
             input: msg.input ?? {},
+            path: msg.path ?? null,
+            path_abs: msg.path_abs ?? null,
             result: msg.result ?? null,
             open: false,
           })
@@ -246,6 +248,9 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
           tool_id: action.tool_id,
           tool_name: action.tool_name,
           input: action.partial_input ?? {},
+          // The input is still streaming, so nothing has resolved yet.
+          path: null,
+          path_abs: null,
           result: null,
           open: true,
         })
@@ -263,6 +268,8 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
       const block = findTool(s, action.tool_id, { open: true }) ?? findTool(s, action.tool_id)
       if (block) {
         block.input = action.input
+        block.path = action.path
+        block.path_abs = action.path_abs
         block.result = action.result
         block.open = false
       }

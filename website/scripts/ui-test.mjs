@@ -61,7 +61,10 @@
 //  phase 15 — the file card: a read, an edit and a write read as their titles
 //            alone, naming the file rather than describing the call, and that
 //            path opens the file in the editor — except on a write that
-//            failed, which has nothing behind its path yet
+//            failed, which has nothing behind its path yet, and on a file
+//            outside the served root, which no tab can hold.  The titles name
+//            the basename and the hover the whole path the server resolved,
+//            and both survive a reload
 // Prints PASS/FAIL plus diagnostics; exits 1 on any failure.
 import { chromium } from 'playwright'
 import WebSocket from 'ws'
@@ -2328,9 +2331,15 @@ await page.waitForTimeout(300)
 
 // A file call draws no box: the path in the title is the whole of it, and a
 // click opens that file in the editor — which is where a file is read, rather
-// than in a row of copied content.  A write only has something behind its
-// path once it has landed, so the turn runs one that did and one that did not.
-const READ_PATH = '/tmp/mock-a.md'
+// than in a row of copied content.  The title prints the basename of the file
+// the *server* resolved for the call, the hover names where it actually is,
+// and the click hands the editor the root-relative path a tab holds.  A call
+// whose file lies outside the root resolves to no tab path at all, and one
+// whose write failed has nothing behind its path yet — both read as plain
+// text, both still saying on hover where the file is.
+const READ_PATH = 'mock-a.md'
+const READ_PATH_ABS = '/tmp/mock-a.md'
+const OUTSIDE_PATH = '/home/mock/.toddler/notes.md'
 await page.fill('textarea.input-bar-textarea', 'files: read and write')
 await page.click('button:has-text("Send")')
 await page.waitForFunction(
@@ -2338,18 +2347,23 @@ await page.waitForFunction(
   { timeout: 8000 },
 )
 await page.waitForTimeout(300)
-{
-  const cards = await page.locator('.tool-call').evaluateAll((els) =>
-    els.slice(-4).map((el) => {
+
+/** The last five file cards, read the way the phase judges them. */
+const readFileCards = () =>
+  page.locator('.tool-call').evaluateAll((els) =>
+    els.slice(-5).map((el) => {
       const link = el.querySelector('.tool-call-path')
       return {
         name: el.querySelector('.tool-call-name')?.textContent.trim() ?? null,
         // The description gives way to the path in these titles: the path is
         // the half a reader can act on.
         desc: el.querySelector('.tool-call-desc')?.textContent.trim() ?? null,
-        path: link?.textContent.trim() ?? null,
+        // The heading prints the basename; the whole path it stands for is
+        // the hover.
+        label: link?.textContent.trim() ?? null,
+        title: link?.getAttribute('title') ?? null,
         // A path is a control only where there is a file to open: a button
-        // where there is one, plain text where there is not yet.
+        // where there is one, plain text where there is not.
         tag: link?.tagName ?? null,
         static: link?.classList.contains('static') ?? null,
         boxes: el.querySelectorAll('.tool-card').length,
@@ -2357,32 +2371,53 @@ await page.waitForTimeout(300)
       }
     }),
   )
-  const [read, edit, write, failed] = cards
-  const ok =
+
+/** Phase 15's five cards: [read, edit, write, failed write, outside read]. */
+function checkFileCards(cards) {
+  const [read, edit, write, failed, outside] = cards
+  return (
     read.name === 'Read' &&
-    read.path === READ_PATH &&
+    read.label === 'mock-a.md' &&
+    read.title === `Open ${READ_PATH_ABS}` &&
     read.tag === 'BUTTON' &&
     edit.name === 'Edit' &&
-    edit.path === READ_PATH &&
+    edit.label === 'mock-a.md' &&
+    edit.title === `Open ${READ_PATH_ABS}` &&
     edit.tag === 'BUTTON' &&
     write.name === 'Write' &&
-    write.path === '/tmp/mock-b.md' &&
+    write.label === 'mock-b.md' &&
+    write.title === 'Open /tmp/mock-b.md' &&
     write.tag === 'BUTTON' &&
     // The write that failed names a path all the same — it just has nothing
     // behind it, so it reads as text.
     failed.name === 'Write' &&
-    failed.path === '/tmp/read-only/mock-c.md' &&
+    failed.label === 'mock-c.md' &&
+    failed.title === '/tmp/read-only/mock-c.md' &&
     failed.tag === 'SPAN' &&
     failed.static === true &&
+    // The read that reached outside the root ran and returned content, and
+    // still has no tab to open in: its title names where the file is, and
+    // nothing offers to open it.
+    outside.name === 'Read' &&
+    outside.label === 'notes.md' &&
+    outside.title === OUTSIDE_PATH &&
+    outside.tag === 'SPAN' &&
+    outside.static === true &&
     // No box and no rows on any of them, and no description either.
     cards.every((c) => c.boxes === 0 && c.rows === 0 && c.desc === null)
+  )
+}
+
+{
+  const cards = await readFileCards()
+  const ok = checkFileCards(cards)
   console.log(`phase15 a file call is its title alone ${JSON.stringify(cards)} ${ok ? 'PASS' : 'FAIL'}`)
   if (!ok) fails++
 }
-// P15b: the path opens the file in the editor, and the one with nothing
-// behind it opens nothing.
+// P15b: the path opens the file in the editor, and a path with nothing behind
+// it opens nothing — neither the failed write nor the file outside the root.
 {
-  await page.locator('.stream-row[data-tool="read_file"] .tool-call-path').last().click()
+  await page.locator('.stream-row[data-tool="read_file"] .tool-call-path:not(.static)').click()
   await page.waitForTimeout(400)
   const opened = await page.evaluate(() => ({
     tabs: [...document.querySelectorAll('.editor-tab-name')].map((el) => el.textContent.trim()),
@@ -2390,7 +2425,7 @@ await page.waitForTimeout(300)
     doc: document.querySelector('.editor-cm .cm-content')?.textContent ?? '',
   }))
   const ok =
-    opened.tabs.includes('mock-a.md') &&
+    opened.tabs.includes(READ_PATH) &&
     opened.header === READ_PATH &&
     opened.doc.includes('first seeded file')
   console.log(`phase15 the path opens that file in the editor ${JSON.stringify(opened)} ${ok ? 'PASS' : 'FAIL'}`)
@@ -2398,11 +2433,27 @@ await page.waitForTimeout(300)
 
   const tabsBefore = await page.locator('.editor-tab').count()
   await page.locator('.stream-row[data-tool="write_file"] .tool-call-path.static').last().click()
+  await page.locator('.stream-row[data-tool="read_file"] .tool-call-path.static').last().click()
   await page.waitForTimeout(250)
   const tabsAfter = await page.locator('.editor-tab').count()
   const okStatic = tabsAfter === tabsBefore
   console.log(`phase15 a path with no file behind it opens nothing ${JSON.stringify({ tabsBefore, tabsAfter })} ${okStatic ? 'PASS' : 'FAIL'}`)
   if (!okStatic) fails++
+}
+// P15c: a reload rebuilds the same cards from the transcript, which stores no
+// resolved path — the server recomputes one, so a replayed card opens what a
+// live one did.
+{
+  await page.reload()
+  await page.waitForFunction(
+    () => [...document.querySelectorAll('.tool-call-name')].some((el) => el.textContent.trim() === 'Write'),
+    { timeout: 8000 },
+  )
+  await page.waitForTimeout(400)
+  const cards = await readFileCards()
+  const ok = checkFileCards(cards)
+  console.log(`phase15 a reload replays the same cards ${JSON.stringify(cards)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
 }
 
 await browser.close()
