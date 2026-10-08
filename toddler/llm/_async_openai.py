@@ -17,13 +17,14 @@ from types import SimpleNamespace
 __all__ = ["AsyncOpenAI"]
 
 # ---------------------------------------------------------------------------
-# Paths to the files the canned responses reach for — this file is used by
-# "text" / "write", the repo README by "read"
+# Paths the canned responses reach for — this file is used by "text" /
+# "write", the repo README by "read", the repo root by "glob" / "grep"
 # ---------------------------------------------------------------------------
 
 _THIS_FILE = Path(__file__).resolve()
 _THIS_CONTENT = _THIS_FILE.read_text(encoding="utf-8")
-_README_FILE = _THIS_FILE.parents[2] / "README.md"
+_PROJECT_ROOT = _THIS_FILE.parents[2]
+_README_FILE = _PROJECT_ROOT / "README.md"
 
 # ---------------------------------------------------------------------------
 # Guard: which AsyncOpenAI to export
@@ -79,6 +80,10 @@ if _TEST == "cli":
                     * ``"text"`` — stream the content of *this* file.
                     * ``"read"`` — emit a ``read_file`` tool call that reads
                       the repo's ``README.md``.
+                    * ``"glob"`` — emit a ``glob`` tool call that lists
+                      every Python file in the project.
+                    * ``"grep"`` — emit a ``grep`` tool call that finds
+                      every ``BaseTool`` subclass.
                     * ``"shell"`` — emit a multi-line ``shell`` tool call,
                       every command in it safe.
                     * ``"write"`` — emit a ``write_file`` tool call that
@@ -145,6 +150,10 @@ if _TEST == "cli":
                 return self._chunks_for_text()
             elif content == "read":
                 return self._chunks_for_read()
+            elif content == "glob":
+                return self._chunks_for_glob()
+            elif content == "grep":
+                return self._chunks_for_grep()
             elif content == "shell":
                 return self._chunks_for_shell()
             elif content == "write":
@@ -215,6 +224,64 @@ if _TEST == "cli":
                     "Let me read the README.\n\n",
                 ),
                 ("tool_name", "read_file"),
+                ("tool_args", args),
+                ("finish", "tool_calls"),
+            ]
+            return _DummyStream._materialize(blocks)
+
+        @staticmethod
+        def _chunks_for_glob():
+            """Emit a text intro, then a ``glob`` tool call listing every
+            Python file in the project."""
+            args = json.dumps(
+                {
+                    "description": (
+                        "find every Python file in the project"
+                    ),
+                    "pattern": "**/*.py",
+                    "path": str(_PROJECT_ROOT),
+                },
+                ensure_ascii=False,
+            )
+            blocks: list[tuple[str, str | None]] = [
+                (
+                    "text",
+                    "Let me find every Python file in the project.\n\n",
+                ),
+                ("tool_name", "glob"),
+                ("tool_args", args),
+                ("finish", "tool_calls"),
+            ]
+            return _DummyStream._materialize(blocks)
+
+        @staticmethod
+        def _chunks_for_grep():
+            """Emit a text intro, then a ``grep`` tool call finding every
+            ``BaseTool`` subclass.
+
+            The pattern brackets every paren and quantifies with ``*``:
+            the tool shells out to ``grep`` without ``-E``, where ``\\w+``
+            is a word char plus a *literal* ``+`` and ``\\(`` opens a
+            group — both silently match nothing.  This spelling is also
+            what the pure-Python fallback reads correctly.
+            """
+            args = json.dumps(
+                {
+                    "description": (
+                        "find every tool class in the project"
+                    ),
+                    "pattern": "class \\w*[(]BaseTool[)]",
+                    "path": str(_PROJECT_ROOT),
+                    "include": "*.py",
+                },
+                ensure_ascii=False,
+            )
+            blocks: list[tuple[str, str | None]] = [
+                (
+                    "text",
+                    "Let me find every tool class.\n\n",
+                ),
+                ("tool_name", "grep"),
                 ("tool_args", args),
                 ("finish", "tool_calls"),
             ]
