@@ -49,6 +49,12 @@ def serialize_plan(plan: Plan) -> dict:
 
     ``Plan`` has no ``to_dict`` (only ``to_json``), so fields are mapped
     explicitly.  ``PlanStep`` has ``to_dict`` and is reused as-is.
+
+    ``markdown`` is the plan pre-rendered by
+    :meth:`Plan.format_for_display` for the browser's document view — the
+    same text the CLI prints, so the client never re-renders the format.
+    It is computed once, here, at proposal time: ``plan_step_update``
+    frames carry the live statuses, and the document itself stays frozen.
     """
     return {
         "id": plan.id,
@@ -58,6 +64,7 @@ def serialize_plan(plan: Plan) -> dict:
         "rationale": plan.rationale,
         "risks": plan.risks,
         "estimated_files_touched": plan.estimated_files_touched,
+        "markdown": plan.format_for_display(),
     }
 
 

@@ -768,6 +768,11 @@ class TestPlanReconnect:
                 assert hello2["busy"] is True
                 assert hello2["paused"] is None
                 assert hello2["plan"]["plan"]["id"] == "plan-1"
+                # The replayed plan carries the document markdown too, so
+                # the title line a fresh tab renders is clickable.
+                assert hello2["plan"]["plan"]["markdown"].startswith(
+                    "## Plan: "
+                )
                 assert hello2["plan"]["steps"] == []
                 # The pill is frozen while the plan awaits approval.
                 assert hello2["session"]["gating_editable"] is False

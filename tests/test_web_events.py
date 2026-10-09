@@ -193,6 +193,9 @@ class TestSerializeEvent:
             "tool_calls_expected": ["read_file"],
             "files_affected": ["src/a.py"],
         }]
+        # The browser's document view reads the display markdown, not the
+        # prompt spelling — pin the shape, not just the key's presence.
+        assert frame["plan"]["markdown"].startswith("## Plan: Refactor thing")
 
     def test_plan_step_update(self):
         frame = serialize_event(PlanStepUpdate(steps=[
@@ -482,6 +485,7 @@ class TestSerializePayloads:
             "rationale": "Cleaner.",
             "risks": ["Risky"],
             "estimated_files_touched": 2,
+            "markdown": plan.format_for_display(),
         }
 
     def test_serialize_tool_result_with_error(self):
