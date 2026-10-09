@@ -115,8 +115,14 @@ def tool_card_paths(root: Path, input: dict) -> dict:
 
     ``path`` is where a tab opens it, relative to the served root, and is
     ``None`` for a file the root cannot hold.  ``path_abs`` is where the
-    file actually is, which the card offers on hover: a reader who cannot
-    open it still wants to know where it lives.
+    file actually is: the card hovers it, and a file with no relative
+    name opens under it instead — read-only, since it lies outside the
+    root.
+
+    Both the start and the end frame carry this (see :func:`serialize_event`):
+    the start frame is the one that matters for how early the card can name
+    the file — it arrives before any permission gate, with the input already
+    complete.
     """
     raw = input.get("file_path")
     return {
@@ -249,6 +255,13 @@ def serialize_event(event: AgentEvent, root: Path) -> dict | None:  # noqa: C901
                 "tool_id": tool_id,
                 "tool_name": tool_name,
                 "partial_input": partial_input,
+                # The agent loop hands the call over with its input already
+                # complete, and this frame is yielded before any permission
+                # gate — so the card names the file (and marks it external)
+                # while the call is still waiting to run.  The provider's own
+                # "began emitting" start carries no input, and resolves to
+                # two nulls, which the card reads as "nothing named yet".
+                **tool_card_paths(root, partial_input or {}),
             }
 
         case ToolCallDelta(tool_id=tool_id, input_delta=input_delta):

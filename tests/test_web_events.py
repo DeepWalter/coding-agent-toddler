@@ -83,13 +83,35 @@ class TestSerializeEvent:
             "tool_id": "t1",
             "tool_name": "read_file",
             "partial_input": {"path": "a.py"},
+            # ``path`` is not the parameter this card reads; the call names
+            # no file, and the card says so from the start.
+            "path": None,
+            "path_abs": None,
         }
+
+    def test_tool_call_start_names_the_file_before_the_gate(self):
+        """The loop yields the start frame with the input already complete
+        and before any permission gate, so the card can name the file — and
+        mark it external — while the call is still waiting to run."""
+        frame = serialize_event(ToolCallStart(
+            tool_id="t1", tool_name="read_file",
+            partial_input={"file_path": "/repo/src/a.py"},
+        ), ROOT)
+        assert frame["path"] == "src/a.py"
+        assert frame["path_abs"] == "/repo/src/a.py"
+        outside = serialize_event(ToolCallStart(
+            tool_id="t2", tool_name="read_file",
+            partial_input={"file_path": "/etc/passwd"},
+        ), ROOT)
+        assert outside["path"] is None
+        assert outside["path_abs"] == str(Path("/etc/passwd").resolve())
 
     def test_tool_call_start_without_partial_input(self):
         frame = serialize_event(ToolCallStart(
             tool_id="t1", tool_name="read_file",
         ), ROOT)
         assert frame["partial_input"] is None
+        assert frame["path"] is None and frame["path_abs"] is None
 
     def test_tool_call_delta(self):
         assert serialize_event(ToolCallDelta(
