@@ -1,0 +1,19 @@
+/* The marker an external file wears (ExternalTag.vue) — the editor tab
+   strip and a tool card's title both append it to the basename, so a file
+   outside the served root is never read by its basename alone.  The pill
+   vocabulary is the diff tag's: 10px uppercase text on the surface tone. */
+
+.external-tag {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--editor-surface-2);
+  color: var(--text-subtle);
+  user-select: none;
+}

@@ -11,6 +11,15 @@ export function basename(path: string): string {
   return path.split('/').pop() ?? path
 }
 
+/** A path the app addresses absolutely — a file outside the served root,
+ *  which has no root-relative name.  The leading slash is the whole of the
+ *  convention: internal paths are always relative, so the two namespaces
+ *  never collide in `tabKey` or the editor's per-path record, and an
+ *  external file opens read-only (the write endpoint stays root-scoped). */
+export function isExternal(path: string): boolean {
+  return path.startsWith('/')
+}
+
 /** Rough token estimate for a streamed buffer.  The client has no
  *  tokenizer, so this is the classic four-characters-per-token rule with
  *  non-ASCII counted as a token each (CJK and emoji compress far less

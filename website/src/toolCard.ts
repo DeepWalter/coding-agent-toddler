@@ -107,13 +107,16 @@ export interface ToolCard {
   /** The file this call is about, when it is about one: what the title
    *  prints in place of the description, and what it does.  Three spellings
    *  of the same file, because a card does three things with it — `label`
-   *  is the basename the title shows, `rel` the root-relative path a click
-   *  hands the editor, and `abs` where it actually is, which the title
-   *  offers on hover.  Null for a call that names no file. */
+   *  is the basename the title shows, `target` the name a click hands the
+   *  editor (root-relative inside the root, absolute outside), and `abs`
+   *  where it actually is, which the title offers on hover.  `external`
+   *  marks the outside case, whose tab opens read-only.  Null for a call
+   *  that names no file. */
   path: {
     label: string
-    rel: string | null
+    target: string | null
     abs: string
+    external: boolean
     opens: boolean
   } | null
   /** Top to bottom: what ran, then what came back — the OUT row joining
@@ -173,6 +176,11 @@ export function toolCard(block: ToolBlock): ToolCard {
     })
   }
   const named = spec?.path ? param(block, spec.path.param) : ''
+  // The name a click hands the editor.  A file inside the root has a
+  // root-relative name — the one every pane names a file by — and the
+  // server resolves nothing else to one, so the absolute fallback fires
+  // only outside the root, where it opens read-only.
+  const target = block.path ?? block.path_abs
   return {
     name: spec?.name ?? block.tool_name,
     description: param(block, 'description'),
@@ -183,18 +191,18 @@ export function toolCard(block: ToolBlock): ToolCard {
     // resolve what the call named: `~` needs the home directory, and a
     // relative path starts at its cwd.  What it resolved is a whole path —
     // the hover names it, which is where a reader checks a file they cannot
-    // open — but the title prints the basename and the click hands over the
-    // root-relative form, the one every pane names a file by.  A call whose
-    // file lies outside the root has no such form, and no tab here to open
-    // in: it reads as the failed write does.  Until the call ends nothing
-    // has resolved, so the title names the file as the call spelled it and
-    // offers no click.
+    // open — and the title prints the basename.  It arrives with the call's
+    // start frame, before the tool runs and before any permission gate, so
+    // a card in flight already names its file (and wears the external
+    // marker); a frame that carried no resolution leaves the title on the
+    // name as the call spelled it, with no click.
     path: spec?.path && named
       ? {
           abs: block.path_abs ?? named,
           label: basename(block.path_abs ?? named),
-          rel: block.path,
-          opens: block.path !== null
+          target,
+          external: block.path === null && block.path_abs !== null,
+          opens: target !== null
             && (!spec.path.written || blockStatus(block) === 'ok'),
         }
       : null,

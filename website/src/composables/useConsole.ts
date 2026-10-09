@@ -267,15 +267,22 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
       const existing = findTool(s, action.tool_id, { open: true })
       if (existing) {
         if (action.partial_input) Object.assign(existing.input, action.partial_input)
+        // The execution-phase start is the one that resolves the call's
+        // file — the card can name it, and mark it external, before the
+        // permission gate answers.  Whatever the earlier frame set stands
+        // until then.
+        existing.path = action.path ?? existing.path
+        existing.path_abs = action.path_abs ?? existing.path_abs
       } else {
         push(s, {
           kind: 'tool',
           tool_id: action.tool_id,
           tool_name: action.tool_name,
           input: action.partial_input ?? {},
-          // The input is still streaming, so nothing has resolved yet.
-          path: null,
-          path_abs: null,
+          // The provider's start carries no input, so nothing has resolved
+          // yet; the execution-phase start lands with both.
+          path: action.path ?? null,
+          path_abs: action.path_abs ?? null,
           result: null,
           open: true,
         })

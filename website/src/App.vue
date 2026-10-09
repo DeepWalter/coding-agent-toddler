@@ -238,15 +238,18 @@ const scCount = computed(
  * reports it whenever a tab's dirty set changes. */
 const dirtyCount = ref(0)
 
-// Editor-pane tabs.  A tab is either a file (editable, persists in
-// localStorage) or a diff (read-only side-by-side view, ephemeral — never
-// persisted; a reload must restore only real files).  The file path list +
-// active tab persist as before (content never persists — files refetch on
-// reload, and a deleted file shows the tab's error state).  Persisted paths
-// are trusted, not re-validated against /api/tree — that listing is
-// depth-limited and would wrongly drop valid paths.  Tabs are scoped to the
-// session's repo: the stored `root` (cwd) must match, or the paths resolve
-// against the wrong tree (see the cwd watcher below).
+// Editor-pane tabs.  A tab is either a file (persists in localStorage) or a
+// diff (read-only side-by-side view, ephemeral — never persisted; a reload
+// must restore only real files).  A file tab is editable unless its path is
+// absolute — a file outside the served root, which opens read-only; such
+// paths persist and restore like any other, and the explorer's highlight
+// simply never matches one.  The file path list + active tab persist as
+// before (content never persists — files refetch on reload, and a deleted
+// file shows the tab's error state).  Persisted paths are trusted, not
+// re-validated against /api/tree — that listing is depth-limited and would
+// wrongly drop valid paths.  Tabs are scoped to the session's repo: the
+// stored `root` (cwd) must match, or the paths resolve against the wrong
+// tree (see the cwd watcher below).
 const TABS_STORAGE_KEY = 'tod.tabs'
 const MAX_OPEN_TABS = 50
 

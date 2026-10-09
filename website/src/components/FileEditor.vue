@@ -10,7 +10,8 @@ import { languageForName, languageForPath } from '../editor/languages'
 import { editorTheme, highlightExt } from '../editor/theme'
 import { gitBadgeClass } from '../gitStatus'
 import type { GitStatusState, TabEntry } from '../types'
-import { basename, tabKey } from '../utils'
+import { basename, isExternal, tabKey } from '../utils'
+import ExternalTag from './ExternalTag.vue'
 import FileEditorDiffView from './FileEditorDiffView.vue'
 import FileEditorDocView from './FileEditorDocView.vue'
 
@@ -18,16 +19,19 @@ import FileEditorDocView from './FileEditorDocView.vue'
  * Editor pane with one tab per open entry — a regular file tab, a
  * read-only text tab (content the app holds rather than the disk), a
  * read-only markdown document (the same, rendered), or a read-only diff
- * tab.  The tab list and active tab live in App.vue; this component owns
- * per-entry CodeMirror state.  A single EditorView serves the editable
- * kinds — switching tabs swaps its state via `view.setState`, which
- * carries each tab's doc, undo history, and cursor.  While a diff or
- * document tab is active the CM host stays mounted but hidden
- * (`display: none`) and its own view takes over the pane — the
- * EditorView's parent must never unmount.  Files load via `GET /api/file`,
- * save with Ctrl/Cmd+S via `PUT /api/file` — the same path-safe endpoint
- * the agent's WriteFile tool backs onto.  Syntax highlighting comes from
- * the CodeMirror legacy grammars (`editor/languages.ts`).  A tab refetches
+ * tab.  A file outside the served root (an absolute path — `isExternal`)
+ * opens as a file tab too, but never becomes editable: the write endpoint
+ * stays root-scoped.  The tab list and active tab live in App.vue; this
+ * component owns per-entry CodeMirror state.  A single EditorView serves
+ * the editable kinds — switching tabs swaps its state via
+ * `view.setState`, which carries each tab's doc, undo history, and
+ * cursor.  While a diff or document tab is active the CM host stays
+ * mounted but hidden (`display: none`) and its own view takes over the
+ * pane — the EditorView's parent must never unmount.  Files load via
+ * `GET /api/file`, save with Ctrl/Cmd+S via `PUT /api/file` — the same
+ * path-safe endpoint the agent's WriteFile tool backs onto.  Syntax
+ * highlighting comes from the CodeMirror legacy grammars
+ * (`editor/languages.ts`).  A tab refetches
  * from disk on activation (unless it has unsaved edits), so the agent's
  * writes show up.
  */
@@ -44,10 +48,14 @@ const emit = defineEmits<{
 
 interface EditorTab {
   // Where the buffer came from: a file tab is fetched from disk (and saved
-  // back to it), a text tab holds content the app handed over and only ever
-  // reads it.  The record outlives the open-tab list, so the prune needs to
-  // know which orphans are worth keeping.
+  // back to it — unless its path is absolute, an external file that is
+  // never saved), a text tab holds content the app handed over and only
+  // ever reads it.  The record outlives the open-tab list, so the prune
+  // needs to know which orphans are worth keeping.
   kind: 'file' | 'text'
+  // Displayed without the editing extensions — same rule whether the
+  // content came from the app (a text tab) or from outside the root.
+  readOnly: boolean
   // CodeMirror state for the tab.  `markRaw`'d — CM state objects must
   // never be wrapped in Vue proxies.  null until the first load succeeds.
   state: EditorState | null
@@ -196,7 +204,9 @@ const activeTitle = computed(() => {
 const statusText = computed(() => {
   const t = activeTab.value
   if (!t) return ''
-  if (t.kind === 'text') return `read-only · ${t.totalLines} lines`
+  // A text tab and an external file tab read alike: nothing here can be
+  // typed into, and saying so is what keeps the absence of a save honest.
+  if (t.readOnly) return `read-only · ${t.totalLines} lines`
   if (t.loadError) return t.loadError
   if (t.saveError) return t.saveError
   if (t.loading) return 'loading…'
@@ -210,6 +220,7 @@ function ensureTab(key: string, kind: 'file' | 'text'): EditorTab {
   if (existing) return existing
   tabs.value[key] = {
     kind,
+    readOnly: kind === 'text' || isExternal(key),
     state: null, dirty: false, totalLines: 0,
     loading: false, loadError: null, saving: false, saveError: null,
     saved: false, flashTimer: null, scrollTop: 0,
@@ -283,6 +294,7 @@ function buildState(
 // listener (closed over noopTab) never fires.
 const noopTab: EditorTab = {
   kind: 'file',
+  readOnly: false,
   state: null, dirty: false, totalLines: 0,
   loading: false, loadError: null, saving: false, saveError: null,
   saved: false, flashTimer: null, scrollTop: 0,
@@ -328,7 +340,7 @@ function showTextTab(entry: Extract<TabEntry, { kind: 'text' }>) {
   flushCurrentFile()
   const tab = ensureTab(entry.id, 'text')
   const language = entry.language ? languageForName(entry.language) : null
-  tab.state = markRaw(buildState(tab, entry.content, language, true))
+  tab.state = markRaw(buildState(tab, entry.content, language, tab.readOnly))
   tab.totalLines = entry.content ? entry.content.split('\n').length : 0
   tab.loading = false
   tab.loadError = null
@@ -363,7 +375,7 @@ async function loadTab(path: string, focusOnLoad = false) {
     if (isStale(path, seq) || !tabs.value[path]) return // superseded or closed
     const language = languageForPath(path)
     tab.totalLines = res.total_lines
-    tab.state = markRaw(buildState(tab, res.content, language))
+    tab.state = markRaw(buildState(tab, res.content, language, tab.readOnly))
     tab.dirty = false
     tab.loading = false
     if (props.active?.kind === 'file' && props.active.path === path && view) {
@@ -415,7 +427,7 @@ async function refreshTab(path: string) {
       // anchor logic can nudge the scroll).
       return
     }
-    tab.state = markRaw(buildState(tab, res.content, language))
+    tab.state = markRaw(buildState(tab, res.content, language, tab.readOnly))
     tab.dirty = false
     if (currentKey === path && view) {
       // Live swap while the user looks at the tab — keep their scroll.
@@ -434,8 +446,9 @@ async function refreshTab(path: string) {
 async function save() {
   // Only file tabs save — the keymap can't fire while a diff tab is
   // active (the view is blurred and hidden), but the guard must not
-  // depend on that.
-  if (props.active?.kind !== 'file') return
+  // depend on that — and an external file never does: the write endpoint
+  // stays root-scoped, and the read-only state has no save binding anyway.
+  if (props.active?.kind !== 'file' || isExternal(props.active.path)) return
   const path = props.active.path
   const tab = tabs.value[path]
   if (!tab?.state || tab.loading || tab.saving || !view) return
@@ -603,6 +616,10 @@ watch(
         @click="emit('activate-tab', tab)"
       >
         <span class="editor-tab-name">{{ tabLabel(tab) }}</span>
+        <!-- A file outside the root reads as external wherever it is named:
+             the basename alone can be ambiguous, and nothing behind the tab
+             can be saved. -->
+        <ExternalTag v-if="tab.kind === 'file' && isExternal(tab.path)" />
         <span
           v-if="tab.kind === 'file' && git.files[tab.path]"
           class="git-badge"
@@ -656,6 +673,9 @@ watch(
       <span class="editor-path" :title="activeTitle ?? undefined">
         {{ activeTitle ?? 'no file selected' }}
       </span>
+      <!-- The header names the whole path already; the tag says what the
+           path's leading slash means. -->
+      <ExternalTag v-if="active?.kind === 'file' && isExternal(active.path)" />
       <span
         v-if="activeTab && isDirty(activeTab)"
         class="editor-dirty"

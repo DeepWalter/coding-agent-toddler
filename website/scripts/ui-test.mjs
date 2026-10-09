@@ -61,10 +61,13 @@
 //  phase 15 — the file card: a read, an edit and a write read as their titles
 //            alone, naming the file rather than describing the call, and that
 //            path opens the file in the editor — except on a write that
-//            failed, which has nothing behind its path yet, and on a file
-//            outside the served root, which no tab can hold.  The titles name
-//            the basename and the hover the whole path the server resolved,
-//            and both survive a reload
+//            failed, which has nothing behind its path yet.  A file outside
+//            the served root opens too — under its absolute path, read-only,
+//            wearing the external marker — and its card says all of that
+//            before the gate on the call has been answered: the start frame
+//            resolves the file, not the result.  The titles name the
+//            basename and the hover the whole path the server resolved, and
+//            both survive a reload
 //  phase 16 — the plan: a proposed plan reads as one title-only line and
 //            opens its display markdown as a rendered, read-only document
 //            in the editor by itself (one tab per plan, never persisted;
@@ -2356,10 +2359,12 @@ await page.waitForTimeout(300)
 // click opens that file in the editor — which is where a file is read, rather
 // than in a row of copied content.  The title prints the basename of the file
 // the *server* resolved for the call, the hover names where it actually is,
-// and the click hands the editor the root-relative path a tab holds.  A call
-// whose file lies outside the root resolves to no tab path at all, and one
-// whose write failed has nothing behind its path yet — both read as plain
-// text, both still saying on hover where the file is.
+// and the click hands the editor the root-relative path a tab holds — or, for
+// a call whose file lies outside the root, the absolute path, opened
+// read-only and marked external.  That resolution arrives with the call's
+// start frame, so a card names its file — and its marker — while the call is
+// still waiting at a gate.  A write that failed has nothing behind its path
+// yet: it reads as plain text, still saying on hover where the file is.
 const READ_PATH = 'mock-a.md'
 const READ_PATH_ABS = '/tmp/mock-a.md'
 const OUTSIDE_PATH = '/home/mock/.toddler/notes.md'
@@ -2370,6 +2375,31 @@ await page.waitForFunction(
   { timeout: 8000 },
 )
 await page.waitForTimeout(300)
+
+// The file turn's last call — the outside read — holds at a gate: the card
+// must be complete (basename, external marker, a real click) before the
+// call is allowed to run.  Everything up to the approval below judges a
+// call that has not executed: the start frame resolves the file, not the
+// result.
+await page.waitForSelector('.pause-prompt', { timeout: 8000 })
+{
+  const gated = await page.evaluate(() => {
+    const row = [...document.querySelectorAll('.stream-row[data-tool="read_file"]')].at(-1)
+    return {
+      paused: !!document.querySelector('.pause-prompt'),
+      running: row?.querySelector('.status-mark')?.className.includes('running') ?? false,
+      label: row?.querySelector('.tool-call-path')?.textContent.trim() ?? null,
+      external: row?.querySelector('.external-tag')?.textContent.trim() ?? null,
+      tag: row?.querySelector('.tool-call-path')?.tagName ?? null,
+    }
+  })
+  const ok =
+    gated.paused && gated.running &&
+    gated.label === 'notes.md' && gated.external === 'external' &&
+    gated.tag === 'BUTTON'
+  console.log(`phase15 the outside card is complete before the gate resolves ${JSON.stringify(gated)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
 
 /** The last five file cards, read the way the phase judges them. */
 const readFileCards = () =>
@@ -2389,6 +2419,11 @@ const readFileCards = () =>
         // where there is one, plain text where there is not.
         tag: link?.tagName ?? null,
         static: link?.classList.contains('static') ?? null,
+        // The external marker rides beside the button, not inside it.
+        external: el.querySelector('.external-tag')?.textContent.trim() ?? null,
+        // One path slot per title: the button/static pair is a chain, and a
+        // marker wedged into it once made every card name its file twice.
+        paths: el.querySelectorAll('.tool-call-path').length,
         boxes: el.querySelectorAll('.tool-card').length,
         rows: el.querySelectorAll('.tool-card-row').length,
       }
@@ -2419,28 +2454,46 @@ function checkFileCards(cards) {
     failed.tag === 'SPAN' &&
     failed.static === true &&
     // The read that reached outside the root ran and returned content, and
-    // still has no tab to open in: its title names where the file is, and
-    // nothing offers to open it.
+    // the absolute path it resolved to is what a tab opens it by — a real
+    // click, wearing the external marker.
     outside.name === 'Read' &&
     outside.label === 'notes.md' &&
-    outside.title === OUTSIDE_PATH &&
-    outside.tag === 'SPAN' &&
-    outside.static === true &&
-    // No box and no rows on any of them, and no description either.
-    cards.every((c) => c.boxes === 0 && c.rows === 0 && c.desc === null)
+    outside.title === `Open ${OUTSIDE_PATH}` &&
+    outside.tag === 'BUTTON' &&
+    outside.static === false &&
+    outside.external === 'external' &&
+    // The marker rides only on the outside file; the in-root four carry none.
+    read.external === null &&
+    edit.external === null &&
+    write.external === null &&
+    failed.external === null &&
+    // No box and no rows on any of them, no description either, and exactly
+    // one path slot per title.
+    cards.every((c) => c.boxes === 0 && c.rows === 0 && c.desc === null && c.paths === 1)
   )
 }
 
 {
+  // Still gated — the read has not run, and all five cards already read as
+  // they will after it does.
   const cards = await readFileCards()
   const ok = checkFileCards(cards)
   console.log(`phase15 a file call is its title alone ${JSON.stringify(cards)} ${ok ? 'PASS' : 'FAIL'}`)
   if (!ok) fails++
 }
-// P15b: the path opens the file in the editor, and a path with nothing behind
-// it opens nothing — neither the failed write nor the file outside the root.
+
+// Approve the outside read so it may run — the tab opened below needs its
+// content, and the turn has to finish before the phase's reload.
 {
-  await page.locator('.stream-row[data-tool="read_file"] .tool-call-path:not(.static)').click()
+  await page.click('.pause-prompt button:has-text("Approve")')
+  await page.waitForSelector('.pause-prompt', { state: 'detached', timeout: 8000 })
+  await page.waitForTimeout(250)
+}
+// P15b: the path opens the file in the editor — the in-root read is the
+// first read_file path — and a write that failed opens nothing.  (Two
+// read_file paths are buttons now, hence the .first()/.last() pins.)
+{
+  await page.locator('.stream-row[data-tool="read_file"] .tool-call-path:not(.static)').first().click()
   await page.waitForTimeout(400)
   const opened = await page.evaluate(() => ({
     tabs: [...document.querySelectorAll('.editor-tab-name')].map((el) => el.textContent.trim()),
@@ -2456,16 +2509,67 @@ function checkFileCards(cards) {
 
   const tabsBefore = await page.locator('.editor-tab').count()
   await page.locator('.stream-row[data-tool="write_file"] .tool-call-path.static').last().click()
-  await page.locator('.stream-row[data-tool="read_file"] .tool-call-path.static').last().click()
   await page.waitForTimeout(250)
   const tabsAfter = await page.locator('.editor-tab').count()
   const okStatic = tabsAfter === tabsBefore
   console.log(`phase15 a path with no file behind it opens nothing ${JSON.stringify({ tabsBefore, tabsAfter })} ${okStatic ? 'PASS' : 'FAIL'}`)
   if (!okStatic) fails++
 }
-// P15c: a reload rebuilds the same cards from the transcript, which stores no
+
+// P15c: the file outside the root opens too — under its absolute path, in a
+// tab that says "external" and refuses every way of writing back.
+{
+  await page.locator('.stream-row[data-tool="read_file"] .tool-call-path:not(.static)').last().click()
+  await page.waitForTimeout(400)
+  const opened = await page.evaluate(() => {
+    const tabs = [...document.querySelectorAll('.editor-tab')].map((el) => ({
+      name: el.querySelector('.editor-tab-name')?.textContent.trim() ?? null,
+      title: el.getAttribute('title'),
+      external: el.querySelector('.external-tag')?.textContent.trim() ?? null,
+      dirty: !!el.querySelector('.editor-tab-dirty'),
+    }))
+    return {
+      tabs,
+      header: document.querySelector('.editor-path')?.textContent.trim() ?? null,
+      headerExternal: !!document.querySelector('.editor-header .external-tag'),
+      doc: document.querySelector('.editor-cm .cm-content')?.textContent ?? '',
+      status: document.querySelector('.editor-status')?.textContent.trim() ?? null,
+    }
+  })
+  const external = opened.tabs.find((t) => t.external === 'external')
+  const ok =
+    external?.name === 'notes.md' &&
+    external.title === OUTSIDE_PATH &&
+    external.dirty === false &&
+    opened.tabs.filter((t) => t.external !== null).length === 1 &&
+    opened.header === OUTSIDE_PATH &&
+    opened.headerExternal &&
+    opened.doc.includes('outside the repo') &&
+    opened.status === 'read-only · 2 lines'
+  console.log(`phase15 the outside file opens read-only under its absolute path ${JSON.stringify(opened)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+
+  // Read-only for real: typing must not move the doc, and Ctrl+S must never
+  // reach the write endpoint — the mock records every PUT on the mutations
+  // backdoor, so an attempt could not hide.
+  const before = opened.doc
+  await page.locator('.editor-cm .cm-content').click()
+  await page.keyboard.type('zzz')
+  await page.keyboard.press('Control+s')
+  await page.waitForTimeout(150)
+  const after = await page.evaluate(() =>
+    document.querySelector('.editor-cm .cm-content')?.textContent ?? '',
+  )
+  const writes = (await sendControl('get_mutations')).mutations
+    .filter((m) => m.cmd === 'file_write').length
+  const okRo = after === before && writes === 0
+  console.log(`phase15 the external tab refuses edits and saves ${JSON.stringify({ changed: after !== before, writes })} ${okRo ? 'PASS' : 'FAIL'}`)
+  if (!okRo) fails++
+}
+// P15d: a reload rebuilds the same cards from the transcript, which stores no
 // resolved path — the server recomputes one, so a replayed card opens what a
-// live one did.
+// live one did — and the external tab comes back from localStorage, still
+// read-only and still marked.
 {
   await page.reload()
   await page.waitForFunction(
@@ -2477,6 +2581,28 @@ function checkFileCards(cards) {
   const ok = checkFileCards(cards)
   console.log(`phase15 a reload replays the same cards ${JSON.stringify(cards)} ${ok ? 'PASS' : 'FAIL'}`)
   if (!ok) fails++
+
+  const restored = await page.evaluate(() => {
+    const tab = [...document.querySelectorAll('.editor-tab')]
+      .find((el) => el.querySelector('.external-tag'))
+    return {
+      name: tab?.querySelector('.editor-tab-name')?.textContent.trim() ?? null,
+      title: tab?.getAttribute('title') ?? null,
+      active: tab?.classList.contains('active') ?? false,
+      header: document.querySelector('.editor-path')?.textContent.trim() ?? null,
+      doc: document.querySelector('.editor-cm .cm-content')?.textContent ?? '',
+      status: document.querySelector('.editor-status')?.textContent.trim() ?? null,
+    }
+  })
+  const okRestored =
+    restored.name === 'notes.md' &&
+    restored.title === OUTSIDE_PATH &&
+    restored.active &&
+    restored.header === OUTSIDE_PATH &&
+    restored.doc.includes('outside the repo') &&
+    restored.status === 'read-only · 2 lines'
+  console.log(`phase15 the external tab survives a reload ${JSON.stringify(restored)} ${okRestored ? 'PASS' : 'FAIL'}`)
+  if (!okRestored) fails++
 }
 
 // --- Phase 16: the plan line, its document and the todo trail ---

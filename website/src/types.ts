@@ -177,6 +177,13 @@ export type Frame =
       tool_id: string
       tool_name: string
       partial_input: Record<string, unknown> | null
+      /** See the tool_call_end frame.  The call's own start — the agent
+       *  loop's, which already carries the whole input and lands before any
+       *  permission gate — resolves the file, so the card names it (and
+       *  marks it external) while the call still waits to run.  The
+       *  provider's "began emitting" start carries nulls. */
+      path: string | null
+      path_abs: string | null
     }
   | { type: 'tool_call_delta'; tool_id: string; input_delta: Record<string, unknown> }
   | {
@@ -186,11 +193,12 @@ export type Frame =
       input: Record<string, unknown>
       /**
        * The file the call was about, in the two spellings a card needs.
-       * `path` is the one a tab holds — relative to the served root, null
-       * when the call named none or named one the root cannot hold —
-       * and `path_abs` is where it actually is.  Resolving is the server's
-       * job: it alone knows the home directory a `~` path needs, and where
-       * a relative path starts.
+       * `path` is the relative-to-root form — null when the call named none
+       * or named one the root cannot hold — and `path_abs` is where it
+       * actually is; a file with no relative form opens in the editor under
+       * its absolute path, read-only.  Resolving is the server's job: it
+       * alone knows the home directory a `~` path needs, and where a
+       * relative path starts.
        */
       path: string | null
       path_abs: string | null
@@ -418,6 +426,8 @@ export interface GitDiffPayload {
  * Type, not interface, so the `kind` discriminant narrows in
  * template/type checks. */
 export type TabEntry =
+  // A file tab's path: relative to the served root, or absolute for a file
+  // outside it (an external tab, which the editor opens read-only).
   | { kind: 'file'; path: string }
   | { kind: 'diff'; path: string; staged: boolean }
   | {

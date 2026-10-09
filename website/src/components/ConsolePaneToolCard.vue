@@ -4,6 +4,7 @@ import type { Block, TabEntry } from '../types'
 import { blockStatus } from '../blockStatus'
 import { toolCard, toolTab, type ToolCardRow } from '../toolCard'
 import ConsolePaneToolCardRow from './ConsolePaneToolCardRow.vue'
+import ExternalTag from './ExternalTag.vue'
 
 const props = defineProps<{ block: Extract<Block, { kind: 'tool' }> }>()
 const emit = defineEmits<{
@@ -18,7 +19,7 @@ const state = computed(() => blockStatus(props.block))
  *  empty one to fall through to the call's own description.  A shape rather
  *  than a null keeps the template free of narrowing. */
 const path = computed(
-  () => card.value.path ?? { label: '', rel: null, abs: '', opens: false },
+  () => card.value.path ?? { label: '', target: null, abs: '', external: false, opens: false },
 )
 
 function open(row: ToolCardRow) {
@@ -27,11 +28,13 @@ function open(row: ToolCardRow) {
 
 /** A title naming a file opens it — the editor is where a path is read, and
  *  a call that names one has nothing else to offer.  What it hands over is
- *  the root-relative path, the one every pane opens a file by; the heading
- *  prints the basename of it and the hover names where the file really is. */
+ *  the root-relative path, the one every pane opens a file by — or the
+ *  absolute path for a file the root cannot hold, which opens read-only;
+ *  the heading prints the basename of it and the hover names where the file
+ *  really is. */
 function openPath() {
-  const rel = path.value.rel
-  if (rel) emit('open-file', rel)
+  const target = path.value.target
+  if (target) emit('open-file', target)
 }
 </script>
 
@@ -52,16 +55,21 @@ function openPath() {
         :title="`Open ${path.abs}`"
         @click="openPath"
       >{{ path.label }}</button>
-      <!-- A path with nothing behind it — a write that failed, a file
-           outside the project — reads as plain text: the click would have
-           nowhere to land.  The hover still names where the file is, which
-           is what a reader wants most about one they cannot open. -->
+      <!-- A path with nothing behind it — a write that failed — reads as
+           plain text: the click would have nowhere to land.  The hover
+           still names where the file is, which is what a reader wants most
+           about one they cannot open. -->
       <span
         v-else-if="path.label"
         class="tool-call-path static"
         :title="path.abs"
       >{{ path.label }}</span>
       <span v-else-if="card.description" class="tool-call-desc">{{ card.description }}</span>
+      <!-- A file outside the served root is named by its absolute path and
+           opens read-only — the marker says both, so the basename is never
+           read as the only file of that name.  After the title chain, not
+           inside it: the button's text stays the basename alone. -->
+      <ExternalTag v-if="path.external" />
     </div>
     <!-- A call can be its title alone, and a file call is: the file opens in
          the editor, so a row of its content here would be a worse copy of

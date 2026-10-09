@@ -27,6 +27,7 @@
 @import './shared/git.css';
 @import './shared/status-dot.css';
 @import './shared/tool-call-heading.css';
+@import './shared/external-tag.css';
 
 @import './components/topbar.css';
 @import './components/console-header.css';

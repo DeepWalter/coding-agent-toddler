@@ -96,7 +96,8 @@ const FAILED_WRITE_PATH = '/tmp/read-only/mock-c.md'
 const FAILED_WRITE_DESCRIPTION = 'write a file that cannot be written'
 // A file the repository does not hold.  The tools take the model's `~`
 // paths literally, so this is the shape a call names whenever it reaches
-// outside the project — and the editor has no tab to put it in.
+// outside the project — and the editor opens it read-only, under the
+// absolute path the card resolves it to.
 const OUTSIDE_PATH = '~/.toddler/notes.md'
 const OUTSIDE_DESCRIPTION = 'read a file outside the repository'
 
@@ -156,6 +157,12 @@ const PLAN_FRAME = {
 // second proposal (after a rejection) is its own plan — a new doc tab, its
 // own decision.
 let planSeq = 0
+// The file turn's last call — the outside read — holds at a gate, so a test
+// can watch the card name the file, and wear the external marker, before
+// the call is allowed to run.  The pending call waits here for the
+// approve/deny handler to finish it.
+const FILE_GATE_ID = 't12'
+let pendingFileCall = null
 // One beat per plan_update call: the prose that call carried, then the whole
 // step list as it stood afterwards.
 const PLAN_BEATS = [
@@ -200,6 +207,9 @@ const API = {
 const FILES = new Map([
   ['mock-a.md', '# mock A\n\nfirst seeded file\n'],
   ['mock-b.md', '# mock B\n\nsecond seeded file\n'],
+  // The external fixture: keyed by its resolved absolute path, which is what
+  // the editor asks for once a card falls back to `path_abs`.
+  ['/home/mock/.toddler/notes.md', '# notes\noutside the repo\n'],
 ])
 
 // The home directory a `~` path expands against.  The real server asks the
@@ -232,13 +242,34 @@ function filePayload(rel, content) {
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://${req.headers.host}`)
   if (url.pathname === '/api/file') {
-    // toddler/web/files.resolve_relative joins the request path onto the repo
-    // root, so an in-root absolute path names the same file as its relative
-    // form — which is how the file cards' fixtures reach these entries.
+    // toddler/web/files.read_file resolves any spelling — root-relative or
+    // absolute, in or out of the root — so an in-root absolute path names the
+    // same file as its relative form, and an external absolute path names the
+    // outside fixture directly.
     const asked = url.searchParams.get('path') ?? ''
     const rel = asked.startsWith(`${REPO_ROOT}/`)
       ? asked.slice(REPO_ROOT.length + 1)
       : asked
+    if (req.method === 'PUT') {
+      // The write side stays root-scoped, exactly as the real endpoint does.
+      // Every PUT is recorded on the mutations backdoor either way, so a test
+      // can prove that a read-only tab never tried to save.
+      mutations.push({ cmd: 'file_write', path: asked })
+      req.resume() // drain the body — the mock has no use for it
+      if (asked.startsWith('/') && !asked.startsWith(`${REPO_ROOT}/`)) {
+        res.writeHead(400, { 'content-type': 'application/json' })
+        res.end(JSON.stringify(
+          { error: `path escapes the repository root: '${asked}'` },
+        ))
+        return
+      }
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({
+        ok: true,
+        bytes: Number(req.headers['content-length'] ?? 0),
+      }))
+      return
+    }
     const content = FILES.get(rel)
     const missing = content === undefined
     res.writeHead(missing ? 404 : 200, { 'content-type': 'application/json' })
@@ -679,6 +710,11 @@ wss.on('connection', (ws) => {
               tool_id: id,
               tool_name: name,
               partial_input: input,
+              // The real server resolves the card's file on the start frame
+              // too — the loop hands the call over with its input already
+              // complete, before any gate — so the card names the file (and
+              // marks it external) while the call is still in flight.
+              ...paths,
             })
             send({
               type: 'tool_call_end',
@@ -749,20 +785,38 @@ wss.on('connection', (ws) => {
               checkpoint_id: null,
               metadata: null,
             })
-          // A read that ran and returned content, of a file the served root
-          // cannot hold: no path reaches the card, so its title names the
-          // file and offers nothing to click.
-          call('t12', 'read_file',
-            { description: OUTSIDE_DESCRIPTION, file_path: OUTSIDE_PATH },
-            {
+          // A read of a file the served root cannot hold: no relative path
+          // reaches the card, so its title names the file by the absolute
+          // path it resolved to — and opens it read-only.  This one holds at
+          // a gate, so the harness can see the card say all that while the
+          // call has not been allowed to run yet; approve_tool finishes it.
+          pendingFileCall = {
+            input: { description: OUTSIDE_DESCRIPTION, file_path: OUTSIDE_PATH },
+            paths: {
+              path: rootRelative(OUTSIDE_PATH),
+              path_abs: absolutePath(OUTSIDE_PATH),
+            },
+            result: {
               success: true,
               output: '1\t# notes\n2\toutside the repo\n',
               error: null,
               checkpoint_id: null,
               metadata: { path: OUTSIDE_PATH, total_lines: 2 },
-            })
-          send({ type: 'agent_finished', reason: 'completed', usage: null })
-          send({ type: 'state', busy: false })
+            },
+          }
+          send({
+            type: 'tool_call_start',
+            tool_id: FILE_GATE_ID,
+            tool_name: 'read_file',
+            partial_input: pendingFileCall.input,
+            ...pendingFileCall.paths,
+          })
+          send({
+            type: 'agent_paused',
+            tool_id: FILE_GATE_ID,
+            prompt: 'The agent wants to read a file outside the project — approve?',
+            choices: null,
+          })
           break
         }
         if (think) {
@@ -803,6 +857,39 @@ wss.on('connection', (ws) => {
       case 'approve_tool':
       case 'deny_tool':
         send({ type: 'ack', cmd: msg.cmd, accepted: true })
+        if (msg.tool_id === FILE_GATE_ID && pendingFileCall) {
+          // The gated outside read: either answer settles it and ends the
+          // file turn — a deny with the result a refusal produces.
+          const result = msg.cmd === 'deny_tool'
+            ? {
+                success: false,
+                output: null,
+                error: 'the user denied the call',
+                checkpoint_id: null,
+                metadata: null,
+              }
+            : pendingFileCall.result
+          send({
+            type: 'tool_call_end',
+            tool_id: FILE_GATE_ID,
+            tool_name: 'read_file',
+            input: pendingFileCall.input,
+            ...pendingFileCall.paths,
+            result,
+          })
+          transcript.push({
+            role: 'tool',
+            tool_id: FILE_GATE_ID,
+            tool_name: 'read_file',
+            input: pendingFileCall.input,
+            ...pendingFileCall.paths,
+            result,
+          })
+          pendingFileCall = null
+          send({ type: 'agent_finished', reason: 'completed', usage: null })
+          send({ type: 'state', busy: false })
+          break
+        }
         send({
           type: 'tool_call_end',
           tool_id: 't1',
