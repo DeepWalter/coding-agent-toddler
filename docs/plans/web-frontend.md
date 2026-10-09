@@ -32,7 +32,7 @@ website/  (Vue 3 + Vite)
   ├─ vite.config.ts    @vitejs/plugin-vue; proxy /api + /ws → http://localhost:8000
   └─ src/              App.vue, main.ts, types.ts, api.ts, diff.ts (side-by-side row
                        alignment), composables/ (useWebSocket, useConsole, useGitStatus),
-                       components/ (ConsolePane, MessageBubble, ToolCard, PlanCard,
+                       components/ (ConsolePane, MessageBubble, ToolCard, PlanLine,
                        PausePrompt, InputBar, FileExplorer, FileEditor, SourceControl,
                        DiffView, SessionList, StatusBar)
 ```
@@ -196,14 +196,15 @@ and keeps its console scroll-back.  Broadcast by `set_mode`, by
 every state-machine transition (mode label, plan phase); the slash commands
 that mutate session metadata but keep the transcript (`/mode`, `/plan`,
 `/model`, `/effort`) answer with it too.
-plan_proposed      {plan: {id, title, summary, steps, rationale, risks, estimated_files_touched}}
+plan_proposed      {plan: {id, title, summary, steps, rationale, risks, estimated_files_touched,
+                           markdown}}
 plan_step_update   {steps: [[id, description, status], ...]}   # complete snapshot — replace, don't diff
 
 ``hello.plan`` replays a pending proposal as ``{plan, steps}`` (the
 ``plan_proposed`` payload plus the latest ``plan_step_update`` rows,
 ``[]`` before execution starts) — the runner snapshots ``PlanProposed``
 exactly like ``AgentPaused``, so a reconnecting or new tab re-renders
-its PlanCard instead of losing it mid-approval.  The snapshot is
+its plan line instead of losing it mid-approval.  The snapshot is
 cleared when the turn ends; it dies with the server process, so a
 server restart still loses the plan (and the turn) — the stranded-approval
 guard treats a plan wait like a tool pause, so a single tab dropping out
@@ -221,7 +222,11 @@ error              {code, message}
 
 Type strings are the snake_case event class names. `serialize_plan` maps `Plan`
 fields explicitly (Plan has no `to_dict`); same for `ToolResult` and
-`TokenUsage`.
+`TokenUsage`. Its `markdown` is `Plan.format_for_display()` — the same text the
+CLI prints, pre-rendered so the browser's document view never re-renders the
+format. It is computed once at proposal time and rides both `plan_proposed` and
+`hello.plan`; `plan_step_update` frames carry the live statuses, and the
+document they accompany stays frozen.
 
 ### Turn lifecycle
 
@@ -236,7 +241,7 @@ fields explicitly (Plan has no `to_dict`); same for `ToolResult` and
   `AgentFinished`/`FatalAgentError`; reconnecters get it in `hello`
 - `PlanProposed` is snapshotted the same way (`_plan_snapshot`), with
   `plan_step_update` rows merged in as they stream; `hello.plan` carries
-  it so a reconnecting tab keeps its PlanCard
+  it so a reconnecting tab keeps its plan line
 - `cancel()` → `task.cancel()`; the runner broadcasts `turn_cancelled`, closes
   the generator (`await gen.aclose()` — safe no-op on a stopped generator),
   clears the snapshot, broadcasts `state {busy: false}`
@@ -318,16 +323,33 @@ plans survive a client reconnect but not a server restart.
   `useWebSocket` composable (auto-reconnect with backoff 1s→10s). No Pinia
   (tree too shallow), no Monaco (textarea editor for MVP).
 - On `hello`: replace console state with transcript replay, resume `busy`/`paused`
-  (reconnect mid-approval shows the pending prompt again) and re-render a pending
-  PlanCard from `hello.plan` — a card whose steps already show progress is treated
-  as decided (no re-offered approve/deny buttons).
+  (reconnect mid-approval shows the pending prompt again) and re-render the pending
+  plan from `hello.plan` — its line, plus one todo block from the latest step
+  snapshot. A plan whose steps already show progress is treated as decided (the
+  dock re-offers no approval).
 - Console rendering: `text_delta` appends to the tail assistant block;
   `tool_call_start/end` render collapsible cards (red border on error; the
   running/settled reading moved to the transcript's status gutter — see
   [console-stream-gutter.md](console-stream-gutter.md));
-  `plan_step_update` replaces step chips; `agent_paused` → approve/deny
-  buttons; `plan_proposed` → PlanCard with steps + approve / approve+auto /
-  deny + feedback input.
+  `agent_paused` → approve/deny buttons; `plan_proposed` → a title-only line
+  ("Plan" beside the plan's title) and the plan document opening in the
+  editor by itself, the line's title the way back to that tab — the
+  decision itself lives in the dock's ask
+  (`ConsoleDockPlanAsk.vue`); a `plan_step_update` appends a checklist block
+  at the two moments worth reading — a step starting, and the whole plan
+  done — printing every step with its status inside its leading box (a star
+  while the step runs, a check once it finished, empty before it starts), so
+  the console keeps a progress trail rather than one rewritten list; a
+  mid-plan completion only moves a box, and the next start's list shows it
+  (the CLI's plan panel folds the same snapshots). The checklist row draws no
+  gutter mark — its boxes are the statuses — and keeps the output indent,
+  lining up with the prose above. The plan block's own `steps` still
+  update — the dock's awaiting check and the decision rollback read them.
+  The plan line's gutter mark reads the *decision*: a spinner while
+  unanswered, `✓` on approval, `✗` on denial — and `✗` too when a
+  `turn_cancelled` cuts the turn short, which also settles every tool call
+  the turn abandoned as failed (the same `✗`, told apart from a denial by
+  the fold line and the card's own word).
 - Console header: one title line naming the live conversation, off the same
   `hello`/`session_info` payloads the rest of the state rides — so it picks up
   the server's auto-title (first user input, truncated at `MAX_TITLE_LENGTH`)
@@ -383,9 +405,27 @@ plans survive a client reconnect but not a server restart.
   no longer open.
 - **Diff tabs**: clicking a row opens a read-only diff tab in the editor
   pane — staged rows open the staged diff, unstaged rows the unstaged one;
-  an `MM` file has two distinct tabs. Tabs are `TabEntry = file | diff`,
-  keyed `f:<path>` / `d:s|u:<path>` so a file and its diffs coexist; only
-  file tabs persist to `tod.tabs` (a reload restores files, never diffs).
+  an `MM` file has two distinct tabs. Tabs are
+  `TabEntry = file | diff | text | markdown`, keyed `f:<path>` /
+  `d:s|u:<path>` / `t:<id>` / `md:<id>` so the readings of one path coexist;
+  only file tabs persist to `tod.tabs` (a reload restores files, never
+  diffs, text or documents).
+- **Document tabs** (`FileEditorDocView.vue`): a markdown `TabEntry` holds
+  text the app received rather than the disk — a proposed plan's
+  `Plan.format_for_display()` output is the only producer today, keyed
+  `plan:<plan id>` (one tab per plan, stable across reconnects). The
+  proposal opens it by itself when the `plan_proposed` frame lands, so the
+  plan is what the reader sees while the decision bar is up; the console
+  line's title is the way back to it (both build the tab through
+  `planDocTab()`), and a `hello` replay re-renders the line without
+  stealing the editor from whatever is open. The pane renders the text
+  through the console's markdown renderer (`.editor-doc` joins
+  `shared/markdown.css`'s carrier list), read-only, with no CodeMirror
+  state — the diff tab's takeover, and like it the `.editor-body` hides
+  rather than unmounts. Repo-relative links in the text open in the editor
+  instead of navigating the SPA. The content
+  is frozen at proposal time: `plan_step_update` frames stream beside it
+  (as todo blocks) and never rewrite it.
 - **Side-by-side diff** (`DiffView.vue` + `diff.ts`): two columns rendered
   from the same `buildRows()` alignment (positional del/add pairing — no
   `@@` hunk-header lines), line-number gutters, `color-mix` del/add

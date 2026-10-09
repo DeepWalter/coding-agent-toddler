@@ -43,7 +43,7 @@ Decided with the user, 2026-09-14:
    (`left: -22px`) inside the card is clipped, and dropping the clip squares off
    the hover fill. Per-component would also mean five copies of the status, or
    threading a `status` prop through `MessageBubble` (breaking its
-   `{role, text}` contract) and `PlanCard`.
+   `{role, text}` contract) and `PlanLine`.
 
    The row is a **block box, never a flex row**: a card's `flex: none` would,
    in a row-flex container, pin its *width* to max-content and let long tool
@@ -70,11 +70,16 @@ Decided with the user, 2026-09-14:
 
 3. **The tool card's trailing word stays.** Only the *mark* moved. "done" /
    "failed" / "cancelled" say what a glyph cannot — `✗` cannot distinguish a
-   failed call from one the turn abandoned.
+   denied call from one the turn abandoned, and the fold line (plus the card's
+   own word) is where that distinction reads.
 
 4. **The thought's `💭` and the card's inline mark are gone.** The gutter
    carries one mark per block now; a second reads as a second state. The labels
-   ("Thinking…", "Thought for 3 seconds") carry the identity instead.
+   ("Thinking…", "Thought for 3 seconds") carry the identity instead. Two kinds
+   draw none: user input (its box is the marker) and the plan checklist, whose
+   own boxes carry every step's status — a block mark beside them would be a
+   second reading, and the worse one, since a printed snapshot settles as it
+   lands while the steps in it are still running.
 
 5. **The answer block is closed when the stream is interrupted.** §Phase 2.
 
@@ -82,15 +87,21 @@ Decided with the user, 2026-09-14:
 
 | State | Glyph | Colour | Source of truth in the block |
 | --- | --- | --- | --- |
-| `running` | spinner | `--accent` | `assistant.closed === false`, `thinking.open`, `tool.open`, or a plan that is undecided / mid-step |
-| `ok` | `✓` | `--success` | `closed`, `!open` with a successful result, all steps `completed`, a notice (its command completed) |
-| `error` | `✗` | `--error` | a tool result with `success: false`, an error line, a plan step `failed` |
-| `cancelled` | `·` | `--text-subtle` | a tool closed with `result: null`, a fold line, a rejected plan |
+| `running` | spinner | `--accent` | `assistant.closed === false`, `thinking.open`, `tool.open`, or a plan still awaiting its decision |
+| `ok` | `✓` | `--success` | `closed`, `!open` with a successful result, a plan approved here (or decided elsewhere), a notice (its command completed) |
+| `error` | `✗` | `--error` | a tool result with `success: false` or a call the turn ended mid-flight (`result: null`), a plan denied or cut short by a cancel, an error line, a plan step `failed` |
+| `cancelled` | `·` | `--text-subtle` | a fold line (the turn-cancel marker itself) |
 
-Two mappings are judgment calls, both recorded: **a settled thought is `ok`**
+Three families are judgment calls, all recorded: **a settled thought is `ok`**
 even when the turn was cancelled — the fold line below it carries the cancel,
-and the thought itself finished saying what it had to say; and **a notice is
-`ok`** — the command completed, and the notice is its own success report.
+and the thought itself finished saying what it had to say; **a notice is
+`ok`** — the command completed, and the notice is its own success report; and
+**an interrupted plan or call is `error`** — a cancelled turn settles the plan
+it was carrying and every call it abandoned as failed, because neither
+produced anything and neither can be resumed (the ask is gone, the tool moves
+with the turn); the fold line above says whose fault that was. A plan whose
+steps all completed before the cancel keeps its `✓` — only the closing summary
+was cut.
 
 `.step-status.status-failed` ([styles.css:948](website/src/styles.css#L948))
 has never had a producer: `PlanStepStatus` is `pending | in_progress |
@@ -145,24 +156,18 @@ wrapping every block in a row broke it; it now compares document order, which
 is what the assertion actually meant. New phase 6 asserts the contract —
 indent, one outdented mark per output block, none on user input, uniform
 vocabulary with nothing left turning, the gate holding exactly one live mark
-with its answer settled, and `·` / `✗` for the two unhappy endings. Edges are
-compared, never a hard-coded width.
+with its answer settled, and `✗` for both unhappy endings (a failed call, and
+one a cancel abandoned). Edges are compared, never a hard-coded width.
 
-`mock-server.mjs` gained its first `fail:` fixture — the only producer of `✗`,
-since the seed only ever succeeds and the gate path is always approved.
-
-**Coverage gap:** the mock has no plan fixtures, so the plan row's mapping
-(`running` → `ok` / `cancelled`) is unverified by the harness. The plan card's
-lifecycle is still exercised through the real server path.
+`mock-server.mjs` gained a `fail:` fixture and, later, a `plan` turn (propose
++ hold, beats on `approve_plan`). Phase 16 covers the plan row's mappings: a
+spinner while unanswered, `✓` the moment it is approved, `✗` on deny, and `✗`
+when a cancel cuts the turn short; the cancelled tool's `✗` is phase 6's.
 
 ## Out of scope
 
-- Gating the plan mark on console `busy`. The card's own note already reads
-  "running…", so the mark matches it; making both honest needs a `busy` prop
-  through `App` → `ConsolePane` and a server-side terminal signal.
 - A hover tooltip or text on the mark.
 - A distinct settled glyph per kind for content blocks.
-- Plan fixtures in the mock.
 
 ## Risks
 
@@ -199,7 +204,8 @@ mock between runs.
 By eye in both selectable themes (tokyo-night, github-light), checking
 `--success` / `--error` legibility on `--editor-surface`: a `think:` turn
 (spinner → `✓`, and never two blocks spinning at once), a `gate:` turn (only the
-tool's mark live), a `fail:` turn (`✗`), a cancel (`·`), a reload (everything
-replays settled), and reduced motion on. The Python web suites
+tool's mark live), a `fail:` turn (`✗`), a cancel (`✗` on the call and plan it
+abandoned, `·` on the fold line), a reload (everything replays settled), and
+reduced motion on. The Python web suites
 (`tests/test_web_events.py`, `test_web_ws.py`, `test_web_api.py`) are the
 "frames untouched" net — this change never touches the wire.
