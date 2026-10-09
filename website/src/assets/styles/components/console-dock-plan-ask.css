@@ -49,3 +49,27 @@
   flex-direction: column;
   gap: 6px;
 }
+
+/* The feedback box the Deny button swaps the actions for — the bar is the
+   only place a plan is decided, so this editor lives here now. */
+.plan-ask-feedback {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.plan-ask-feedback textarea {
+  background: var(--editor-bg);
+  color: var(--text);
+  border: 1px solid var(--editor-border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: inherit;
+  resize: vertical;
+  outline: none;
+}
+
+.plan-ask-feedback textarea:focus {
+  border-color: var(--accent-hover);
+}

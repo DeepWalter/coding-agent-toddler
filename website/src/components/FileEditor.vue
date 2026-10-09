@@ -12,21 +12,24 @@ import { gitBadgeClass } from '../gitStatus'
 import type { GitStatusState, TabEntry } from '../types'
 import { basename, tabKey } from '../utils'
 import FileEditorDiffView from './FileEditorDiffView.vue'
+import FileEditorDocView from './FileEditorDocView.vue'
 
 /**
  * Editor pane with one tab per open entry — a regular file tab, a
- * read-only text tab (content the app holds rather than the disk), or a
- * read-only diff tab.  The tab list and active tab live in App.vue; this
- * component owns per-entry CodeMirror state.  A single EditorView serves
- * them all — switching tabs swaps its state via `view.setState`,
- * which carries each tab's doc, undo history, and cursor.  While a diff
- * tab is active the CM host stays mounted but hidden (`display: none`)
- * and FileEditorDiffView takes over the pane — the EditorView's parent must
- * never unmount.  Files load via `GET /api/file`, save with Ctrl/Cmd+S via
- * `PUT /api/file` — the same path-safe endpoint the agent's WriteFile
- * tool backs onto.  Syntax highlighting comes from the CodeMirror legacy
- * grammars (`editor/languages.ts`).  A tab refetches from disk on
- * activation (unless it has unsaved edits), so the agent's writes show up.
+ * read-only text tab (content the app holds rather than the disk), a
+ * read-only markdown document (the same, rendered), or a read-only diff
+ * tab.  The tab list and active tab live in App.vue; this component owns
+ * per-entry CodeMirror state.  A single EditorView serves the editable
+ * kinds — switching tabs swaps its state via `view.setState`, which
+ * carries each tab's doc, undo history, and cursor.  While a diff or
+ * document tab is active the CM host stays mounted but hidden
+ * (`display: none`) and its own view takes over the pane — the
+ * EditorView's parent must never unmount.  Files load via `GET /api/file`,
+ * save with Ctrl/Cmd+S via `PUT /api/file` — the same path-safe endpoint
+ * the agent's WriteFile tool backs onto.  Syntax highlighting comes from
+ * the CodeMirror legacy grammars (`editor/languages.ts`).  A tab refetches
+ * from disk on activation (unless it has unsaved edits), so the agent's
+ * writes show up.
  */
 
 const props = defineProps<{ files: TabEntry[]; active: TabEntry | null; git: GitStatusState }>()
@@ -159,26 +162,35 @@ const activeDiff = computed<Extract<TabEntry, { kind: 'diff' }> | null>(() =>
   props.active?.kind === 'diff' ? props.active : null,
 )
 
+/** Active markdown document tab (or null) — replaced by FileEditorDocView
+ *  the same way a diff tab is; documents own no CodeMirror state. */
+const activeDoc = computed<Extract<TabEntry, { kind: 'markdown' }> | null>(() =>
+  props.active?.kind === 'markdown' ? props.active : null,
+)
+
 /** Strip highlight: a tab is active when its key equals the active key. */
 const activeKey = computed(() => (props.active ? tabKey(props.active) : null))
 
-/** What the strip calls a tab: a file reads as its basename, a text tab as
- *  the title it was opened with. */
+/** What the strip calls a tab: a pathless kind (text, markdown document)
+ *  reads as the title it was opened with, a path-bearing one (file, diff)
+ *  as the basename of the file. */
 function tabLabel(tab: TabEntry): string {
-  return tab.kind === 'text' ? tab.title : basename(tab.path)
+  return tab.kind === 'text' || tab.kind === 'markdown'
+    ? tab.title
+    : basename(tab.path)
 }
 
 /** The strip's hover text — the full identity, which for a file is its path. */
 function tabTitle(tab: TabEntry): string {
-  return tab.kind === 'text' ? tab.title : tab.path
+  return tab.kind === 'text' || tab.kind === 'markdown' ? tab.title : tab.path
 }
 
-/** What the header names — a text tab's title, else the file's path.  (A
- *  diff tab replaces the header, so it never reaches here.) */
+/** What the header names — a pathless kind names its title, a file its path.
+ *  (Diff and markdown tabs replace the header, so they never reach here.) */
 const activeTitle = computed(() => {
   const tab = props.active
   if (!tab) return null
-  return tab.kind === 'text' ? tab.title : tab.path
+  return tab.kind === 'text' || tab.kind === 'markdown' ? tab.title : tab.path
 })
 
 const statusText = computed(() => {
@@ -540,10 +552,11 @@ watch(() => props.active, (tab) => {
     currentKey = null
     return
   }
-  if (tab.kind === 'diff') {
-    // Diff tabs own no CodeMirror state.  Flush the outgoing file tab,
+  if (tab.kind === 'diff' || tab.kind === 'markdown') {
+    // These tabs own no CodeMirror state.  Flush the outgoing file tab,
     // park the view on the empty doc, and blur it — the CM host stays
-    // mounted (hidden behind FileEditorDiffView) so the EditorView survives.
+    // mounted (hidden behind the diff/document view) so the EditorView
+    // survives.
     if (view) {
       flushCurrentFile()
       view.setState(emptyState)
@@ -629,6 +642,16 @@ watch(
       @refresh-git="emit('refresh-git')"
     />
 
+    <!-- A markdown document takes over the pane the same way.  Keyed by
+         tab key too, so switching documents resets the scroll to the top
+         of the one arriving. -->
+    <FileEditorDocView
+      v-else-if="activeDoc"
+      :key="tabKey(activeDoc)"
+      :tab="activeDoc"
+      @open-file="emit('open-file', $event)"
+    />
+
     <div v-else class="editor-header">
       <span class="editor-path" :title="activeTitle ?? undefined">
         {{ activeTitle ?? 'no file selected' }}
@@ -646,9 +669,10 @@ watch(
     <!-- Host stays mounted so the single view never dies; messages paint
          over it.  The overlay blocks pointer events and the view is blurred
          while its doc is untracked, so no edits can land in limbo.  While a
-         diff tab is active the whole body hides (`display: none`) rather
-         than unmounting — the EditorView's parent must survive. -->
-    <div class="editor-body" :class="{ hidden: !!activeDiff }">
+         diff or document tab is active the whole body hides
+         (`display: none`) rather than unmounting — the EditorView's parent
+         must survive. -->
+    <div class="editor-body" :class="{ hidden: !!activeDiff || !!activeDoc }">
       <div ref="editorHost" class="editor-cm" />
       <div v-if="!active" class="editor-message">
         Select a file in the explorer to edit it.

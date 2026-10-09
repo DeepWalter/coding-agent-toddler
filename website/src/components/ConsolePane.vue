@@ -5,25 +5,22 @@ import { renderMarkdown } from '../markdown'
 import { blockStatus } from '../blockStatus'
 import ConsolePaneTopFloat from './ConsolePaneTopFloat.vue'
 import ConsolePaneMessageBubble from './ConsolePaneMessageBubble.vue'
-import ConsolePanePlanCard from './ConsolePanePlanCard.vue'
+import ConsolePanePlanLine from './ConsolePanePlanLine.vue'
 import ConsolePaneToolCard from './ConsolePaneToolCard.vue'
 import ConsolePaneStatusMark from './ConsolePaneStatusMark.vue'
 import ConsolePaneThinkingBlock from './ConsolePaneThinkingBlock.vue'
+import ConsolePaneTodoBlock from './ConsolePaneTodoBlock.vue'
 
 const props = defineProps<{
   blocks: Block[]
-  /** The plan block whose decision the console dock is asking about — its
-   *  inline card renders read-only (actions live in the dock). */
-  awaitingPlanId: number | null
   /** True while the console dock floats an ask (tool gate or plan decision)
    *  over the input bar. */
   askVisible: boolean
 }>()
 const emit = defineEmits<{
-  'approve-plan': [planId: string, mode: 'manual' | 'auto']
-  'reject-plan': [planId: string, feedback: string]
   'open-file': [path: string]
   'open-text': [tab: Extract<TabEntry, { kind: 'text' }>]
+  'open-doc': [tab: Extract<TabEntry, { kind: 'markdown' }>]
 }>()
 
 const scroller = ref<HTMLElement | null>(null)
@@ -301,7 +298,12 @@ onBeforeUnmount(() => {
  *  assets/styles/components/console-pane.css is the other half of this
  *  rule. */
 function rowStatus(block: Block) {
-  return block.kind === 'user' ? null : blockStatus(block)
+  // Two kinds draw no mark.  User input: its box is the marker.  A todo
+  // list: its own boxes carry every step's status, and a block mark beside
+  // them would be a second, contradicting reading — a printed snapshot
+  // settles as soon as it lands, while the steps in it are still running.
+  if (block.kind === 'user' || block.kind === 'todo') return null
+  return blockStatus(block)
 }
 </script>
 
@@ -348,12 +350,13 @@ function rowStatus(block: Block) {
         @open-text="(tab) => emit('open-text', tab)"
         @open-file="(path) => emit('open-file', path)"
       />
-      <ConsolePanePlanCard
+      <!-- A proposed plan is one line — its title opens the plan document
+           in the editor.  The decision lives in the dock's ask; the step
+           trail arrives as todo blocks below. -->
+      <ConsolePanePlanLine
         v-else-if="block.kind === 'plan'"
         :block="block"
-        :awaiting="awaitingPlanId === block.id"
-        @approve="(planId, mode) => emit('approve-plan', planId, mode)"
-        @reject="(planId, feedback) => emit('reject-plan', planId, feedback)"
+        @open-doc="(tab) => emit('open-doc', tab)"
       />
       <div v-else-if="block.kind === 'error'" class="stream-line error">
         ⛔ {{ block.message }}
@@ -363,6 +366,12 @@ function rowStatus(block: Block) {
       <div v-else-if="block.kind === 'fold'" class="stream-line fold">
         ~~~{{ block.text }}~~~
       </div>
+      <!-- Each plan_update prints the whole step list: the trail a reader
+           watches the plan advance along, with the statuses boxed. -->
+      <ConsolePaneTodoBlock
+        v-else-if="block.kind === 'todo'"
+        :block="block"
+      />
       <!-- Notices are slash-command output — markdown by contract
            (the server sends it straight through). -->
       <div

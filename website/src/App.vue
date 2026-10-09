@@ -12,7 +12,7 @@ import { useConsole } from './composables/useConsole'
 import { useGitStatus } from './composables/useGitStatus'
 import { useWebSocket } from './composables/useWebSocket'
 import type { Block, Mode, TabEntry } from './types'
-import { tabKey } from './utils'
+import { planDocTab, tabKey } from './utils'
 
 // Transport → state: every websocket frame goes through the console
 // reducer; the connection refs drive the status bar and input gating.
@@ -40,6 +40,14 @@ const git = useGitStatus()
 onFrame((frame) => {
   applyFrame(frame)
   git.onFrame(frame)
+  // A plan arriving opens its document: the decision bar is up, and the
+  // plan itself is the thing to read while it waits — behind a title click
+  // it would only be found by a reader who already knew it was there.
+  // Only the live proposal: a hello replay re-renders the line (and the
+  // latest step snapshot) without stealing the editor from whatever is
+  // open, and the title click stays the way back to a document that was
+  // closed.
+  if (frame.type === 'plan_proposed') openDoc(planDocTab(frame.plan))
 })
 void git.refresh()
 
@@ -68,11 +76,12 @@ const conversationTitle = computed(
 )
 
 // The plan block awaiting THIS tab's decision, if any — the console dock
-// floats its decision bar over the input bar while it exists.  busy is
-// required: an undecided plan while idle keeps its inline actions and must
-// not float (the user can still type).  Only the LAST plan block counts —
-// at most one undecided plan exists in practice (rejected/approved blocks
-// are decided, new proposals supersede decided ones).
+// floats its decision bar over the input bar while it exists, and it is the
+// only place a plan is decided.  busy is required: an undecided plan while
+// idle (a cancelled turn) must not float — the user can still type.  Only
+// the LAST plan block counts — at most one undecided plan exists in practice
+// (rejected/approved blocks are decided, new proposals supersede decided
+// ones).
 const awaitingPlan = computed<Extract<Block, { kind: 'plan' }> | null>(() => {
   if (!state.busy) return null
   for (let i = state.blocks.length - 1; i >= 0; i--) {
@@ -84,6 +93,7 @@ const awaitingPlan = computed<Extract<Block, { kind: 'plan' }> | null>(() => {
   return null
 })
 const awaitingPlanId = computed(() => awaitingPlan.value?.id ?? null)
+
 // True while the console dock floats an ask (tool gate or awaiting plan)
 // over the input bar — the console pins to the bottom then, so the content
 // being asked about sits right above the card.
@@ -306,7 +316,7 @@ function persistTabs() {
   writeStored(TABS_STORAGE_KEY, {
     open: openTabs.value
       .filter((t) => t.kind === 'file')
-      .map((t) => t.path), // diff tabs are ephemeral — never persisted
+      .map((t) => t.path), // diff, text and markdown tabs are ephemeral
     active: activeTab.value?.kind === 'file' ? activeTab.value.path : null,
     root: state.session?.cwd ?? null,
   })
@@ -346,6 +356,23 @@ function openText(entry: Extract<TabEntry, { kind: 'text' }>) {
   const existing = openTabs.value.find((t) => tabKey(t) === tabKey(entry))
   if (existing) {
     if (existing.kind === 'text') existing.content = entry.content
+    activeTab.value = existing
+  } else if (openTabs.value.length < MAX_OPEN_TABS) {
+    activeTab.value = entry
+    openTabs.value.push(entry)
+  }
+  persistTabs()
+}
+
+/** Open a rendered markdown document the app holds — a plan's display text.
+ *  One tab per document id, ephemeral like a diff tab: the content arrives
+ *  with the frame and never has a disk copy to restore from. */
+function openDoc(entry: Extract<TabEntry, { kind: 'markdown' }>) {
+  const existing = openTabs.value.find((t) => tabKey(t) === tabKey(entry))
+  if (existing) {
+    // Refreshed on a hit, matching openText — a no-op today, since the
+    // plan's markdown is frozen at proposal time.
+    if (existing.kind === 'markdown') existing.content = entry.content
     activeTab.value = existing
   } else if (openTabs.value.length < MAX_OPEN_TABS) {
     activeTab.value = entry
@@ -559,12 +586,10 @@ function onDividerUp(event: PointerEvent) {
         <div class="console-wrap">
           <ConsolePane
             :blocks="state.blocks"
-            :awaiting-plan-id="awaitingPlanId"
             :ask-visible="askVisible"
-            @approve-plan="approvePlan"
-            @reject-plan="rejectPlan"
             @open-file="openFile"
             @open-text="openText"
+            @open-doc="openDoc"
           />
         </div>
         <!-- One floating card occupies the bottom slot: the tool gate, an

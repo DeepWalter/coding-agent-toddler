@@ -113,9 +113,25 @@ function closeOpenTools(s: ConsoleState): void {
   // A turn ending mid-call (cancel, fatal error, or the loop stopping
   // after a tool request without an end frame) never emits a
   // tool_call_end — close any open cards so they stop spinning
-  // "waiting for result…" and render as cancelled instead.
+  // "waiting for result…" and settle as failed instead (blockStatus reads
+  // a closed call with no result as one that never happened).
   for (const b of s.blocks) {
     if (b.kind === 'tool' && b.open) b.open = false
+  }
+}
+
+/** Settle the plan a cancelled turn was carrying.  Only the last plan block
+ *  is touched — earlier ones were answered — and only while it still had
+ *  steps to run: a plan whose steps all completed survived the cancel, with
+ *  just the closing summary cut. */
+function cancelPlan(s: ConsoleState): void {
+  for (let i = s.blocks.length - 1; i >= 0; i--) {
+    const b = s.blocks[i]
+    if (b.kind !== 'plan') continue
+    const done =
+      b.steps.length > 0 && b.steps.every(([, , st]) => st === 'completed')
+    if (!done) b.cancelled = true
+    return
   }
 }
 
@@ -194,7 +210,16 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
           plan: action.plan.plan,
           steps: action.plan.steps,
           decision: null,
+          cancelled: false,
         })
+        // One checklist from the latest snapshot: a reconnecting tab sees
+        // the current progress, not the trail (the per-update blocks are
+        // live-only, like the plan line itself).  Kept unconditional — this
+        // is a state readout, not a milestone print, so the rule that
+        // filters the live trail has nothing to say here.
+        if (action.plan.steps.length) {
+          push(s, { kind: 'todo', steps: action.plan.steps })
+        }
       }
       break
     }
@@ -283,11 +308,35 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
       // prose that set the plan up must not still read as streaming.
       closeThinking(s)
       closeAssistant(s)
-      push(s, { kind: 'plan', plan: action.plan, steps: [], decision: null })
+      push(s, {
+        kind: 'plan',
+        plan: action.plan,
+        steps: [],
+        decision: null,
+        cancelled: false,
+      })
       break
     case 'plan_step_update': {
+      // The plan_update call that produced this frame is hidden on the wire
+      // — no tool_call_start reaches a badge — so this is the only signal
+      // that the response carrying the call has ended: close its prose and
+      // thought the way a visible tool call would, or a step's text would
+      // keep its spinner for the rest of the turn.
+      closeThinking(s)
+      closeAssistant(s)
+      // The plan line's own rows stay current — awaitingPlan, blockStatus
+      // and the ack rollback all read them — while the console also gets a
+      // checklist, printed at the two moments worth reading: a step
+      // starting, and the whole plan done.  A completion that is not the
+      // last only moves one box, which the next start's list shows anyway
+      // (the CLI's plan panel folds the same snapshots).
       const last = [...s.blocks].reverse().find((b) => b.kind === 'plan')
       if (last && last.kind === 'plan') last.steps = action.steps
+      const started = action.steps.some(([, , st]) => st === 'in_progress')
+      const allDone =
+        action.steps.length > 0
+        && action.steps.every(([, , st]) => st === 'completed')
+      if (started || allDone) push(s, { kind: 'todo', steps: action.steps })
       break
     }
     case 'local_plan_decision': {
@@ -351,6 +400,7 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
       closeThinking(s)
       closeAssistant(s)
       closeOpenTools(s)
+      cancelPlan(s)
       s.paused = null
       push(s, { kind: 'fold', text: FOLD_LABELS.cancelled })
       break

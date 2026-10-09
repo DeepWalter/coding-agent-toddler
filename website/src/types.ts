@@ -101,7 +101,8 @@ export interface PausedFrame {
 
 /** A plan awaiting (or already running under) approval, as replayed by
  * hello.plan — the server snapshots plan_proposed + the latest
- * plan_step_update so a reconnecting tab re-renders its ConsolePanePlanCard. */
+ * plan_step_update so a reconnecting tab re-renders its plan line and the
+ * latest step snapshot. */
 export interface PlanSnapshot {
   plan: Plan
   steps: PlanStepRow[]
@@ -134,6 +135,10 @@ export interface Plan {
   rationale: string | null
   risks: string[] | null
   estimated_files_touched: number
+  /** The plan pre-rendered by the server's `Plan.format_for_display()` —
+   *  the document view's content.  Frozen at proposal time: step updates
+   *  stream beside it and never rewrite it. */
+  markdown: string
 }
 
 /** plan_step_update snapshot rows: [id, description, status]. */
@@ -269,6 +274,19 @@ export type Block =
       /** null until this tab decides (hello rebuilds and live proposals both
        *  start undecided).  The server never replays a decision. */
       decision: PlanDecision | null
+      /** True once a `turn_cancelled` frame settled this plan's fate: the
+       *  turn carrying it was cut short, so its steps never ran to the end
+       *  and the dock's ask is gone.  Reads as failed, like an abandoned
+       *  tool call. */
+      cancelled: boolean
+    }
+  | {
+      id: number
+      kind: 'todo'
+      /** The whole step list as it stood when a `plan_update` tool call
+       *  landed — one printed snapshot per call, so the console keeps a
+       *  progress trail instead of one rewritten list. */
+      steps: PlanStepRow[]
     }
   | { id: number; kind: 'error'; message: string }
   | { id: number; kind: 'notice'; message: string }
@@ -393,9 +411,11 @@ export interface GitDiffPayload {
 }
 
 /** One entry in the editor tab strip: a regular file tab, a read-only diff
- * tab (side-by-side view of one file), or a read-only text tab — content
- * the app holds rather than the disk, such as a tool call's command or
- * output.  Type, not interface, so the `kind` discriminant narrows in
+ * tab (side-by-side view of one file), a read-only text tab — content the
+ * app holds rather than the disk, such as a tool call's command or output —
+ * or a read-only markdown document (the same, rendered rather than shown
+ * verbatim; an approved plan's display text is the only producer today).
+ * Type, not interface, so the `kind` discriminant narrows in
  * template/type checks. */
 export type TabEntry =
   | { kind: 'file'; path: string }
@@ -409,6 +429,7 @@ export type TabEntry =
       language: string | null
       content: string
     }
+  | { kind: 'markdown'; id: string; title: string; content: string }
 
 // ---------------------------------------------------------------------------
 // Git hunk apply (POST /api/git/hunk)

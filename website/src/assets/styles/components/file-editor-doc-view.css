@@ -1,0 +1,28 @@
+/* FileEditorDocView.vue — a rendered markdown document in the editor pane.
+   The header reuses `.editor-header` / `.editor-path` / `.editor-status`
+   from file-editor.css; the body's typography comes from
+   shared/markdown.css, which lists `.editor-doc` alongside the console's
+   markdown carriers. */
+
+/* ------------------------------------------------------------------ */
+/* Markdown document view (document tabs in the editor pane)           */
+/* ------------------------------------------------------------------ */
+
+.doc-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The document scrolls on its own — the pane's height is fixed, and a
+   plan can be longer than it.  A reading column rather than the editor's
+   full bleed: prose is the whole content here, and no gutter or line
+   numbers give it a left edge to sit against. */
+.editor-doc {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 12px;
+  max-width: 720px;
+}

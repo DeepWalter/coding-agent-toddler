@@ -7,7 +7,8 @@
  * state: one that consulted `busy` would make the same block mean different
  * things in two tabs, and every kind already carries its own lifecycle flag.
  * The flag differs by kind — assistant blocks carry `closed`, thinking and
- * tool blocks carry `open`, plans carry a `decision` and their step rows.
+ * tool blocks carry `open`, plans carry a `decision`, their step rows, and
+ * the `cancelled` marker a cut-short turn leaves.
  */
 
 import type { Block } from './types'
@@ -16,11 +17,12 @@ import type { Block } from './types'
  *  the three ways a block settles.  One vocabulary, every block kind. */
 export type BlockStatus = 'running' | 'ok' | 'error' | 'cancelled'
 
-/** User input is the one kind with no mark, so it is excluded from the
- *  parameter type rather than answered with a value nobody renders —
- *  ConsolePane's rowStatus narrows it away. */
+/** The kinds that draw no gutter mark are excluded from the parameter type
+ *  rather than answered with a value nobody renders — ConsolePane's
+ *  rowStatus narrows them away: user input (its box is the marker) and a
+ *  todo list (its own boxes carry every step's status). */
 export function blockStatus(
-  block: Exclude<Block, { kind: 'user' }>,
+  block: Exclude<Block, { kind: 'user' | 'todo' }>,
 ): BlockStatus {
   switch (block.kind) {
     // A replayed block is always closed, so a reload reads settled.
@@ -35,27 +37,37 @@ export function blockStatus(
     case 'tool': {
       if (block.open) return 'running'
       const result = block.result
-      // A call the turn ended mid-flight never got an end frame; the
-      // reducer renders that as result: null.
-      if (!result) return 'cancelled'
+      // A call the turn ended mid-flight — cancel or fatal error — never
+      // got an end frame, and the reducer renders that as result: null.  It
+      // failed with the turn that carried it: nothing was produced, and the
+      // fold line above says why.
+      if (!result) return 'error'
       return result.success ? 'ok' : 'error'
     }
     case 'plan': {
-      // Rejected is the one terminal decision the user can make — and the
-      // card's own note already reads "plan rejected".
-      if (block.decision === 'rejected') return 'cancelled'
       const steps = block.steps.map(([, , status]) => status)
       // No producer for 'failed' today — PlanStepStatus is pending /
-      // in_progress / completed, and an approved-then-abandoned plan
-      // settles by rejection instead.  Kept so a dead step can never leave
-      // a spinner turning if a status is ever added server-side.
+      // in_progress / completed.  Kept so a dead step can never leave a
+      // spinner turning if a status is ever added server-side.
       if (steps.includes('failed')) return 'error'
-      if (steps.length > 0 && steps.every((s) => s === 'completed')) {
-        return 'ok'
-      }
-      // Undecided while the user reads it, approved with no step update
-      // yet, or mid-step: in flight either way.
-      return 'running'
+      // The mark reads the *decision*, not the execution: the proposal is
+      // one unit, and it settles the moment the user answers it —
+      // approved (ok) or denied (error).  A plan running under an approval
+      // keeps this ✓ for the rest of the turn; how far the steps have got
+      // is the todo trail's reading, printed beside it.
+      //
+      // A cancelled turn overrides that: the plan cannot be answered any
+      // more (the ask is gone) and cannot be resumed (the tool moves with
+      // the turn), so it failed — like the tools that were running beside
+      // it.
+      if (block.cancelled) return 'error'
+      if (block.decision === 'rejected') return 'error'
+      if (block.decision !== null) return 'ok'
+      // No decision in this tab: a plan whose steps are all still pending
+      // is the one the dock is asking about (running); anything past
+      // pending was decided from another tab or replayed by hello, and
+      // settles the way an approval here would.
+      return steps.some((s) => s !== 'pending') ? 'ok' : 'running'
     }
     case 'error':
       return 'error'

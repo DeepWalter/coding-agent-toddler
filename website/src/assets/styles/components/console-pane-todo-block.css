@@ -1,0 +1,58 @@
+/* ConsolePaneTodoBlock.vue — one printed step-list snapshot per
+   plan_update call: a checklist whose boxes carry the status (a star
+   running, a check finished, empty not started). */
+
+.todo-list {
+  margin: 2px 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* The box leads on the first line of its description — flex-start, not
+   centre, so a description that wraps keeps its box beside the line it
+   belongs to. */
+.todo-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+}
+
+/* A real box rather than the literal `[x]` spelling: the status reads in
+   the mark inside it, and the border keeps the three states the same
+   width.  Centred on the first line by the 3px top offset — half the gap
+   between a 13px box and the 20px line it sits in. */
+.todo-box {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  margin-top: 3px;
+  border: 1px solid var(--editor-border);
+  border-radius: 3px;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.todo-text {
+  color: var(--text-muted);
+}
+
+.todo-box.in_progress {
+  color: var(--accent);
+}
+
+.todo-box.completed {
+  color: var(--success);
+}
+
+.todo-box.failed {
+  color: var(--error);
+}
+
+/* Air between one snapshot and the next: consecutive lists are separate
+   prints of the same steps, not one long list. */
+.stream-row[data-kind='todo'] + .stream-row[data-kind='todo'] .todo-list {
+  margin-top: 6px;
+}

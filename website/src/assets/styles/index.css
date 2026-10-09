@@ -35,7 +35,7 @@
 @import './components/console-pane-message-bubble.css';
 @import './components/console-pane-thinking-block.css';
 @import './components/console-pane-tool-card.css';
-@import './components/console-pane-plan-card.css';
+@import './components/console-pane-todo-block.css';
 @import './components/console-pane-top-float.css';
 
 @import './components/console-dock.css';
@@ -48,5 +48,6 @@
 @import './components/source-control.css';
 @import './components/file-editor.css';
 @import './components/file-editor-diff-view.css';
+@import './components/file-editor-doc-view.css';
 @import './components/session-list.css';
 @import './components/status-bar.css';

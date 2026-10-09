@@ -102,7 +102,7 @@ function openFeedback() {
       </button>
     </div>
 
-    <div v-else class="plan-card-feedback">
+    <div v-else class="plan-ask-feedback">
       <textarea
         ref="feedbackEl"
         v-model="feedback"

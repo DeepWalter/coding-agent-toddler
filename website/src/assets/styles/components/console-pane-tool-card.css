@@ -12,7 +12,7 @@
    so no token rules here. */
 
 /* The console's section-heading rule, which the card's rows wear over each
-   row's text and ConsolePanePlanCard borrows rather than duplicating. */
+   row's text. */
 .tool-card-section-title {
   color: var(--text-subtle);
   font-size: 11px;
