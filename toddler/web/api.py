@@ -1,9 +1,10 @@
 """``/api`` REST router — meta, sessions, messages, tree, and file I/O.
 
 Sessions and messages read the same SQLite store as the CLI.  File
-endpoints go through :mod:`toddler.web.files`, which enforces path
-containment inside the served ``repo_root`` — a local browser tab must
-never reach outside it.
+endpoints go through :mod:`toddler.web.files`: reads (:func:`read_file`)
+serve any file the process can read — the editor opens external files
+read-only — while writes (:func:`write_file`) and the git endpoints stay
+contained inside the served ``repo_root``.
 """
 
 from __future__ import annotations
@@ -261,7 +262,12 @@ async def read_file(
     path: str = Query(...),
     state: WebAppState = _GetState,
 ) -> dict | JSONResponse:
-    """Read a text file from the repo (path containment enforced)."""
+    """Read a text file — root-relative or absolute.
+
+    An absolute path may lie outside the repo: the editor opens external
+    files as read-only tabs.  The response ``path`` echoes the file's
+    canonical name (relative inside the repo, absolute outside).
+    """
     try:
         return files.read_file(state.repo_root, path)
     except FileApiError as exc:
@@ -277,6 +283,9 @@ async def write_file(
     state: WebAppState = _GetState,
 ) -> dict | JSONResponse:
     """Write a text file into the repo (parents created on demand).
+
+    Unlike the read side, the path must stay inside the ``repo_root`` —
+    an escaping path is a 400 and writes nothing.
 
     The body is parsed as raw JSON so ``curl -d '{"content": "..."}'``
     works without an explicit ``Content-Type`` header.

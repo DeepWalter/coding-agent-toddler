@@ -1,10 +1,13 @@
-"""Path-safe file access and gitignore-aware tree walking for the REST API.
+"""File access and gitignore-aware tree walking for the REST API.
 
 The ``ReadFile`` tool returns line-numbered output that the editor must
-not parse, so the web endpoints use pathlib directly.  Every path coming
-from a browser request passes through :func:`resolve_relative`, which
-enforces containment inside the served ``repo_root`` — the server exposes
-that directory to any local tab, so escaping it must be impossible.
+not parse, so the web endpoints use pathlib directly.  Writes stay
+contained: every write request passes through :func:`resolve_relative`,
+which enforces containment inside the served ``repo_root``.  Reads are
+deliberately wider — :func:`resolve_any` serves any file the process can
+read, so the editor can open what a tool call reached outside the root
+(read-only there).  There is no auth: bound beyond loopback, this read
+surface is reachable by anyone on the network.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ __all__ = [
     "IGNORED_TOP",
     "build_file_tree",
     "read_file",
+    "resolve_any",
     "resolve_relative",
     "tool_path",
     "tool_path_abs",
@@ -72,6 +76,28 @@ def resolve_relative(root: Path, rel: str) -> Path:
     return candidate
 
 
+def resolve_any(root: Path, raw: str) -> Path:
+    """Resolve *raw* for a read, wherever it points.
+
+    The read-path twin of :func:`tool_path_abs`: absolute paths, ``~``
+    and paths relative to the served root all resolve, and nothing is
+    refused for landing outside the root — the editor opens external
+    files read-only.  :func:`resolve_relative` remains the gate for
+    writes and git.
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        raise FileApiError(400, "`path` query parameter is required.")
+    if "\x00" in raw:
+        raise FileApiError(400, "invalid path.")
+    try:
+        candidate = Path(raw).expanduser()
+    except RuntimeError:  # ``~user`` for a user this machine hasn't got
+        raise FileApiError(400, f"invalid path: {raw!r}") from None
+    if not candidate.is_absolute():
+        candidate = root.resolve() / candidate
+    return candidate.resolve()
+
+
 def tool_path_abs(root: Path, raw: object) -> str | None:
     """Where a path a tool call named actually is — or ``None`` when it
     names nothing at all.
@@ -101,8 +127,8 @@ def tool_path(root: Path, raw: object) -> str | None:
 
     Every other pane names a file the way the tree does — POSIX, relative
     to the root — so a card that opens a tab names it that way too.  A
-    call that resolved elsewhere has no such name, and no tab here to
-    open in.
+    call that resolved elsewhere has no such name: the card falls back to
+    ``path_abs``, which opens in the editor read-only.
 
     Containment is :func:`resolve_relative`'s property, but this is not
     that call: a request naming a path outside the root is a 400, where a
@@ -126,34 +152,42 @@ def tool_path(root: Path, raw: object) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def read_file(root: Path, rel: str) -> dict:
-    """Read the text file *rel*, returning ``{path, content, total_lines}``.
+def read_file(root: Path, raw: str) -> dict:
+    """Read the text file *raw* names, returning ``{path, content,
+    total_lines}``.
+
+    *raw* is root-relative or absolute, and an absolute path is not
+    required to lie inside the root — the editor opens external files
+    read-only.  The echoed ``path`` is the file's canonical name:
+    root-relative inside the root, absolute outside.
 
     Raises :class:`FileApiError` — 404 when the file is missing, 400 for
     binary or non-UTF-8 content (a textarea editor must not be fed
     arbitrary bytes).
     """
-    path = resolve_relative(root, rel)
+    path = resolve_any(root, raw)
     if not path.is_file():
-        raise FileApiError(404, f"file not found: {rel!r}")
+        raise FileApiError(404, f"file not found: {raw!r}")
     try:
         data = path.read_bytes()
     except OSError as exc:
         raise FileApiError(400, f"cannot read file: {exc}") from exc
     if b"\x00" in data:
-        raise FileApiError(400, f"binary file — refusing to serve: {rel!r}")
+        raise FileApiError(400, f"binary file — refusing to serve: {raw!r}")
     try:
         content = data.decode("utf-8")
     except UnicodeDecodeError:
-        raise FileApiError(400, f"not a UTF-8 text file: {rel!r}") from None
+        raise FileApiError(400, f"not a UTF-8 text file: {raw!r}") from None
     total_lines = content.count("\n") + (
         1 if content and not content.endswith("\n") else 0
     )
-    return {
-        "path": path.relative_to(root.resolve()).as_posix(),
-        "content": content,
-        "total_lines": total_lines,
-    }
+    root_abs = root.resolve()
+    shown = (
+        path.relative_to(root_abs).as_posix()
+        if path.is_relative_to(root_abs)
+        else str(path)
+    )
+    return {"path": shown, "content": content, "total_lines": total_lines}
 
 
 def write_file(root: Path, rel: str, content: str) -> dict:

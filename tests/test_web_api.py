@@ -205,14 +205,21 @@ class TestFileEndpoints:
 
 
 class TestPathEscape:
-    def test_read_escape_returns_400(self, tmp_path):
+    """Reads resolve anywhere — the editor opens external files read-only —
+    while writes stay contained inside the root."""
+
+    def test_read_escape_returns_the_outside_file(self, tmp_path):
+        outside = tmp_path / "outside.txt"
+        outside.write_text("secret")
         app = _app(tmp_path)
         with TestClient(app) as client:
             resp = client.get(
                 "/api/file", params={"path": "../outside.txt"},
             )
-        assert resp.status_code == 400
-        assert "escapes" in resp.json()["error"]
+        assert resp.status_code == 200
+        assert resp.json()["content"] == "secret"
+        # The echo is the canonical name: absolute, outside the root.
+        assert resp.json()["path"] == str(outside.resolve())
 
     def test_write_escape_is_rejected_and_writes_nothing(self, tmp_path):
         app = _app(tmp_path)
@@ -225,20 +232,62 @@ class TestPathEscape:
         assert resp.status_code == 400
         assert not (tmp_path / "outside.txt").exists()
 
-    def test_absolute_path_rejected(self, tmp_path):
+    def test_reads_an_absolute_path(self, tmp_path):
+        outside = tmp_path / "outside.txt"
+        outside.write_text("secret")
         app = _app(tmp_path)
         with TestClient(app) as client:
-            resp = client.get("/api/file", params={"path": "/etc/passwd"})
-        assert resp.status_code == 400
+            resp = client.get("/api/file", params={"path": str(outside)})
+        assert resp.status_code == 200
+        assert resp.json()["content"] == "secret"
+        assert resp.json()["path"] == str(outside.resolve())
 
-    def test_symlink_escape_rejected(self, tmp_path):
+    def test_read_follows_a_symlink_out_of_the_root(self, tmp_path):
         outside = tmp_path / "outside.txt"
         outside.write_text("secret")
         (_repo(tmp_path) / "link.txt").symlink_to(outside)
         app = _app(tmp_path)
         with TestClient(app) as client:
             resp = client.get("/api/file", params={"path": "link.txt"})
+        assert resp.status_code == 200
+        assert resp.json()["content"] == "secret"
+        assert resp.json()["path"] == str(outside.resolve())
+
+    def test_write_to_an_absolute_path_is_rejected(self, tmp_path):
+        """Only the read side was widened — a PUT still cannot leave the
+        root, whichever way the path spells it."""
+        target = tmp_path / "outside.txt"
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = client.put(
+                "/api/file",
+                params={"path": str(target)},
+                json={"content": "sneaky"},
+            )
         assert resp.status_code == 400
+        assert not target.exists()
+
+    def test_blank_and_nul_paths_are_rejected(self, tmp_path):
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            assert client.get("/api/file", params={"path": ""}).status_code == 400
+            assert client.get("/api/file", params={"path": "\x00"}).status_code == 400
+
+    def test_expanded_home_reads(self, tmp_path, monkeypatch):
+        """``~`` expands server-side, the one spelling the browser could
+        never resolve for itself."""
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        notes = tmp_path / "home/.toddler/notes.md"
+        notes.parent.mkdir(parents=True)
+        notes.write_text("outside the repo\n")
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = client.get(
+                "/api/file", params={"path": "~/.toddler/notes.md"},
+            )
+        assert resp.status_code == 200
+        assert resp.json()["content"] == "outside the repo\n"
+        assert resp.json()["path"] == str(notes.resolve())
 
 
 # ============================================================================
