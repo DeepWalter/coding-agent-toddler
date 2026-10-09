@@ -100,6 +100,71 @@ const FAILED_WRITE_DESCRIPTION = 'write a file that cannot be written'
 const OUTSIDE_PATH = '~/.toddler/notes.md'
 const OUTSIDE_DESCRIPTION = 'read a file outside the repository'
 
+// The plan fixture: a `plan` turn proposes two steps and holds for the
+// decision; approving streams one plan_step_update per beat — the trail the
+// todo blocks print.  `markdown` is the server's
+// Plan.format_for_display() output; the mock spells the shape out rather
+// than sharing a formatter with Python, and the harness only checks that
+// the document renders it.
+const PLAN_ID = 'plan-mock-1'
+const PLAN_TITLE = 'Split the search root out of the tool'
+const PLAN_SUMMARY = 'Move the resolver out of search.py so both tools share it.'
+const PLAN_RATIONALE = 'Reading before moving keeps the diff small.'
+const PLAN_RISKS = ['The import graph may move with it']
+const PLAN_STEPS = [
+  {
+    id: 'step-1',
+    description: 'Read search.py and find the resolver',
+    tool_calls_expected: ['read_file'],
+    files_affected: ['toddler/tools/search.py'],
+  },
+  {
+    id: 'step-2',
+    description: 'Move the resolver into its own module',
+    tool_calls_expected: ['write_file'],
+    files_affected: ['toddler/tools/paths.py'],
+  },
+]
+const PLAN_MARKDOWN = [
+  `## Plan: ${PLAN_TITLE}`,
+  '',
+  PLAN_SUMMARY,
+  '',
+  `**Rationale**: ${PLAN_RATIONALE}`,
+  '',
+  '**Risks**:',
+  ...PLAN_RISKS.map((risk) => `- ${risk}`),
+  '',
+  `**Steps** (${PLAN_STEPS.length}):`,
+  ...PLAN_STEPS.map(
+    (step, i) => `${i + 1}. **${step.description}** [${step.files_affected.join(', ')}]`,
+  ),
+  '',
+  'Estimated files touched: 2',
+].join('\n')
+const PLAN_FRAME = {
+  id: PLAN_ID,
+  title: PLAN_TITLE,
+  summary: PLAN_SUMMARY,
+  steps: PLAN_STEPS,
+  rationale: PLAN_RATIONALE,
+  risks: PLAN_RISKS,
+  estimated_files_touched: 2,
+  markdown: PLAN_MARKDOWN,
+}
+// The real server mints a fresh plan id per proposal; the mock counts, so a
+// second proposal (after a rejection) is its own plan — a new doc tab, its
+// own decision.
+let planSeq = 0
+// One beat per plan_update call: the prose that call carried, then the whole
+// step list as it stood afterwards.
+const PLAN_BEATS = [
+  ['reading the resolver\n', ['in_progress', 'pending']],
+  ['resolver found — moving it out\n', ['completed', 'pending']],
+  ['writing the new module\n', ['completed', 'in_progress']],
+  ['done\n', ['completed', 'completed']],
+]
+
 const TYPES = {
   '.html': 'text/html',
   '.js': 'text/javascript',
@@ -418,6 +483,10 @@ wss.on('connection', (ws) => {
         // edit, and a write that lands — plus a write that failed, whose
         // path has nothing behind it to open.
         const files = msg.input.startsWith('files')
+        // A "plan" turn proposes a two-step plan and holds for the
+        // decision, the way a tool gate does — the approve_plan command
+        // below streams the execution beats.
+        const planTurn = msg.input.startsWith('plan')
         // The real server auto-titles a conversation from the first user
         // input of its first turn, before the state change whose observer
         // re-broadcasts session_info — so a live header follows untitled →
@@ -427,6 +496,14 @@ wss.on('connection', (ws) => {
           broadcast(sessionInfoFrame())
         }
         send({ type: 'turn_started' })
+        if (planTurn) {
+          send({ type: 'content_delta', text_delta: 'putting a plan together\n' })
+          send({
+            type: 'plan_proposed',
+            plan: { ...PLAN_FRAME, id: `plan-mock-${++planSeq}` },
+          })
+          break // holds for the decision, like the tool gate
+        }
         if (fail) {
           send({ type: 'content_delta', text_delta: 'running the failing call\n' })
           send({
@@ -734,6 +811,25 @@ wss.on('connection', (ws) => {
           result: { success: true, output: 'ok\n', error: null, checkpoint_id: null, metadata: null },
         })
         send({ type: 'content_delta', text_delta: 'done.\n' })
+        send({ type: 'agent_finished', reason: 'completed', usage: null })
+        send({ type: 'state', busy: false })
+        break
+      case 'approve_plan': {
+        send({ type: 'ack', cmd: 'approve_plan', accepted: true })
+        for (const [text, statuses] of PLAN_BEATS) {
+          send({ type: 'content_delta', text_delta: text })
+          send({
+            type: 'plan_step_update',
+            steps: PLAN_STEPS.map((step, i) => [step.id, step.description, statuses[i]]),
+          })
+          await new Promise((resolve) => setTimeout(resolve, 120))
+        }
+        send({ type: 'agent_finished', reason: 'completed', usage: null })
+        send({ type: 'state', busy: false })
+        break
+      }
+      case 'reject_plan':
+        send({ type: 'ack', cmd: 'reject_plan', accepted: true })
         send({ type: 'agent_finished', reason: 'completed', usage: null })
         send({ type: 'state', busy: false })
         break

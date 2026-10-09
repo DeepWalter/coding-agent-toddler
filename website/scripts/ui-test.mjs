@@ -65,6 +65,12 @@
 //            outside the served root, which no tab can hold.  The titles name
 //            the basename and the hover the whole path the server resolved,
 //            and both survive a reload
+//  phase 16 — the plan: a proposed plan reads as one title-only line and
+//            opens its display markdown as a rendered, read-only document
+//            in the editor by itself (one tab per plan, never persisted;
+//            the title click lands on that same tab), while each
+//            plan_update call prints the whole step list as a todo block
+//            and the document stays frozen
 // Prints PASS/FAIL plus diagnostics; exits 1 on any failure.
 import { chromium } from 'playwright'
 import WebSocket from 'ws'
@@ -612,12 +618,16 @@ await page.waitForTimeout(700)
     const block = (r) => r.querySelector(':scope > :not(.status-mark)')
     const box = (el) => el.getBoundingClientRect()
     const users = rows.filter((r) => r.dataset.kind === 'user')
-    const output = rows.filter((r) => r.dataset.kind !== 'user')
+    // The mark-less kinds stay out: user input, and a todo list — its own
+    // boxes carry the statuses (phase 16 asserts that).
+    const output = rows.filter(
+      (r) => r.dataset.kind !== 'user' && r.dataset.kind !== 'todo',
+    )
     return {
       rows: rows.length,
       output: output.length,
-      // the doc's contract: exactly one mark per output row, none on a user
-      // row, and every mark left of the block it belongs to
+      // the doc's contract: exactly one mark per marked output row, none on
+      // a user row, and every mark left of the block it belongs to
       stray: output.filter((r) => r.querySelectorAll(':scope > .status-mark').length !== 1).length,
       userMarked: users.filter((r) => mark(r)).length,
       outdented: output.filter((r) => box(mark(r)).right <= box(block(r)).left + 1).length,
@@ -695,18 +705,23 @@ await page.waitForSelector('.pause-prompt', { timeout: 15000 })
 await page.click('.ask-close')
 await page.waitForSelector('.pause-prompt', { state: 'detached', timeout: 8000 })
 
-// P6c: a cancelled call settles as · — not a spinner that never stops.
+// P6c: a call the cancelled turn abandoned settles as ✗ — not a spinner
+// that never stops, and not the neutral · the turn-cancel fold line wears:
+// nothing came back, so the call failed with the turn.
 {
-  const mark = await page.evaluate(() =>
-    document
-      .querySelector('.stream-row[data-kind="tool"] .status-mark.cancelled')
-      ?.textContent.trim() ?? null,
-  )
-  console.log(`phase6 cancelled call reads · ${JSON.stringify(mark)} ${mark === '·' ? 'PASS' : 'FAIL'}`)
-  if (mark !== '·') fails++
+  const mark = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('.stream-row[data-kind="tool"]')]
+    const row = rows[rows.length - 1]
+    const el = row?.querySelector(':scope > .status-mark')
+    return { state: el?.className ?? null, glyph: el?.textContent.trim() ?? null }
+  })
+  const ok = !!mark.state?.includes('error') && mark.glyph === '✗'
+  console.log(`phase6 cancelled call reads ✗ ${JSON.stringify(mark)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
 }
 
-// P6d: a failed call is the one producer of ✗.
+// P6d: a failed call also reads ✗ — the two unhappy endings share the
+// glyph, and the fold line above says which one it was.
 await page.fill('textarea.input-bar-textarea', 'fail: run it')
 await page.click('button:has-text("Send")')
 {
@@ -2456,5 +2471,271 @@ function checkFileCards(cards) {
   if (!ok) fails++
 }
 
-await browser.close()
-process.exit(fails ? 1 : 0)
+// --- Phase 16: the plan line, its document and the todo trail ---
+
+// A proposed plan reads as the title-only line a file call does — "Plan"
+// beside the plan's title — and opens its display markdown as a rendered,
+// read-only document in the editor on arrival; the title stays the way back
+// to that tab.  The document is frozen: each plan_update call prints the
+// whole step list as a todo block beside it, so the console keeps the trail
+// while the plan it describes never changes.
+const PLAN_TITLE = 'Split the search root out of the tool'
+const PLAN_STEP_DESCRIPTIONS = [
+  'Read search.py and find the resolver',
+  'Move the resolver into its own module',
+]
+/** One printed checklist, flattened for comparison: "mark|description" per
+ *  item, one per line, in plan order. */
+const planTodo = (marks) =>
+  marks.map((mark, i) => `${mark}|${PLAN_STEP_DESCRIPTIONS[i]}`).join('\n')
+{
+  const tabsBeforePlan = await page.locator('.editor-tab').count()
+  await page.fill('textarea.input-bar-textarea', 'plan the refactor')
+  await page.click('button:has-text("Send")')
+  await page.waitForSelector('.stream-row[data-kind="plan"]', { timeout: 8000 })
+  await page.waitForTimeout(250)
+
+  // P16a: the line is the whole console reading — name, clickable title, no
+  // box, no steps, no inline decision buttons.
+  const line = await page.$eval('.stream-row[data-kind="plan"]', (el) => {
+    const link = el.querySelector('.tool-call-path')
+    return {
+      name: el.querySelector('.tool-call-name')?.textContent.trim() ?? null,
+      link: link?.textContent.trim() ?? null,
+      tag: link?.tagName ?? null,
+      boxes: el.querySelectorAll('.tool-card').length,
+      // The row is one heading line and nothing else — name + title, no
+      // step list, no box, no inline decision buttons.
+      headings: el.querySelectorAll('.tool-call-heading').length,
+      parts: el.querySelector('.tool-call-heading')?.children.length ?? 0,
+      buttons: el.querySelectorAll('.btn').length,
+    }
+  })
+  const okLine =
+    line.name === 'Plan' &&
+    line.link === PLAN_TITLE &&
+    line.tag === 'BUTTON' &&
+    line.boxes === 0 &&
+    line.headings === 1 &&
+    line.parts === 2 &&
+    line.buttons === 0
+  console.log(`phase16 a plan proposal is one line ${JSON.stringify(line)} ${okLine ? 'PASS' : 'FAIL'}`)
+  if (!okLine) fails++
+
+  // The gutter mark centres on the title line, the way a tool call's does —
+  // the plan row has no card box under it, so the mark takes the heading's
+  // own inset rather than the old card's border + padding.
+  const mark = await page.$eval('.stream-row[data-kind="plan"]', (row) => {
+    const rect = (el) => el.getBoundingClientRect()
+    const m = rect(row.querySelector('.status-mark'))
+    const t = rect(row.querySelector('.tool-call-heading'))
+    return { markMid: m.top + m.height / 2, titleMid: t.top + t.height / 2 }
+  })
+  const okMark = Math.abs(mark.markMid - mark.titleMid) <= 3
+  console.log(`phase16 the gutter mark centres on the plan title ${JSON.stringify(mark)} ${okMark ? 'PASS' : 'FAIL'}`)
+  if (!okMark) fails++
+
+  // Awaiting the decision, the proposal's own mark is the live one: a
+  // spinner, not a reading of the steps (nothing has run yet).
+  const pending = await page.$eval('.stream-row[data-kind="plan"] .status-mark', (el) => ({
+    cls: el.className,
+    spinner: !!el.querySelector('.spinner'),
+    glyph: el.textContent.trim(),
+  }))
+  const okPending = pending.cls.includes('running') && pending.spinner && !pending.glyph
+  console.log(`phase16 an unanswered plan spins ${JSON.stringify(pending)} ${okPending ? 'PASS' : 'FAIL'}`)
+  if (!okPending) fails++
+
+  const ask = await page.$eval('.plan-ask', (el) => el.textContent ?? '').catch(() => '')
+  const okAsk = ask.includes(PLAN_TITLE) && ask.includes('Approve')
+  console.log(`phase16 the dock still asks for the decision ${JSON.stringify(ask.slice(0, 60))} ${okAsk ? 'PASS' : 'FAIL'}`)
+  if (!okAsk) fails++
+
+  // P16b: the proposal opens the plan itself — a rendered document, one
+  // tab, active, without waiting for a click: the decision bar is up, and
+  // the plan is the thing to read while it waits.
+  await page.waitForSelector('.editor-doc', { timeout: 8000 })
+  const doc = await page.evaluate(() => {
+    const el = document.querySelector('.editor-doc')
+    return {
+      h2: el?.querySelector('h2')?.textContent.trim() ?? null,
+      steps: [...(el?.querySelectorAll('ol > li') ?? [])].map((li) => li.textContent.trim()),
+      rationale: el?.textContent.includes('Rationale') ?? false,
+      risks: el?.textContent.includes('Risks') ?? false,
+      header: document.querySelector('.doc-view .editor-path')?.textContent.trim() ?? null,
+      status: document.querySelector('.doc-view .editor-status')?.textContent.trim() ?? null,
+      bodyHidden: document.querySelector('.editor-body')?.classList.contains('hidden') ?? false,
+      tabs: document.querySelectorAll('.editor-tab').length,
+      active: document.querySelector('.editor-tab.active .editor-tab-name')?.textContent.trim() ?? null,
+      raw: el?.textContent.includes('## Plan:') ?? false,
+    }
+  })
+  const okDoc =
+    doc.h2 === `Plan: ${PLAN_TITLE}` &&
+    // startsWith, not equality: format_for_display appends each step's
+    // files_affected in brackets, which the renderer keeps.
+    doc.steps[0].startsWith(PLAN_STEP_DESCRIPTIONS[0]) &&
+    doc.steps[1].startsWith(PLAN_STEP_DESCRIPTIONS[1]) &&
+    doc.rationale &&
+    doc.risks &&
+    doc.header === PLAN_TITLE &&
+    doc.status === 'read-only · rendered markdown' &&
+    doc.bodyHidden &&
+    doc.tabs === tabsBeforePlan + 1 &&
+    doc.active === PLAN_TITLE &&
+    !doc.raw // rendered, not the source
+  console.log(`phase16 the proposal opens the plan as a rendered document ${JSON.stringify(doc)} ${okDoc ? 'PASS' : 'FAIL'}`)
+  if (!okDoc) fails++
+
+  // P16c: the tab is one per plan — the title click lands on the tab the
+  // proposal already opened, never a copy.
+  await page.click('.stream-row[data-kind="plan"] .tool-call-path')
+  await page.waitForTimeout(250)
+  const tabsAgain = await page.locator('.editor-tab').count()
+  const okTabs = tabsAgain === tabsBeforePlan + 1
+  console.log(`phase16 the title click reuses the tab it opened ${JSON.stringify({ tabsBeforePlan, tabsAgain })} ${okTabs ? 'PASS' : 'FAIL'}`)
+  if (!okTabs) fails++
+
+  // P16d: approving settles the proposal's own mark at once — the decision
+  // is what that mark reads, not the execution — and the beats stream
+  // beside it: a checklist at each step's start, then one for the finished
+  // plan, while the document stays as proposed.
+  const frozen = await page.$eval('.editor-doc', (el) => el.textContent)
+  await page.click('.plan-ask .btn.primary')
+  const decided = await page.$eval('.stream-row[data-kind="plan"] .status-mark', (el) => ({
+    cls: el.className,
+    glyph: el.textContent.trim(),
+    spinner: !!el.querySelector('.spinner'),
+  }))
+  const okDecided = decided.cls.includes('ok') && decided.glyph === '✓' && !decided.spinner
+  console.log(`phase16 approving settles the mark at once ${JSON.stringify(decided)} ${okDecided ? 'PASS' : 'FAIL'}`)
+  if (!okDecided) fails++
+  // Mid-turn, with only the first beats in: the prose each reported step
+  // carried is already settled — plan_update is hidden on the wire, so the
+  // trail frame is the only thing that can close it, and without that a
+  // step's row would spin until the turn ended.
+  await page.waitForFunction(
+    () => document.querySelectorAll('.stream-row[data-kind="todo"]').length >= 2,
+    { timeout: 8000 },
+  )
+  const liveProse = await page.$$eval(
+    '.stream-row[data-kind="assistant"] .status-mark.running',
+    (els) => els.length,
+  )
+  const okSettled = liveProse === 0
+  console.log(`phase16 a reported step's prose stops spinning ${JSON.stringify({ liveProse })} ${okSettled ? 'PASS' : 'FAIL'}`)
+  if (!okSettled) fails++
+
+  await page.waitForFunction(
+    () => document.querySelectorAll('.stream-row[data-kind="todo"]').length >= 3,
+    { timeout: 8000 },
+  )
+  await page.waitForTimeout(250)
+  const trail = await page.$$eval('.stream-row[data-kind="todo"]', (rows) =>
+    rows.map((row) =>
+      [...row.querySelectorAll('.todo-item')]
+        .map((item) => {
+          const mark = item.querySelector('.todo-box')?.textContent.trim() ?? ''
+          const text = item.querySelector('.todo-text')?.textContent.trim() ?? ''
+          return `${mark}|${text}`
+        })
+        .join('\n'),
+    ),
+  )
+  // Three prints for four plan_update calls: a list at each step's start
+  // and one for the finished plan — the step-1 completion moves a single
+  // box and is folded (the next start's list shows it).
+  const okTrail =
+    trail.length === 3 &&
+    trail[0] === planTodo(['*', '']) &&
+    trail[1] === planTodo(['✓', '*']) &&
+    trail[2] === planTodo(['✓', '✓'])
+  console.log(`phase16 a step start or the finished plan prints the list ${JSON.stringify(trail)} ${okTrail ? 'PASS' : 'FAIL'}`)
+  if (!okTrail) fails++
+
+  // A todo row draws no gutter mark: the boxes inside it carry each step's
+  // status, so a mark beside them would be a second reading — one that
+  // contradicts them, since the block itself is a settled print.  The row
+  // keeps the indent, so the checklist lines up with the prose above.
+  const todoRow = await page.$eval('.stream-row[data-kind="todo"]', (row) => {
+    const list = row.querySelector('.todo-list').getBoundingClientRect()
+    // A marked output row to measure the indent against — the plan line
+    // above sits at the same gutter.
+    const heading = document
+      .querySelector('.stream-row[data-kind="plan"] .tool-call-heading')
+      .getBoundingClientRect()
+    return {
+      marks: row.querySelectorAll(':scope > .status-mark').length,
+      left: Math.round(list.left),
+      outputLeft: Math.round(heading.left),
+    }
+  })
+  const okTodoMark = todoRow.marks === 0 && todoRow.left === todoRow.outputLeft
+  console.log(`phase16 the todo row draws no mark, keeps the indent ${JSON.stringify(todoRow)} ${okTodoMark ? 'PASS' : 'FAIL'}`)
+  if (!okTodoMark) fails++
+
+  const docAfter = await page.$eval('.editor-doc', (el) => el.textContent)
+  const okFrozen = docAfter === frozen
+  console.log(`phase16 the document stays as proposed ${okFrozen ? 'PASS' : 'FAIL'}`)
+  if (!okFrozen) fails++
+
+  // A document tab holds frame content, never a disk copy — it must not
+  // come back from the tab store.
+  const stored = await page.evaluate(() => localStorage.getItem('tod.tabs') ?? '')
+  const okStored = !stored.includes('plan:')
+  console.log(`phase16 a document tab never persists ${JSON.stringify(stored)} ${okStored ? 'PASS' : 'FAIL'}`)
+  if (!okStored) fails++
+
+  // P16e: denying settles the mark the other way — ✗ — and the approved
+  // plan's own ✓ stays its row's reading.
+  await page.fill('textarea.input-bar-textarea', 'plan the refactor again')
+  await page.click('button:has-text("Send")')
+  await page.waitForFunction(
+    () => document.querySelectorAll('.stream-row[data-kind="plan"]').length >= 2,
+    { timeout: 8000 },
+  )
+  await page.waitForTimeout(250)
+  // Deny opens the feedback box; submitting it (empty = a plain reject) is
+  // the decision itself.
+  await page.click('.plan-ask .btn.danger')
+  await page.waitForSelector('.plan-ask-feedback', { timeout: 4000 })
+  await page.click('.plan-ask-feedback .btn.danger')
+  await page.waitForTimeout(250)
+  const marks = await page.$$eval('.stream-row[data-kind="plan"] .status-mark', (els) =>
+    els.map((el) => ({ cls: el.className, glyph: el.textContent.trim() })),
+  )
+  const okDenied =
+    marks.length === 2 &&
+    marks[0].cls.includes('ok') &&
+    marks[0].glyph === '✓' &&
+    marks[1].cls.includes('error') &&
+    marks[1].glyph === '✗'
+  console.log(`phase16 denying settles the mark as failed ${JSON.stringify(marks)} ${okDenied ? 'PASS' : 'FAIL'}`)
+  if (!okDenied) fails++
+
+  // P16f: a cancelled turn settles the plan it was carrying as failed, the
+  // way it settles an abandoned tool call — the ask is gone, and the plan
+  // cannot be resumed — while the plans answered earlier keep their own
+  // readings.
+  await page.fill('textarea.input-bar-textarea', 'plan one more time')
+  await page.click('button:has-text("Send")')
+  await page.waitForFunction(
+    () => document.querySelectorAll('.stream-row[data-kind="plan"]').length >= 3,
+    { timeout: 8000 },
+  )
+  await page.click('.plan-ask .btn.primary')
+  await page.click('button:has-text("Cancel")')
+  await page.waitForTimeout(400)
+  const cancelled = await page.$$eval(
+    '.stream-row[data-kind="plan"] .status-mark',
+    (els) => els.map((el) => ({ cls: el.className, glyph: el.textContent.trim() })),
+  )
+  const okCancelledPlan =
+    cancelled.length === 3 &&
+    cancelled[2].cls.includes('error') &&
+    cancelled[2].glyph === '✗' &&
+    cancelled.every((m) => !m.cls.includes('running'))
+  console.log(`phase16 cancelling settles the plan as failed ${JSON.stringify(cancelled)} ${okCancelledPlan ? 'PASS' : 'FAIL'}`)
+  if (!okCancelledPlan) fails++
+}
+
