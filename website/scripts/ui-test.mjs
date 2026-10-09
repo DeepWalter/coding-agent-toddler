@@ -675,7 +675,9 @@ await page.waitForTimeout(700)
 
 // P6b: the gate is a wait state — the tool's mark is the only live one, and
 // the answer that asked for it has already settled.  Before the reducer
-// closed the answer block on tool_call_start, this row span forever.
+// closed the answer block on tool_call_start, this row span forever.  The
+// card is a wait state too: it holds what the call was told to do, and no
+// result row until there is a result to read.
 await page.fill('textarea.input-bar-textarea', 'gate: list files')
 await page.click('button:has-text("Send")')
 await page.waitForSelector('.pause-prompt', { timeout: 15000 })
@@ -691,6 +693,10 @@ await page.waitForSelector('.pause-prompt', { timeout: 15000 })
       answerSettled: has(rows[rows.length - 2], '.status-mark.ok'),
       // the mark lives in the gutter: nothing renders one inside a card
       inline: document.querySelectorAll('.tool-card .status-mark').length,
+      // the command is on screen, "waiting for result…" is not: no result
+      // row until one lands
+      inRows: last?.querySelectorAll('.tool-card-row[data-row="in"]').length ?? -1,
+      outRows: last?.querySelectorAll('.tool-card-row[data-row="out"]').length ?? -1,
     }
   })
   const ok =
@@ -698,7 +704,9 @@ await page.waitForSelector('.pause-prompt', { timeout: 15000 })
     live.lastKind === 'tool' &&
     live.toolLive &&
     live.answerSettled &&
-    live.inline === 0
+    live.inline === 0 &&
+    live.inRows === 1 &&
+    live.outRows === 0
   console.log(`phase6 gate holds one live mark, its answer settled ${JSON.stringify(live)} ${ok ? 'PASS' : 'FAIL'}`)
   if (!ok) fails++
 }

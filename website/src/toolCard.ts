@@ -1,5 +1,5 @@
 import { blockStatus } from './blockStatus'
-import type { Block, TabEntry } from './types'
+import type { Block, TabEntry, ToolResult } from './types'
 import { basename } from './utils'
 
 type ToolBlock = Extract<Block, { kind: 'tool' }>
@@ -95,8 +95,6 @@ export interface ToolCardRow {
   language: string | null
   /** Offer the copy button — the command, and nothing else. */
   copy?: boolean
-  /** The text describes the call rather than its output. */
-  note?: boolean
   /** The text is a failure, which tints it. */
   error?: boolean
 }
@@ -118,7 +116,8 @@ export interface ToolCard {
     abs: string
     opens: boolean
   } | null
-  /** Top to bottom: what ran, then what came back. */
+  /** Top to bottom: what ran, then what came back — the OUT row joining
+   *  the box only once it has. */
   rows: ToolCardRow[]
 }
 
@@ -129,23 +128,15 @@ function param(block: ToolBlock, key: string): string {
   return typeof value === 'string' ? value : ''
 }
 
-/** What the OUT row reads, for any call.
+/** What the OUT row reads, for a call that has a result.
  *
- *  Read through the block's status rather than `result.success`: a turn
- *  cancelled before the call ran leaves `result` null, and a call still
- *  running has none at all.  Every state but `ok` and `error` is a single
- *  line, so those never clip and never open. */
-function outputText(block: ToolBlock): string {
-  switch (blockStatus(block)) {
-    case 'running':
-      return 'waiting for result…'
-    case 'cancelled':
-      return 'cancelled before execution'
-    case 'error':
-      return block.result?.error || block.result?.output || 'tool failed'
-    default:
-      return block.result?.output || '(no output)'
-  }
+ *  There is no placeholder for the wait: the row is only built when
+ *  something came back (below), so this never speaks for a call still
+ *  running or one the turn abandoned.  A failure reads its reason where the
+ *  tool left one, and says only that it failed when it left none. */
+function outputText(result: ToolResult): string {
+  if (!result.success) return result.error || result.output || 'tool failed'
+  return result.output || '(no output)'
 }
 
 /** The card a call reads as: its title, and the rows under it. */
@@ -166,16 +157,19 @@ export function toolCard(block: ToolBlock): ToolCard {
       copy: spec.input.copy,
     })
   }
-  if (!spec?.titleOnly) {
+  // The result row is the result, so it appears with one: a call still
+  // running holds what it was told to do and nothing else — the gutter's
+  // spinner is what says it is live — and a call the turn abandoned never
+  // produced a result for a row to hold.  Its ✗ and the fold line above
+  // already say how that ended.
+  const result = block.result
+  if (!spec?.titleOnly && result) {
     rows.push({
       side: 'out',
       label: 'OUT',
-      text: outputText(block),
+      text: outputText(result),
       language: null,
-      // "waiting for result…" and "cancelled before execution" are notes
-      // about the call rather than its output, and read as such.
-      note: !block.result,
-      error: blockStatus(block) === 'error',
+      error: !result.success,
     })
   }
   const named = spec?.path ? param(block, spec.path.param) : ''

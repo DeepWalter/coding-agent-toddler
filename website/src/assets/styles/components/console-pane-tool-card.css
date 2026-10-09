@@ -128,13 +128,6 @@
   color: var(--success);
 }
 
-/* "waiting for result…" and "cancelled before execution" describe the call,
-   not its output. */
-.tool-card-text.note {
-  color: var(--text-subtle);
-  font-style: italic;
-}
-
 .tool-card-text.error {
   color: var(--error);
 }

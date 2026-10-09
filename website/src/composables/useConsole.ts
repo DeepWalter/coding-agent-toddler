@@ -112,9 +112,9 @@ function lastOpenThinking(
 function closeOpenTools(s: ConsoleState): void {
   // A turn ending mid-call (cancel, fatal error, or the loop stopping
   // after a tool request without an end frame) never emits a
-  // tool_call_end — close any open cards so they stop spinning
-  // "waiting for result…" and settle as failed instead (blockStatus reads
-  // a closed call with no result as one that never happened).
+  // tool_call_end — close any open cards so their spinners stop and they
+  // settle as failed instead (blockStatus reads a closed call with no
+  // result as one that never happened).
   for (const b of s.blocks) {
     if (b.kind === 'tool' && b.open) b.open = false
   }

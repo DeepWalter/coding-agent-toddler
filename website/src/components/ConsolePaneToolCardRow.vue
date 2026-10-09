@@ -86,7 +86,7 @@ async function copyText() {
     <pre
       ref="textEl"
       class="tool-card-text"
-      :class="{ note: row.note, error: row.error }"
+      :class="{ error: row.error }"
     >{{ row.text }}</pre>
     <!-- Only a row that carries something worth copying offers it: the
          command, never the output. -->
