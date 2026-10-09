@@ -1,10 +1,12 @@
 # Known bugs
 
-Verified defects in the context / session layer.  Both were found and
-confirmed with scratch probes on 2026-09-05 and are **unfixed**.
+Verified defects in the context / session layer.  Each was found and
+confirmed with a scratch probe and is **unfixed** — bugs 1–2 on 2026-09-05,
+bug 3 on 2026-10-09.
 
 1. [Reload after compaction resurrects folded messages](#bug-1-reload-after-compaction-resurrects-folded-messages)
 2. [Plan-mode system prompt never reaches the model](#bug-2-plan-mode-system-prompt-never-reaches-the-model)
+3. [Plan exploration history stays in the conversation](#bug-3-plan-exploration-history-stays-in-the-conversation)
 
 ---
 
@@ -176,6 +178,112 @@ Decide where mode instructions belong per phase and wire them:
   dead plan instruction blocks and hook.
 
 Not yet implemented.
+
+---
+
+## Bug 3 — Plan exploration history stays in the conversation
+
+### Summary
+
+The planner's exploration phase runs on the session's own
+`ContextManager`, so everything it produces — the research prose and every
+read/grep/shell call with its result — is appended to the conversation
+buffer and persisted exactly like an ordinary turn's messages.  The
+conversation only ever needs the *outcome* of that exploration: the
+approved plan, which already enters history as a user message
+(`Plan.format_for_prompt()`), and at most a short research summary.  The
+raw trail is scratch work that is re-sent to the model on every later
+call, replayed as transcript in the UI, and summarised into the
+compaction chain.  (The proposal itself is the mirror case: its prompt and
+JSON are a side call and are never stored — only the exploration that fed
+it leaks into the conversation.)
+
+### Intended invariant
+
+After a plan turn the conversation holds the plan (per bug 2's note: as a
+user-role message) and, if wanted, a summary of the research — not the
+research itself.
+
+### Verified reproduction (2026-10-09)
+
+Scratch session, dummy client (`TEST=cli`), one 2-step plan turn on a
+temp session dir (`process_turn("plan", force_plan=True)`, approve on
+`PlanProposed`).  The `messages` table afterwards — 13 rows — carries the
+exploration as ordinary messages:
+
+| seq | role | content |
+|---|---|---|
+| 1 | system | the system prompt |
+| 2 | user | `plan` (the exploring `prepare_turn`) |
+| 3 | assistant | `Let me put together a plan for this request.` (the exploration output) |
+| 4 | user | `I have reviewed and approved the following plan…` (the plan) |
+| 5–12 | assistant / tool | the `plan_update` calls and their results |
+| 13 | assistant | the closing summary |
+
+Nothing in the plan lifecycle drops rows 2–3 afterwards: no phase-boundary
+step, rejection, approval, or execution start removes or folds them —
+only ordinary compaction (at the window threshold) can, and then it folds
+them into the summary chain like any old turn.
+
+### Root cause
+
+- **One context per session.**  `AgentLoop(context=self._ctx)`
+  (`toddler/session/manager.py:984-991`) and
+  `Planner(context=self._ctx, agent_loop=self.agent)`
+  (`manager.py:1002-1008`) share the session's single
+  `ContextManager`, and the exploration is just an agent turn against it:
+  `self._agent_loop.run(explore_input, …)`
+  (`toddler/agent/planner.py:519-526`).
+- **Persistence is phase-scoped.**  `process_turn` saves on every
+  `AgentFinished` the planner passes through
+  (`manager.py:399-404` → `_maybe_persist_phase`, `manager.py:653-673`),
+  and `save()` writes `ctx.new_messages` wholesale
+  (`manager.py:911-930`) — so the exploring phase is persisted the moment
+  it ends, before the proposal is even generated.
+- **Nothing marks the stretch as scratch.**  The exploring messages are
+  indistinguishable from an ordinary turn's, and no step at proposal,
+  rejection, or approval time trims them.
+
+### Consequences
+
+- Every later LLM call in the conversation re-sends the full research
+  trail; a plan turn's context cost is exploration + plan + execution, and
+  the exploration part recurs forever.
+- The trail replays in the web transcript — a reload rebuilds it from the
+  stored messages as ordinary entries, as if the user had asked for the
+  research — and it reads that way to the model too, which sees the
+  research as its own prior conversation.
+- A feedback rejection stacks another trail: the planner appends the
+  feedback message itself (`planner.py:567`) and re-explores, so each
+  round adds a request, a full exploration, and another proposal.
+- Compaction then spends summariser calls and summary budget
+  re-compressing scratch work that was never wanted in the conversation.
+- The one consumer that *does* need the trail — `_generate_plan`'s
+  `research_context`, read from `self._ctx.messages`
+  (`planner.py:718-731`) — reads it in memory before the proposal, so the
+  persistence hop is not required for it.
+
+### Why tests didn't catch it
+
+No test asserts what a finished plan turn leaves in storage.  The two
+tests that read `session_mgr.context.messages`
+(`tests/test_plan_mode.py:1002`, `:1045`) check only that the feedback
+text reached the buffer — the exploring trail's presence is their
+precondition, not their assertion.  The web/plan suites assert frames and
+the `hello.plan` snapshot, never the stored messages.
+
+### Fix direction
+
+Run exploration against a scratch context instead of the session's own,
+and hand the conversation only the outcome: the approved plan prompt plus,
+if wanted, a short research summary composed at proposal time.  The
+`AgentLoop` / `ContextManager` split already allows a second context
+seeded with the same system prompt; `_generate_plan` already collects the
+research text and is the natural place to also produce its summary.
+Constraints: the feedback loop's message must reach the *re-exploration*
+(`planner.py:567`), the approval prompt and the `plan_update` trail must
+stay in the real context, and the web transcript/`hello` replay should
+stop replaying the trail.  Not yet implemented.
 
 ---
 
