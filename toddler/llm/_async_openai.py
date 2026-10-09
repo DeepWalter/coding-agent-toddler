@@ -1,8 +1,9 @@
 """AsyncOpenAI import helper — conditionally provides real or dummy client.
 
 When ``TEST=cli``, returns a :class:`DummyAsyncOpenAI` that simulates
-``chat.completions.create`` with ``stream=True`` using canned responses.
-Otherwise returns the real ``openai.AsyncOpenAI``.
+``chat.completions.create`` with canned responses — streamed when a stream
+is asked for, folded into one complete response otherwise.  Otherwise
+returns the real ``openai.AsyncOpenAI``.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
@@ -25,6 +27,58 @@ _THIS_FILE = Path(__file__).resolve()
 _THIS_CONTENT = _THIS_FILE.read_text(encoding="utf-8")
 _PROJECT_ROOT = _THIS_FILE.parents[2]
 _README_FILE = _PROJECT_ROOT / "README.md"
+
+# ---------------------------------------------------------------------------
+# Plan-workflow markers — the canned plan responses key on the prompts the
+# plan workflow sends, not on a typed keyword: the proposal arrives as
+# ``plan_proposal_prompt()``'s text, execution opens with
+# ``Plan.format_for_prompt()``'s text, and progress arrives as the
+# ``plan_update`` tool's own output (the ``"Step <id> → <status>."`` line
+# ``PlanUpdateTool.execute`` returns).  Each marker names its producer, so
+# a prompt rewording points here.
+# ---------------------------------------------------------------------------
+
+_PLAN_PROPOSAL_MARKER = "propose a concrete execution plan"
+_PLAN_APPROVED_MARKER = "I have reviewed and approved the following plan"
+
+# One step line of the approved-plan text, e.g. ``  step-1: <description>``.
+_PLAN_STEP_LINE_RE = re.compile(r"^\s*(step-\d+):", re.MULTILINE)
+
+# A ``plan_update`` tool result, e.g. ``Step step-1 → completed.``
+_PLAN_UPDATE_RE = re.compile(
+    r"^Step (?P<step_id>\S+) → (?P<status>\w+)\.$"
+)
+
+# The canned plan the dummy proposes — two steps, so the execution phase
+# shows a step starting, completing and a closing summary.  Step ids are
+# position-derived (``step-1``, ``step-2``) by ``Plan.from_json``, but the
+# canned execution beats read them back from the approved-plan text rather
+# than assume them.
+_PLAN_PROPOSAL = {
+    "title": "Dummy plan — two canned steps",
+    "summary": (
+        "A canned two-step plan the dummy proposes so the plan workflow "
+        "can be exercised end to end: approval, step updates, summary."
+    ),
+    "steps": [
+        {
+            "description": "Run dummy step 1 and report its output",
+            "tool_calls_expected": ["plan_update"],
+            "files_affected": [],
+        },
+        {
+            "description": "Run dummy step 2 and report its output",
+            "tool_calls_expected": ["plan_update"],
+            "files_affected": [],
+        },
+    ],
+    "rationale": (
+        "Two steps are enough to show a step starting, completing and "
+        "the closing summary that follows the last one."
+    ),
+    "risks": ["None — every call this plan makes is canned."],
+    "estimated_files_touched": 0,
+}
 
 # ---------------------------------------------------------------------------
 # Guard: which AsyncOpenAI to export
@@ -74,9 +128,18 @@ if _TEST == "cli":
                 ):
                     """Simulate ``chat.completions.create``.
 
-                    Only ``stream=True`` is implemented.  The canned
-                    response is chosen by inspecting the last message:
+                    The canned response is chosen by inspecting the last
+                    message.  ``stream=True`` returns the chunk iterable;
+                    ``stream=False`` folds that same chunk list into one
+                    complete response — the plan workflow's exploration
+                    and proposal calls are non-streaming, so both modes
+                    answer from the one dispatch.
 
+                    * ``"plan"`` — stream a text intro and finish,
+                      ending the plan workflow's exploration phase so the
+                      proposal comes next.
+                    * ``"reason"`` — stream reasoning content before the
+                      answer text.
                     * ``"text"`` — stream the content of *this* file.
                     * ``"read"`` — emit a ``read_file`` tool call that reads
                       the repo's ``README.md``.
@@ -89,6 +152,14 @@ if _TEST == "cli":
                     * ``"write"`` — emit a ``write_file`` tool call that
                       writes this file's content to
                       ``~/.toddler/test_write.py``.
+                    * the plan proposal prompt — answer with the canned
+                      two-step plan JSON.
+                    * the approved-plan execution prompt — open the plan
+                      by starting its first step.
+                    * a ``plan_update`` tool result — answer with the
+                      canned plan's next beat: the step's marked text
+                      plus its completion call, the next step's start, or
+                      the closing summary.
                     * ``role == "tool"`` — stream a short acknowledgment and
                       finish.
 
@@ -96,11 +167,9 @@ if _TEST == "cli":
                     format) are accepted and ignored — the canned responses
                     do not vary with them.
                     """
-                    if not stream:
-                        raise NotImplementedError(
-                            "DummyAsyncOpenAI only supports stream=True"
-                        )
-                    return _DummyStream(messages)
+                    if stream:
+                        return _DummyStream(messages)
+                    return _DummyStream.response(messages)
 
 
     # ======================================================================
@@ -108,7 +177,8 @@ if _TEST == "cli":
     # ======================================================================
 
     class _DummyStream:
-        """Async iterable that yields simulated OpenAI streaming chunks.
+        """Async iterable that yields simulated OpenAI streaming chunks,
+        plus the fold that turns its chunks into a complete response.
 
         All chunk materialization happens synchronously in ``__aiter__``;
         only the per-chunk delay lives in ``__anext__``.
@@ -137,15 +207,28 @@ if _TEST == "cli":
         # -- dispatch -------------------------------------------------------
 
         def _build_chunks(self):
-            """Inspect the last message and return the matching chunk list."""
+            """Inspect the last message and return the matching chunk list.
+
+            The plan branches come first: their markers are structural
+            (the prompts the plan workflow sends), so they hold whatever
+            keyword the turn was started with — and unlike a keyword
+            match they also fire on the non-streaming calls the workflow
+            makes.
+            """
             last_msg = self._messages[-1] if self._messages else {}
             role = last_msg.get("role", "")
-            content = last_msg.get("content", "")
+            content = last_msg.get("content") or ""
 
             if role == "tool":
                 return self._chunks_for_tool_result(last_msg)
+            elif _PLAN_PROPOSAL_MARKER in content:
+                return self._chunks_for_plan_proposal()
+            elif _PLAN_APPROVED_MARKER in content:
+                return self._chunks_for_plan_start()
             elif content == "reason":
                 return self._chunks_for_reasoning()
+            elif content == "plan":
+                return self._chunks_for_plan()
             elif content == "text":
                 return self._chunks_for_text()
             elif content == "read":
@@ -347,10 +430,172 @@ if _TEST == "cli":
             ]
             return _DummyStream._materialize(blocks)
 
+        # -- canned plan workflow -------------------------------------------
+
         @staticmethod
-        def _chunks_for_tool_result(last_msg: dict):
-            """Stream a short acknowledgment after a tool result."""
-            tool_content = last_msg.get("content", "")
+        def _chunks_for_plan():
+            """Stream a text intro and finish — the plan workflow's
+            exploration phase.
+
+            The stop is what hands control to the proposal: a tool call
+            here would be answered by the generic acknowledgment, which
+            reads like the turn ending with nothing planned.
+            """
+            blocks: list[tuple[str, str | None]] = [
+                (
+                    "text",
+                    "Let me put together a plan for this request.\n\n",
+                ),
+                ("finish", "stop"),
+            ]
+            return _DummyStream._materialize(blocks)
+
+        @staticmethod
+        def _chunks_for_plan_proposal():
+            """Answer the plan proposal prompt with the canned plan JSON.
+
+            The proposal call is non-streaming, so these blocks normally
+            reach the caller through :meth:`response` rather than
+            :meth:`__aiter__` — served from the one dispatch either way.
+            """
+            blocks: list[tuple[str, str | None]] = [
+                (
+                    "text",
+                    json.dumps(_PLAN_PROPOSAL, ensure_ascii=False, indent=2),
+                ),
+                ("finish", "stop"),
+            ]
+            return _DummyStream._materialize(blocks)
+
+        def _chunks_for_plan_start(self):
+            """Open the approved plan by starting its first step."""
+            step_ids = self._plan_step_ids()
+            if not step_ids:
+                blocks: list[tuple[str, str | None]] = [
+                    (
+                        "text",
+                        "[DummyAsyncOpenAI] The approved-plan prompt "
+                        "carried no step lines.\n",
+                    ),
+                    ("finish", "stop"),
+                ]
+                return _DummyStream._materialize(blocks)
+            return self._chunks_for_plan_call(step_ids[0], "in_progress")
+
+        def _plan_step_ids(self) -> list[str]:
+            """Return the approved plan's step ids, in plan order.
+
+            Parsed from the approved-plan message rather than assumed:
+            the canned execution beats then follow whatever plan the
+            session actually approved.
+            """
+            for msg in reversed(self._messages):
+                content = msg.get("content") or ""
+                if (
+                    msg.get("role") == "user"
+                    and _PLAN_APPROVED_MARKER in content
+                ):
+                    return _PLAN_STEP_LINE_RE.findall(content)
+            return []
+
+        def _chunks_for_plan_update(self, step_id: str, status: str):
+            """Return the canned plan's next beat after a ``plan_update``.
+
+            ``in_progress`` answers with the step's marked text plus its
+            completion call — the leading ``[step <id>]`` names the step
+            the update targets, per the tool's usage note.  A
+            ``completed`` answers with the next step's start, or, once
+            the last step is done, the closing summary.  ``None`` when
+            the line names a step the approved plan does not have, so the
+            caller falls back to the generic acknowledgment.
+            """
+            step_ids = self._plan_step_ids()
+            if step_id not in step_ids:
+                return None
+
+            if status == "in_progress":
+                index = step_ids.index(step_id) + 1
+                # The step's text and its completion share one response:
+                # text alone would end the execution turn, and the closing
+                # summary still follows the completion's tool result, so
+                # the last snapshot lands before the summary either way.
+                blocks: list[tuple[str, str | None]] = [
+                    (
+                        "text",
+                        f"[{step_id}] Dummy step {index} work output — "
+                        "the canned text for this step.\n\n",
+                    ),
+                    ("tool_name", "plan_update"),
+                    (
+                        "tool_args",
+                        self._plan_call_args(step_id, "completed"),
+                    ),
+                    ("finish", "tool_calls"),
+                ]
+                return _DummyStream._materialize(blocks)
+
+            if status == "completed":
+                remaining = step_ids[step_ids.index(step_id) + 1:]
+                if remaining:
+                    return self._chunks_for_plan_call(
+                        remaining[0], "in_progress",
+                    )
+                blocks = [
+                    (
+                        "text",
+                        "Both dummy plan steps completed — the approved "
+                        "plan ran end to end. Is there anything else you "
+                        "need?\n",
+                    ),
+                    ("finish", "stop"),
+                ]
+                return _DummyStream._materialize(blocks)
+
+            return None
+
+        @staticmethod
+        def _chunks_for_plan_call(step_id: str, status: str):
+            """Emit a bare ``plan_update`` call — no text alongside it."""
+            blocks: list[tuple[str, str | None]] = [
+                ("tool_name", "plan_update"),
+                ("tool_args", _DummyStream._plan_call_args(step_id, status)),
+                ("finish", "tool_calls"),
+            ]
+            return _DummyStream._materialize(blocks)
+
+        @staticmethod
+        def _plan_call_args(step_id: str, status: str) -> str:
+            """Serialize ``plan_update`` arguments for *step_id* / *status*.
+
+            The required call-description param states the update itself,
+            as the tool's usage note asks.
+            """
+            return json.dumps(
+                {
+                    "description": f"mark {step_id} {status}",
+                    "step_id": step_id,
+                    "status": status,
+                },
+                ensure_ascii=False,
+            )
+
+        # -- tool results and fallback --------------------------------------
+
+        def _chunks_for_tool_result(self, last_msg: dict):
+            """Answer a tool result.
+
+            A ``plan_update`` result drives the canned plan's next beat
+            (:meth:`_chunks_for_plan_update`); every other result gets a
+            short acknowledgment.
+            """
+            tool_content = last_msg.get("content", "") or ""
+            match = _PLAN_UPDATE_RE.match(tool_content)
+            if match is not None:
+                plan_chunks = self._chunks_for_plan_update(
+                    match.group("step_id"), match.group("status"),
+                )
+                if plan_chunks is not None:
+                    return plan_chunks
             preview = (
                 tool_content[:80] + "..."
                 if len(tool_content) > 80
@@ -451,6 +696,83 @@ if _TEST == "cli":
                     chunks.append(SimpleNamespace(choices=[choice], usage=usage))
 
             return chunks
+
+        @classmethod
+        def response(cls, messages: list[dict]) -> SimpleNamespace:
+            """Fold the canned chunks for *messages* into one complete
+            response object — the shape a non-streaming ``create`` returns.
+
+            Runs the same dispatch the streaming path uses and reverses
+            each chunk delta — text concatenates, tool-call fragments
+            merge by index, the finish chunk supplies the reason and
+            usage — so a canned response never forks per mode.  The
+            result mirrors what the OpenAI SDK returns, which is what the
+            provider's non-streaming path reads.
+            """
+            content_parts: list[str] = []
+            reasoning_parts: list[str] = []
+            tool_calls: list[dict] = []
+            finish_reason = "stop"
+            usage = None
+
+            for chunk in cls(messages)._build_chunks():
+                choice = chunk.choices[0]
+                delta = choice.delta
+
+                content_parts.append(delta.content or "")
+                reasoning_parts.append(
+                    getattr(delta, "reasoning_content", None) or ""
+                )
+                for tc in delta.tool_calls or []:
+                    cls._merge_tool_delta(tool_calls, tc)
+
+                if choice.finish_reason is not None:
+                    finish_reason = choice.finish_reason
+                    usage = chunk.usage
+
+            message = SimpleNamespace(
+                content="".join(content_parts) or None,
+                reasoning_content="".join(reasoning_parts) or None,
+                tool_calls=[
+                    SimpleNamespace(
+                        id=tc["id"],
+                        type="function",
+                        function=SimpleNamespace(
+                            name=tc["name"], arguments=tc["arguments"],
+                        ),
+                    )
+                    for tc in tool_calls
+                ] or None,
+            )
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=message, finish_reason=finish_reason,
+                    )
+                ],
+                usage=usage,
+            )
+
+        @staticmethod
+        def _merge_tool_delta(slots: list[dict], tc) -> None:
+            """Merge one streaming tool-call fragment into *slots*.
+
+            A call's fragments arrive split by index and field — the id
+            and the name only in the first fragment, the argument JSON
+            split across later ones — so each fragment fills its slot
+            and the fold reads complete calls back.
+            """
+            while len(slots) <= tc.index:
+                slots.append({"id": "", "name": None, "arguments": ""})
+            slot = slots[tc.index]
+            if tc.id:
+                slot["id"] = tc.id
+            if tc.function is None:
+                return
+            if tc.function.name:
+                slot["name"] = tc.function.name
+            if tc.function.arguments:
+                slot["arguments"] += tc.function.arguments
 
 else:
     from openai import AsyncOpenAI  # noqa: F401
