@@ -98,34 +98,35 @@ class BaseHandler(ABC):
 class _PartialTool:
     """Bookkeeping for one streaming tool call.
 
-    ``arguments`` is the raw fragment text, concatenated in arrival order
-    and parsed once — by :func:`_parse_arguments` — when a message or a
-    cancel snapshot is assembled.
+    ``arguments`` is the raw fragment text, concatenated in arrival order;
+    :attr:`tool_input` parses it once, lazily, when a message or a cancel
+    snapshot is assembled.
     """
 
     tool_id: str
     tool_name: str
     arguments: str = ""
 
+    @property
+    def tool_input(self) -> dict[str, Any]:
+        """The arguments as a dict, parsed at read time.
 
-def _parse_arguments(raw: str) -> dict[str, Any]:
-    """Parse an accumulated tool-argument string, exactly once.
-
-    Returns ``{}`` for empty input, for JSON that never became valid (the
-    model produced malformed arguments — logged the same way the old
-    parser logged it), and for non-object JSON: a scalar argument must
-    never blow up the block assembly.
-    """
-    if not raw:
-        return {}
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        logger.debug(
-            "Tool-call arguments never became valid JSON: %s", raw[:200],
-        )
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
+        ``{}`` for empty input, for JSON that never became valid (logged
+        the same way the old parser logged it — a cancelled call may be
+        cut off mid-document), and for non-object JSON: a scalar argument
+        must never blow up the block assembly.
+        """
+        if not self.arguments:
+            return {}
+        try:
+            parsed = json.loads(self.arguments)
+        except json.JSONDecodeError:
+            logger.debug(
+                "Tool-call arguments never became valid JSON: %s",
+                self.arguments[:200],
+            )
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
 
 
 # =============================================================================
@@ -233,9 +234,9 @@ class StreamHandler(BaseHandler):
 
         Shared by the completed-message assembly and the partial-content
         extraction on cancel — both expose the same content, just at
-        different points in the stream.  Tool arguments accumulated so far
-        are parsed here, once: a cancelled call may carry a truncated
-        buffer, which parses to nothing rather than raising.
+        different points in the stream.  Each call's buffered arguments
+        are read through :attr:`_PartialTool.tool_input`, which parses
+        them once and never raises on a truncated buffer.
 
         Reasoning comes first, matching both the model's emission order
         and the ``Message.blocks`` invariant.  Because this path serves
@@ -253,12 +254,11 @@ class StreamHandler(BaseHandler):
 
         for tool_id in self._tool_order:
             pt = self._tools[tool_id]
-            parsed = _parse_arguments(pt.arguments)
             blocks.append(
                 MessageBlock.tool_use_block(
                     tool_id=pt.tool_id,
                     tool_name=pt.tool_name,
-                    tool_input=parsed,
+                    tool_input=pt.tool_input,
                 )
             )
 
