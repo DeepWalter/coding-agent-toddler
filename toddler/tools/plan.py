@@ -10,12 +10,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from toddler.tools.base import (
-    CALL_DESCRIPTION_PARAM,
-    BaseTool,
-    Permission,
-    ToolResult,
-)
+from toddler.tools.base import BaseTool, Permission, ToolResult
 from toddler.tools.registry import TOOL_CATALOG
 
 if TYPE_CHECKING:
@@ -65,8 +60,8 @@ PLAN_UPDATE_STATUSES = tuple(
 # PlanStepStatus so they stay in sync.  The final-step carve-out (call
 # alone, no text alongside) reconciles the per-step confirmation with
 # the renderer needing the closing snapshot before the summary.  The
-# required call-description param states the update itself; the
-# confirmation stays prose alongside the call, so the carve-out holds.
+# call carries no call-description param (see PlanUpdateTool below), so
+# the confirmation prose alongside it is what states the update.
 PLAN_UPDATE_USAGE = (
     f"Call with status='{PlanStepStatus.IN_PROGRESS.value}' immediately "
     f"before starting a step and status='{PlanStepStatus.COMPLETED.value}' "
@@ -74,9 +69,7 @@ PLAN_UPDATE_USAGE = (
     "marking the final step completed: call plan_update alone in its own "
     "response with no text alongside it, and give the closing summary "
     "once its tool result returns. "
-    "Statuses: " + ", ".join(PLAN_UPDATE_STATUSES) + ". "
-    f"The call's ``{CALL_DESCRIPTION_PARAM}`` names the step and the "
-    "status it records, e.g. \"mark step 2 (add the parser) completed\"."
+    "Statuses: " + ", ".join(PLAN_UPDATE_STATUSES) + "."
 )
 
 
@@ -249,6 +242,10 @@ class PlanUpdateTool(BaseTool):
         },
         "required": ["step_id", "status"],
     }
+
+    #: ``step_id`` and ``status`` are the whole of what the call records —
+    #: no call-description param.
+    require_description_parameter = False
 
     #: Registered per plan phase by the session manager, never handed to
     #: every session like a default tool.

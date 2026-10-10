@@ -45,6 +45,9 @@ class ReadFile(BaseTool):
         "required": ["file_path"],
     }
 
+    #: The file it names is what the call does — no call-description param.
+    require_description_parameter = False
+
     @property
     def permission(self) -> Permission:
         return Permission.READ
@@ -145,6 +148,9 @@ class WriteFile(BaseTool):
         "required": ["file_path", "content"],
     }
 
+    #: The file it names is what the call does — no call-description param.
+    require_description_parameter = False
+
     @property
     def permission(self) -> Permission:
         return Permission.WRITE
@@ -225,6 +231,9 @@ class EditFile(BaseTool):
         },
         "required": ["file_path", "old_string", "new_string"],
     }
+
+    #: The file it names is what the call does — no call-description param.
+    require_description_parameter = False
 
     @property
     def permission(self) -> Permission:

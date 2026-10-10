@@ -80,14 +80,16 @@ class PermissionManager:
 
 
 # ---------------------------------------------------------------------------
-# Call description — the one parameter every tool call carries
+# Call description — a parameter tool schemas carry unless the tool opts out
 # ---------------------------------------------------------------------------
 
-#: Key of the parameter every tool call carries.
+#: Key of the call-description parameter — injected by
+#: :meth:`BaseTool.to_api_schema` into every schema but those of a tool
+#: that declares ``require_description_parameter = False``.
 CALL_DESCRIPTION_PARAM = "description"
 
-#: Schema for that parameter — injected into every tool's schema by
-#: :meth:`BaseTool.to_api_schema` so one wording governs every tool.
+#: Schema for that parameter — injected into the schema of every tool
+#: that carries one, so one wording governs them all.
 #: Copied per call: the dict is shared, and one downstream mutation would
 #: corrupt the wording for every tool at once.
 CALL_DESCRIPTION_PROPERTY = {
@@ -99,12 +101,27 @@ CALL_DESCRIPTION_PROPERTY = {
     ),
 }
 
-#: Appended to every tool's description at schema time, so the model is told
-#: how to fill the parameter wherever it reads a tool's schema.
+#: Appended to the description of every tool that carries the parameter, at
+#: schema time, so the model is told how to fill it wherever it reads such a
+#: tool's schema.
 CALL_DESCRIPTION_USAGE = (
     f"Always set '{CALL_DESCRIPTION_PARAM}' to a concise, precise line "
     "describing what this particular call does."
 )
+
+
+def _reject_declared_call_description(parameters: dict) -> None:
+    """Raise when a tool declares the call-description property itself.
+
+    Forbidden to every tool, opted out or not: the executor strips the
+    key before ``execute`` and the panels hide it from the arguments, so
+    a declaration that collides would silently lose its value.
+    """
+    if CALL_DESCRIPTION_PARAM in parameters.get("properties", {}):
+        raise ValueError(
+            f"A tool may not declare its own '{CALL_DESCRIPTION_PARAM}' "
+            f"property — the base class owns that key."
+        )
 
 
 def _with_call_description(parameters: dict) -> dict:
@@ -116,21 +133,34 @@ def _with_call_description(parameters: dict) -> dict:
     first so the model emits it first, which is the order the panels render
     the arguments in.
     """
-    properties = parameters.get("properties", {})
-    if CALL_DESCRIPTION_PARAM in properties:
-        raise ValueError(
-            f"A tool may not declare its own '{CALL_DESCRIPTION_PARAM}' "
-            f"property — the base class adds it to every schema."
-        )
+    _reject_declared_call_description(parameters)
     return {
         **parameters,
         "properties": {
             CALL_DESCRIPTION_PARAM: dict(CALL_DESCRIPTION_PROPERTY),
-            **properties,
+            **parameters.get("properties", {}),
         },
         # Not every tool declares a ``required`` list of its own —
         # synthesized here so the param is required on those too.
         "required": [CALL_DESCRIPTION_PARAM, *parameters.get("required", [])],
+    }
+
+
+def _without_call_description(parameters: dict) -> dict:
+    """Return *parameters* as they ship for a tool that carries no
+    call-description param.
+
+    Nothing is merged, but the copy is still owed: ``parameters`` is a
+    class attribute shared by every instance, and the provider holds on
+    to the schema it is handed.  The same levels are rebuilt as
+    :func:`_with_call_description` rebuilds, so both paths hand out
+    schemas of the same shape.
+    """
+    _reject_declared_call_description(parameters)
+    return {
+        **parameters,
+        "properties": dict(parameters.get("properties", {})),
+        "required": list(parameters.get("required", [])),
     }
 
 
@@ -189,13 +219,20 @@ class BaseTool(ABC):
     - ``execute(**kwargs)`` → ToolResult
 
     They MAY override ``permission`` (default: READ),
-    ``in_default_registry`` (default: True) and ``visible`` (default:
-    True).
+    ``in_default_registry`` (default: True), ``visible`` (default:
+    True) and ``require_description_parameter`` (default: True).
     """
 
     name: str
     description: str
     parameters: dict  # JSON Schema for the tool's input
+
+    #: Whether :meth:`to_api_schema` injects the call-description
+    #: parameter.  A tool whose arguments already say what the call does —
+    #: ``read_file`` names the file, ``plan_update`` the step and its new
+    #: status — sets this ``False``, and its schema carries the tool's own
+    #: parameters alone.
+    require_description_parameter: bool = True
 
     #: Whether :func:`~toddler.tools.create_default_registry` hands this
     #: tool to every session.  Default tools declare nothing; a tool that
@@ -252,9 +289,11 @@ class BaseTool(ABC):
 
         The call-description parameter and its usage line are merged in
         here (see :data:`CALL_DESCRIPTION_PARAM` and
-        :data:`CALL_DESCRIPTION_USAGE`), so both hold for every tool by
-        construction rather than by each tool remembering them.  The
-        tool's own ``parameters`` declaration is left untouched.
+        :data:`CALL_DESCRIPTION_USAGE`), so both hold by construction
+        rather than by each tool remembering them — unless the tool
+        declares :attr:`require_description_parameter` ``False``, and is
+        handed back the parameters it declared.  Either way the tool's own
+        ``parameters`` declaration is left untouched.
 
         Example::
 
@@ -267,14 +306,18 @@ class BaseTool(ABC):
                 }
             }
         """
+        description = self.description.rstrip()
+        if self.require_description_parameter:
+            parameters = _with_call_description(self.parameters)
+            description = f"{description} {CALL_DESCRIPTION_USAGE}"
+        else:
+            parameters = _without_call_description(self.parameters)
         return {
             "type": "function",
             "function": {
                 "name": self.name,
-                "description": (
-                    f"{self.description.rstrip()} {CALL_DESCRIPTION_USAGE}"
-                ),
-                "parameters": _with_call_description(self.parameters),
+                "description": description,
+                "parameters": parameters,
             },
         }
 
