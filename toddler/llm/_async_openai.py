@@ -565,17 +565,11 @@ if _TEST == "cli":
 
         @staticmethod
         def _plan_call_args(step_id: str, status: str) -> str:
-            """Serialize ``plan_update`` arguments for *step_id* / *status*.
-
-            The required call-description param states the update itself,
-            as the tool's usage note asks.
-            """
+            """Serialize ``plan_update`` arguments for *step_id* / *status* —
+            the call's own two params, the tool carrying no call-description
+            param."""
             return json.dumps(
-                {
-                    "description": f"mark {step_id} {status}",
-                    "step_id": step_id,
-                    "status": status,
-                },
+                {"step_id": step_id, "status": status},
                 ensure_ascii=False,
             )
 
