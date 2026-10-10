@@ -191,11 +191,11 @@ export function toolCard(block: ToolBlock): ToolCard {
     // resolve what the call named: `~` needs the home directory, and a
     // relative path starts at its cwd.  What it resolved is a whole path —
     // the hover names it, which is where a reader checks a file they cannot
-    // open — and the title prints the basename.  It arrives with the call's
-    // start frame, before the tool runs and before any permission gate, so
-    // a card in flight already names its file (and wears the external
-    // marker); a frame that carried no resolution leaves the title on the
-    // name as the call spelled it, with no click.
+    // open — and the title prints the basename.  It arrives with the
+    // execution `tool_call_start` frame, before the tool runs and before any
+    // permission gate, so a card in flight already names its file (and wears
+    // the external marker); the provider-phase skeleton has no input at all
+    // yet, so its title is the bare tool name.
     path: spec?.path && named
       ? {
           abs: block.path_abs ?? named,

@@ -173,19 +173,25 @@ export type Frame =
   | { type: 'content_delta'; text_delta: string }
   | { type: 'reasoning_delta'; text_delta: string }
   | {
+      /** The provider phase — the model began emitting a tool call.  Its
+       *  name is the whole payload: the arguments are still arriving as
+       *  fragments, none of which parses (a JSON object has no valid
+       *  prefixes), so the card this frame opens is a skeleton. */
+      type: 'tool_use_start'
+      tool_id: string
+      tool_name: string
+    }
+  | {
+      /** The execution phase — the call is about to run, input complete.
+       *  Lands before any permission gate, and resolves the call's file, so
+       *  the card names it (and marks it external) while the call waits. */
       type: 'tool_call_start'
       tool_id: string
       tool_name: string
-      partial_input: Record<string, unknown> | null
-      /** See the tool_call_end frame.  The call's own start — the agent
-       *  loop's, which already carries the whole input and lands before any
-       *  permission gate — resolves the file, so the card names it (and
-       *  marks it external) while the call still waits to run.  The
-       *  provider's "began emitting" start carries nulls. */
+      input: Record<string, unknown>
       path: string | null
       path_abs: string | null
     }
-  | { type: 'tool_call_delta'; tool_id: string; input_delta: Record<string, unknown> }
   | {
       type: 'tool_call_end'
       tool_id: string

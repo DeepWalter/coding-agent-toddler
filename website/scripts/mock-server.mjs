@@ -437,6 +437,11 @@ wss.on('connection', (ws) => {
     }
     switch (msg.cmd) {
       case 'turn': {
+        // The real server announces each call twice: the provider phase
+        // first — identity only, because no fragment of a JSON object
+        // parses — then the execution phase with the input complete.
+        const useStart = (id, name) =>
+          send({ type: 'tool_use_start', tool_id: id, tool_name: name })
         // A slash-command turn never reaches the LLM: the real server
         // diverts /compact to the slash dispatcher, which answers with a
         // broadcast hello replay (folded transcript, fresh usage) followed
@@ -537,11 +542,12 @@ wss.on('connection', (ws) => {
         }
         if (fail) {
           send({ type: 'content_delta', text_delta: 'running the failing call\n' })
+          useStart('t2', 'shell')
           send({
             type: 'tool_call_start',
             tool_id: 't2',
             tool_name: 'shell',
-            partial_input: { description: 'run the failing command', command: 'false' },
+            input: { description: 'run the failing command', command: 'false' },
           })
           send({
             type: 'tool_call_end',
@@ -562,11 +568,12 @@ wss.on('connection', (ws) => {
         }
         if (shell) {
           send({ type: 'content_delta', text_delta: 'counting the Python files\n' })
+          useStart('t3', 'shell')
           send({
             type: 'tool_call_start',
             tool_id: 't3',
             tool_name: 'shell',
-            partial_input: { description: SHELL_DESCRIPTION, command: SHELL_COMMAND },
+            input: { description: SHELL_DESCRIPTION, command: SHELL_COMMAND },
           })
           send({
             type: 'tool_call_end',
@@ -587,11 +594,12 @@ wss.on('connection', (ws) => {
         }
         if (grep) {
           send({ type: 'content_delta', text_delta: 'searching for the search root\n' })
+          useStart('t4', 'grep')
           send({
             type: 'tool_call_start',
             tool_id: 't4',
             tool_name: 'grep',
-            partial_input: { description: GREP_DESCRIPTION, pattern: GREP_PATTERN },
+            input: { description: GREP_DESCRIPTION, pattern: GREP_PATTERN },
           })
           send({
             type: 'tool_call_end',
@@ -626,11 +634,12 @@ wss.on('connection', (ws) => {
         }
         if (glob) {
           send({ type: 'content_delta', text_delta: 'listing the tools\n' })
+          useStart('t5', 'glob')
           send({
             type: 'tool_call_start',
             tool_id: 't5',
             tool_name: 'glob',
-            partial_input: { description: GLOB_DESCRIPTION, pattern: GLOB_PATTERN },
+            input: { description: GLOB_DESCRIPTION, pattern: GLOB_PATTERN },
           })
           send({
             type: 'tool_call_end',
@@ -651,11 +660,12 @@ wss.on('connection', (ws) => {
         }
         if (git) {
           send({ type: 'content_delta', text_delta: 'checking the working tree\n' })
+          useStart('t6', 'git_status')
           send({
             type: 'tool_call_start',
             tool_id: 't6',
             tool_name: 'git_status',
-            partial_input: { description: GIT_STATUS_DESCRIPTION },
+            input: { description: GIT_STATUS_DESCRIPTION },
           })
           send({
             type: 'tool_call_end',
@@ -670,11 +680,12 @@ wss.on('connection', (ws) => {
               metadata: { repo_path: '/tmp' },
             },
           })
+          useStart('t7', 'git_log')
           send({
             type: 'tool_call_start',
             tool_id: 't7',
             tool_name: 'git_log',
-            partial_input: { description: GIT_LOG_DESCRIPTION, max_count: 20, oneline: true },
+            input: { description: GIT_LOG_DESCRIPTION, max_count: 20, oneline: true },
           })
           send({
             type: 'tool_call_end',
@@ -705,15 +716,16 @@ wss.on('connection', (ws) => {
               path: rootRelative(input.file_path),
               path_abs: absolutePath(input.file_path),
             }
+            useStart(id, name)
             send({
               type: 'tool_call_start',
               tool_id: id,
               tool_name: name,
-              partial_input: input,
-              // The real server resolves the card's file on the start frame
-              // too — the loop hands the call over with its input already
-              // complete, before any gate — so the card names the file (and
-              // marks it external) while the call is still in flight.
+              input,
+              // The real server resolves the card's file on the execution
+              // start frame too — the loop hands the call over with its
+              // input already complete, before any gate — so the card names
+              // the file (and marks it external) while it is still in flight.
               ...paths,
             })
             send({
@@ -804,11 +816,12 @@ wss.on('connection', (ws) => {
               metadata: { path: OUTSIDE_PATH, total_lines: 2 },
             },
           }
+          useStart(FILE_GATE_ID, 'read_file')
           send({
             type: 'tool_call_start',
             tool_id: FILE_GATE_ID,
             tool_name: 'read_file',
-            partial_input: pendingFileCall.input,
+            input: pendingFileCall.input,
             ...pendingFileCall.paths,
           })
           send({
@@ -840,11 +853,12 @@ wss.on('connection', (ws) => {
           send({ type: 'state', busy: false })
           break
         }
+        useStart('t1', 'shell')
         send({
           type: 'tool_call_start',
           tool_id: 't1',
           tool_name: 'shell',
-          partial_input: { description: 'list the files', command: 'ls -la' },
+          input: { description: 'list the files', command: 'ls -la' },
         })
         send({
           type: 'agent_paused',

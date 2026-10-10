@@ -251,49 +251,58 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
       }
       break
     }
-    case 'tool_call_start': {
-      // Execution begins — the thought that requested it is over, and so is
-      // the text above it: content only ever merges into the last block
-      // (content_delta below), so an answer with a card after it can never
-      // grow again.  Without this it would keep rendering as streaming for
-      // the rest of the turn.
+    case 'tool_use_start': {
+      // The provider phase begins — the thought that requested the call is
+      // over, and so is the text above it: content only ever merges into
+      // the last block (content_delta below), so an answer with a card
+      // after it can never grow again.  Upsert by tool_id so a repeated
+      // start (or the execution phase's frame, below) lands on one card.
       closeThinking(s)
       closeAssistant(s)
-      // Streaming mode emits two starts per call — the live stream
-      // handler yields one as chunks arrive, the execution phase yields
-      // another before running the tool, with the same tool_id.  Upsert
-      // by tool_id so one call renders one card; the second start's
-      // full parameters merge over the stream's partial input.
       const existing = findTool(s, action.tool_id, { open: true })
-      if (existing) {
-        if (action.partial_input) Object.assign(existing.input, action.partial_input)
-        // The execution-phase start is the one that resolves the call's
-        // file — the card can name it, and mark it external, before the
-        // permission gate answers.  Whatever the earlier frame set stands
-        // until then.
-        existing.path = action.path ?? existing.path
-        existing.path_abs = action.path_abs ?? existing.path_abs
-      } else {
+      if (!existing) {
+        // Identity only: no arguments exist yet — a JSON object has no
+        // fragment that parses — and nothing has resolved.
         push(s, {
           kind: 'tool',
           tool_id: action.tool_id,
           tool_name: action.tool_name,
-          input: action.partial_input ?? {},
-          // The provider's start carries no input, so nothing has resolved
-          // yet; the execution-phase start lands with both.
-          path: action.path ?? null,
-          path_abs: action.path_abs ?? null,
+          input: {},
+          path: null,
+          path_abs: null,
           result: null,
           open: true,
         })
       }
       break
     }
-    case 'tool_call_delta': {
-      // Fragments merge best-effort; tool_call_end replaces with the
-      // authoritative input.
-      const block = findTool(s, action.tool_id, { open: true })
-      if (block) Object.assign(block.input, action.input_delta)
+    case 'tool_call_start': {
+      // Execution begins, input complete.  The closes cover the
+      // non-streaming mode, where this is the call's only start frame.
+      closeThinking(s)
+      closeAssistant(s)
+      const existing = findTool(s, action.tool_id, { open: true })
+      if (existing) {
+        // The frame is complete and authoritative for everything it
+        // carries: assign, never merge.  It also resolves the call's file,
+        // so the card names it — and marks it external — before the
+        // permission gate answers.
+        existing.tool_name = action.tool_name
+        existing.input = action.input
+        existing.path = action.path
+        existing.path_abs = action.path_abs
+      } else {
+        push(s, {
+          kind: 'tool',
+          tool_id: action.tool_id,
+          tool_name: action.tool_name,
+          input: action.input,
+          path: action.path,
+          path_abs: action.path_abs,
+          result: null,
+          open: true,
+        })
+      }
       break
     }
     case 'tool_call_end': {
