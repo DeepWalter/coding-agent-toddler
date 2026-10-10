@@ -5,8 +5,9 @@ Provides a :class:`BaseHandler` ABC with two implementations:
 :class:`NonStreamHandler` for complete responses.  The
 :func:`create_handler` factory returns the right one for the current mode.
 
-Uses :class:`IncrementalJSONParser` to parse streaming tool-call
-arguments so the display can show partial JSON as it builds up.
+Streaming tool-call arguments are accumulated verbatim and parsed once,
+lazily, when a message or a cancel snapshot is assembled — no fragment of
+a JSON object parses on its own, so there is nothing to show mid-stream.
 """
 
 from __future__ import annotations
@@ -23,8 +24,7 @@ from toddler.agent.events import (
     ContentDelta,
     ReasoningDelta,
     RecoverableAgentError,
-    ToolCallDelta,
-    ToolCallStart,
+    ToolUseStart,
 )
 from toddler.llm import Message, MessageBlock, TokenUsage
 
@@ -90,83 +90,42 @@ class BaseHandler(ABC):
 
 
 # =============================================================================
-# Incremental JSON parser
-# =============================================================================
-
-
-class IncrementalJSONParser:
-    """Accumulates JSON string fragments and attempts to parse after each feed.
-
-    When parsing fails, the previously-successful parse is retained so
-    callers always see the best-effort partial result.  This gives the
-    display a progressively-completing dict as the model streams arguments.
-    """
-
-    def __init__(self) -> None:
-        self._buffer = ""
-        self._parsed: dict[str, Any] = {}
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
-    def feed(self, chunk: str) -> dict[str, Any]:
-        """Feed a new JSON fragment; return the best-effort parsed dict.
-
-        Parameters
-        ----------
-        chunk:
-            A fragment of JSON text (e.g. ``"path": "/foo``).
-
-        Returns
-        -------
-        dict
-            The currently-parseable dict — a snapshot (shallow copy) so
-            callers can safely mutate it.
-        """
-        self._buffer += chunk
-        # Plain try/except rather than contextlib.suppress — this is the
-        # hot path (called once per streaming chunk) and try/except avoids
-        # the context-manager __enter__/__exit__ overhead on every call.
-        try:  # noqa: SIM105
-            self._parsed = json.loads(self._buffer)
-        except json.JSONDecodeError:
-            pass  # Keep previous successfully-parsed state
-        return dict(self._parsed)
-
-    def finalize(self) -> dict[str, Any]:
-        """Return the best-effort complete parse after the stream ends.
-
-        If the accumulated buffer never formed valid JSON (e.g. the model
-        produced malformed arguments), returns the last good partial parse.
-        """
-        try:
-            self._parsed = json.loads(self._buffer)
-        except json.JSONDecodeError:
-            logger.debug(
-                "Tool-call arguments never became valid JSON: %s",
-                self._buffer[:200],
-            )
-        return dict(self._parsed)
-
-    def reset(self) -> None:
-        """Clear the buffer and parsed state for reuse."""
-        self._buffer = ""
-        self._parsed = {}
-
-
-# =============================================================================
 # Internal — per-tool-call accumulator
 # =============================================================================
 
 
 @dataclass(slots=True)
 class _PartialTool:
-    """Bookkeeping for one streaming tool call."""
+    """Bookkeeping for one streaming tool call.
+
+    ``arguments`` is the raw fragment text, concatenated in arrival order
+    and parsed once — by :func:`_parse_arguments` — when a message or a
+    cancel snapshot is assembled.
+    """
 
     tool_id: str
     tool_name: str
-    parser: IncrementalJSONParser
+    arguments: str = ""
+
+
+def _parse_arguments(raw: str) -> dict[str, Any]:
+    """Parse an accumulated tool-argument string, exactly once.
+
+    Returns ``{}`` for empty input, for JSON that never became valid (the
+    model produced malformed arguments — logged the same way the old
+    parser logged it), and for non-object JSON: a scalar argument must
+    never blow up the block assembly.
+    """
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        logger.debug(
+            "Tool-call arguments never became valid JSON: %s", raw[:200],
+        )
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 # =============================================================================
@@ -179,8 +138,8 @@ class StreamHandler(BaseHandler):
     :class:`~toddler.agent.events.AgentEvent` objects for the agent loop.
 
     Maintains internal accumulators for answer text, reasoning text, and
-    tool calls, using :class:`IncrementalJSONParser` for streaming
-    tool-call arguments.
+    tool calls — the arguments of a streaming call are buffered verbatim
+    and parsed once, when the assembled message is built.
 
     Usage::
 
@@ -245,9 +204,9 @@ class StreamHandler(BaseHandler):
                         yield evt
 
                 case "tool_use_delta":
-                    evt = self._on_tool_delta(event.data)
-                    if evt is not None:
-                        yield evt
+                    # Nothing to yield: the fragment is accumulated, and a
+                    # JSON object has no prefix that parses.
+                    self._on_tool_delta(event.data)
 
                 case "message_stop":
                     self.stop_reason = event.data.get("stop_reason")
@@ -274,7 +233,9 @@ class StreamHandler(BaseHandler):
 
         Shared by the completed-message assembly and the partial-content
         extraction on cancel — both expose the same content, just at
-        different points in the stream.
+        different points in the stream.  Tool arguments accumulated so far
+        are parsed here, once: a cancelled call may carry a truncated
+        buffer, which parses to nothing rather than raising.
 
         Reasoning comes first, matching both the model's emission order
         and the ``Message.blocks`` invariant.  Because this path serves
@@ -292,7 +253,7 @@ class StreamHandler(BaseHandler):
 
         for tool_id in self._tool_order:
             pt = self._tools[tool_id]
-            parsed = pt.parser.finalize()
+            parsed = _parse_arguments(pt.arguments)
             blocks.append(
                 MessageBlock.tool_use_block(
                     tool_id=pt.tool_id,
@@ -339,11 +300,12 @@ class StreamHandler(BaseHandler):
     # Tool-call tracking helpers
     # ------------------------------------------------------------------
 
-    def _on_tool_start(self, data: dict) -> ToolCallStart | None:
+    def _on_tool_start(self, data: dict) -> ToolUseStart | None:
         """Handle a ``tool_use_start`` StreamEvent.
 
-        Creates a new :class:`_PartialTool` entry and returns a
-        :class:`ToolCallStart` event for the display.
+        Registers a :class:`_PartialTool` accumulator and returns a
+        :class:`ToolUseStart` for the display — the provider's start
+        carries identity only; the arguments follow as fragments.
         """
         tool_id = data.get("tool_id", "")
         tool_name = data.get("tool_name", "")
@@ -358,40 +320,36 @@ class StreamHandler(BaseHandler):
             )
             return None
 
-        # The provider's tool_use_start only carries tool_id + tool_name;
-        # actual arguments arrive in subsequent tool_use_delta chunks.
-        parser = IncrementalJSONParser()
-
+        if tool_id not in self._tools:
+            self._tool_order.append(tool_id)
+        # A repeated start replaces the accumulator: last start wins, and
+        # the order list above never records the id twice.
         self._tools[tool_id] = _PartialTool(
-            tool_id=tool_id, tool_name=tool_name, parser=parser,
-        )
-        self._tool_order.append(tool_id)
-
-        return ToolCallStart(
-            tool_id=tool_id,
-            tool_name=tool_name,
-            partial_input=None,
+            tool_id=tool_id, tool_name=tool_name,
         )
 
-    def _on_tool_delta(self, data: dict) -> AgentEvent | None:
-        """Handle a ``tool_use_delta`` StreamEvent.
+        return ToolUseStart(tool_id=tool_id, tool_name=tool_name)
 
-        Feeds the arguments fragment into the incremental parser and
-        returns a :class:`ToolCallDelta` with the current best-effort parse.
+    def _on_tool_delta(self, data: dict) -> None:
+        """Handle a ``tool_use_delta`` StreamEvent — accumulate only.
+
+        The fragment is raw argument text; parsing happens once, in
+        :func:`_parse_arguments`, when a message or cancel snapshot is
+        assembled.  A fragment for a call this handler never saw start is
+        dropped: there is no accumulator to append it to.
         """
         tool_id = data.get("tool_id", "")
         input_delta = data.get("input_delta", {})
 
         pt = self._tools.get(tool_id)
         if pt is None:
-            return None
+            return
 
         fragment = input_delta.get("arguments_fragment", "")
         if not fragment:
-            return None
+            return
 
-        partial = pt.parser.feed(fragment)
-        return ToolCallDelta(tool_id=tool_id, input_delta=partial)
+        pt.arguments += fragment
 
 
 # =============================================================================

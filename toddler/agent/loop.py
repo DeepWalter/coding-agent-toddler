@@ -357,7 +357,8 @@ class AgentLoop:
     ) -> AsyncIterator[AgentEvent]:
         """Execute *tool_calls* with permission gating, yielding events.
 
-        Yields :class:`ToolCallStart`, :class:`AgentPaused` (when
+        Yields :class:`ToolCallStart` (input already complete — the call
+        left the provider phase whole), :class:`AgentPaused` (when
         confirmation is needed), and :class:`ToolCallEnd` for each call.
         Appends a :class:`MessageBlock` to *tool_result_blocks* for each
         completed call — the caller then feeds them back to the LLM.
@@ -368,7 +369,7 @@ class AgentLoop:
             yield ToolCallStart(
                 tool_id=call.tool_id,
                 tool_name=call.tool_name,
-                partial_input=call.parameters,
+                input=call.parameters,
             )
 
             # --- permission gating ---

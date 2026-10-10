@@ -45,9 +45,9 @@ from toddler.agent.events import (
     PlanStepUpdate,
     ReasoningDelta,
     RecoverableAgentError,
-    ToolCallDelta,
     ToolCallEnd,
     ToolCallStart,
+    ToolUseStart,
 )
 from toddler.tools import HIDDEN_TOOL_NAMES
 from toddler.tools.base import CALL_DESCRIPTION_PARAM
@@ -184,7 +184,7 @@ class ConfirmResult:
 class Renderer(ABC):
     """Abstract base for agent output renderers.
 
-    Subclasses implement the four streaming event handlers to provide
+    Subclasses implement the five streaming event handlers to provide
     either real-time streaming output or one-shot printing.
 
     Parameters
@@ -465,12 +465,12 @@ class Renderer(ABC):
         """Render a streaming reasoning delta."""
 
     @abstractmethod
-    def on_tool_call_start(self, event: ToolCallStart) -> None:
-        """Render a tool call that has started executing."""
+    def on_tool_use_start(self, event: ToolUseStart) -> None:
+        """Render the model's tool call beginning to stream (identity only)."""
 
     @abstractmethod
-    def on_tool_call_delta(self, event: ToolCallDelta) -> None:
-        """Render an incremental tool-input fragment."""
+    def on_tool_call_start(self, event: ToolCallStart) -> None:
+        """Render a tool call that has started executing, input complete."""
 
     @abstractmethod
     def on_tool_call_end(self, event: ToolCallEnd) -> None:
@@ -584,8 +584,8 @@ class StreamingRenderer(Renderer):
         # Plan rows visible under the current height budget.
         self._max_plan_visible: int = 0
         # Ids of calls to tools that declare themselves invisible.  Held by
-        # id rather than name because deltas and ends carry no name, and a
-        # delta for an unknown id would otherwise draw a nameless row.
+        # id because the end event has to be recognised after the fact —
+        # neither of a hidden call's starts drew a row for it to mark.
         self._hidden_ids: set[str] = set()
 
         # -- confirmation state (set when confirm() is active) --------------
@@ -1032,54 +1032,62 @@ class StreamingRenderer(Renderer):
         self._thinking += event.text_delta
         self._refresh()
 
-    def on_tool_call_start(self, event: ToolCallStart) -> None:
-        """Add a running row to the tools panel.
+    def on_tool_use_start(self, event: ToolUseStart) -> None:
+        """Add a running row to the tools panel, from the name alone.
 
-        A tool that declares itself invisible gets no row: what it does
-        is already on screen as an event of its own (see
+        The provider phase carries no arguments (no JSON fragment parses),
+        so the row is a skeleton until the execution start fills it.  A
+        tool that declares itself invisible gets no row: what it does is
+        already on screen as an event of its own (see
         :data:`~toddler.tools.HIDDEN_TOOL_NAMES`).
         """
         if event.tool_name in HIDDEN_TOOL_NAMES:
             self._hidden_ids.add(event.tool_id)
             return
         self._close_thinking()
-        params = event.partial_input or {}
         self._tools[event.tool_id] = _ToolRow(
             name=event.tool_name,
             status="running",
-            signature=_format_tool_signature(event.tool_name, params),
-            description=_tool_description(params),
+            signature=_format_tool_signature(event.tool_name, {}),
+            description="",
             result="",
         )
         if event.tool_id not in self._tool_order:
             self._tool_order.append(event.tool_id)
         self._refresh()
 
-    def on_tool_call_delta(self, event: ToolCallDelta) -> None:
-        """Update the tool row's input signature."""
-        if event.tool_id in self._hidden_ids:
+    def on_tool_call_start(self, event: ToolCallStart) -> None:
+        """Fill the row's columns from the complete input.
+
+        Upserts the row the provider phase opened — and creates it when
+        there was none (a non-streaming turn, whose call never had a
+        :meth:`on_tool_use_start`) — so the panel keeps one row per call,
+        in first-seen order.
+        """
+        if event.tool_name in HIDDEN_TOOL_NAMES:
+            self._hidden_ids.add(event.tool_id)
             return
+        self._close_thinking()
         row = self._tools.get(event.tool_id)
         if row is None:
             row = _ToolRow(
-                name="", status="running", signature="", description="",
-                result="",
+                name=event.tool_name, status="running", signature="",
+                description="", result="",
             )
             self._tools[event.tool_id] = row
             if event.tool_id not in self._tool_order:
                 self._tool_order.append(event.tool_id)
-        # Format against the row's own name: the delta carries a parsed
-        # fragment, and a shell call has to keep reading as a command.
-        row.signature = _format_tool_signature(row.name, event.input_delta)
-        row.description = _tool_description(event.input_delta)
+        row.name = event.tool_name
+        row.status = "running"
+        row.signature = _format_tool_signature(event.tool_name, event.input)
+        row.description = _tool_description(event.input)
         self._refresh()
 
     def on_tool_call_end(self, event: ToolCallEnd) -> None:
         """Mark the tool row success or error and set the result summary.
 
         The end event carries the authoritative parameters, so the row's
-        columns are rebuilt from them — a stream whose last fragment was
-        partial would otherwise leave the row showing that fragment.
+        columns are rebuilt from them.
         """
         if event.tool_id in self._hidden_ids:
             self._hidden_ids.discard(event.tool_id)
@@ -1665,6 +1673,13 @@ class NonStreamingRenderer(Renderer):
         self._console.print(Text("💭 Thought:", style="dim"))
         self._console.print(Text(event.text_delta, style="dim italic"))
 
+    def on_tool_use_start(self, event: ToolUseStart) -> None:
+        """No-op — the provider phase shows nothing here.
+
+        One-shot mode prints a call when it runs; this event exists only
+        in streaming mode, where the row is a live table entry.
+        """
+
     def on_tool_call_start(self, event: ToolCallStart) -> None:
         """Announce the tool call with a one-line print.
 
@@ -1675,14 +1690,10 @@ class NonStreamingRenderer(Renderer):
         """
         if event.tool_name in HIDDEN_TOOL_NAMES:
             return
-        params = event.partial_input or {}
-        label = _format_tool_call(event.tool_name, params)
-        description = _tool_description(params)
+        label = _format_tool_call(event.tool_name, event.input)
+        description = _tool_description(event.input)
         suffix = f" — {description}" if description else ""
         self._console.print(Text(f"▶ {label}{suffix}", style=_TOOL_RUNNING))
-
-    def on_tool_call_delta(self, event: ToolCallDelta) -> None:
-        """No-op — deltas only arrive during streaming LLM calls."""
 
     def on_tool_call_end(self, event: ToolCallEnd) -> None:
         """Print the tool result (or error) inline."""

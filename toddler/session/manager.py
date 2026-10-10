@@ -686,8 +686,8 @@ class SessionManager:
         can never leak a stale ``plan_update`` tool into the next turn.
         The shared :class:`PlanState` is asked for updates only after
         :class:`ToolCallEnd` — statuses change only while a tool executes,
-        so polling earlier (text deltas, tool-call start/delta) would
-        only rebuild an O(steps) snapshot for nothing.  Every mutation
+        so polling earlier (text deltas, a tool-call start) would only
+        rebuild an O(steps) snapshot for nothing.  Every mutation
         emits as its own full-list ``PlanStepUpdate`` (no trigger
         filter), so nothing is ever held back and no phase-end flush is
         needed: each change lands before :class:`AgentFinished`, which

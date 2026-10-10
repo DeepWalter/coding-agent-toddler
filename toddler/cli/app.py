@@ -20,9 +20,9 @@ from toddler.agent.events import (
     PlanStepUpdate,
     ReasoningDelta,
     RecoverableAgentError,
-    ToolCallDelta,
     ToolCallEnd,
     ToolCallStart,
+    ToolUseStart,
 )
 from toddler.cli.commands import SlashCommandDispatcher
 from toddler.cli.input_handler import InputHandler
@@ -224,11 +224,11 @@ class CLIApp:
                 case ReasoningDelta():
                     self._renderer.on_reasoning_delta(event)
 
+                case ToolUseStart():
+                    self._renderer.on_tool_use_start(event)
+
                 case ToolCallStart():
                     self._renderer.on_tool_call_start(event)
-
-                case ToolCallDelta():
-                    self._renderer.on_tool_call_delta(event)
 
                 case ToolCallEnd():
                     self._renderer.on_tool_call_end(event)

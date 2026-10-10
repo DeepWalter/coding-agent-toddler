@@ -22,6 +22,7 @@ from toddler.agent.events import (
     RecoverableAgentError,
     ToolCallEnd,
     ToolCallStart,
+    ToolUseStart,
 )
 from toddler.agent.handler import NonStreamHandler, StreamHandler
 from toddler.agent.loop import AgentLoop
@@ -907,8 +908,8 @@ class TestHandlerPartialContent:
         assert partial[0].text == "Hello "
 
     async def test_stream_handler_partial_includes_started_tool_call(self):
-        """A tool call started before the cancel is kept, with
-        best-effort parsed arguments."""
+        """A tool call started before the cancel is kept, its accumulated
+        arguments parsed once at snapshot time."""
 
         async def stream() -> AsyncIterator[StreamEvent]:
             yield StreamEvent(type="content_delta", data={"text_delta": "Checking"})
@@ -925,16 +926,63 @@ class TestHandlerPartialContent:
             )
 
         handler = StreamHandler()
-        gen = handler.process(stream())
-        await gen.__anext__()
-        assert isinstance(await gen.__anext__(), ToolCallStart)
-        await gen.__anext__()  # tool_use_delta feeds the parser
+        events = [e async for e in handler.process(stream())]
+
+        # The fragment yields no event of its own: it is accumulated.
+        assert [type(e) for e in events] == [ContentDelta, ToolUseStart]
 
         partial = handler.get_partial_content()
         assert [b.type for b in partial] == ["content", "tool_use"]
         assert partial[1].tool_id == "t1"
         assert partial[1].tool_name == "read_file"
         assert partial[1].tool_input == {"path": "x.py"}
+
+    async def test_a_cancel_snapshot_of_a_truncated_call_parses_to_nothing(self):
+        """Arguments cut off mid-JSON must snapshot without raising — the
+        repair path keeps the dangling call, with no input to name."""
+
+        async def stream() -> AsyncIterator[StreamEvent]:
+            yield StreamEvent(
+                type="tool_use_start",
+                data={"tool_id": "t1", "tool_name": "read_file"},
+            )
+            yield StreamEvent(
+                type="tool_use_delta",
+                data={
+                    "tool_id": "t1",
+                    "input_delta": {"arguments_fragment": '{"path": "x'},
+                },
+            )
+
+        handler = StreamHandler()
+        _ = [e async for e in handler.process(stream())]
+
+        partial = handler.get_partial_content()
+        assert [b.type for b in partial] == ["tool_use"]
+        assert partial[0].tool_input == {}
+
+    async def test_a_scalar_argument_snapshots_to_nothing(self):
+        """A model that streams a bare JSON scalar must not blow up the
+        block assembly: only an object is a tool input."""
+
+        async def stream() -> AsyncIterator[StreamEvent]:
+            yield StreamEvent(
+                type="tool_use_start",
+                data={"tool_id": "t1", "tool_name": "read_file"},
+            )
+            yield StreamEvent(
+                type="tool_use_delta",
+                data={
+                    "tool_id": "t1",
+                    "input_delta": {"arguments_fragment": "42"},
+                },
+            )
+
+        handler = StreamHandler()
+        _ = [e async for e in handler.process(stream())]
+
+        partial = handler.get_partial_content()
+        assert partial[0].tool_input == {}
 
     async def test_non_stream_handler_partial_content(self):
         """The complete response is available as soon as processing

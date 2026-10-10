@@ -24,9 +24,9 @@ from toddler.agent.events import (
     PlanStepUpdate,
     ReasoningDelta,
     RecoverableAgentError,
-    ToolCallDelta,
     ToolCallEnd,
     ToolCallStart,
+    ToolUseStart,
 )
 from toddler.agent.planner import Plan
 from toddler.llm import TokenUsage
@@ -119,10 +119,11 @@ def tool_card_paths(root: Path, input: dict) -> dict:
     name opens under it instead — read-only, since it lies outside the
     root.
 
-    Both the start and the end frame carry this (see :func:`serialize_event`):
-    the start frame is the one that matters for how early the card can name
-    the file — it arrives before any permission gate, with the input already
-    complete.
+    The ``tool_call_start`` and ``tool_call_end`` frames carry this (see
+    :func:`serialize_event`).  The start frame is the one that matters for
+    how early the card can name the file: the call's input is complete by
+    then, and the frame arrives before any permission gate.  The
+    identity-only ``tool_use_start`` carries neither.
     """
     raw = input.get("file_path")
     return {
@@ -230,7 +231,7 @@ def serialize_event(event: AgentEvent, root: Path) -> dict | None:  # noqa: C901
     # the UI as a frame of its own, so a card for the call itself would
     # only say the same thing a second time.
     if (
-        isinstance(event, (ToolCallStart, ToolCallEnd))
+        isinstance(event, (ToolUseStart, ToolCallStart, ToolCallEnd))
         and event.tool_name in HIDDEN_TOOL_NAMES
     ):
         return None
@@ -245,30 +246,30 @@ def serialize_event(event: AgentEvent, root: Path) -> dict | None:  # noqa: C901
             # the kind.
             return {"type": "reasoning_delta", "text_delta": text_delta}
 
+        case ToolUseStart(tool_id=tool_id, tool_name=tool_name):
+            # The provider phase, identity only: the card it opens is a
+            # skeleton, because a JSON object has no fragment that parses.
+            return {
+                "type": "tool_use_start",
+                "tool_id": tool_id,
+                "tool_name": tool_name,
+            }
+
         case ToolCallStart(
             tool_id=tool_id,
             tool_name=tool_name,
-            partial_input=partial_input,
+            input=input,
         ):
             return {
                 "type": "tool_call_start",
                 "tool_id": tool_id,
                 "tool_name": tool_name,
-                "partial_input": partial_input,
-                # The agent loop hands the call over with its input already
+                "input": input,
+                # The loop hands the call over with its input already
                 # complete, and this frame is yielded before any permission
                 # gate — so the card names the file (and marks it external)
-                # while the call is still waiting to run.  The provider's own
-                # "began emitting" start carries no input, and resolves to
-                # two nulls, which the card reads as "nothing named yet".
-                **tool_card_paths(root, partial_input or {}),
-            }
-
-        case ToolCallDelta(tool_id=tool_id, input_delta=input_delta):
-            return {
-                "type": "tool_call_delta",
-                "tool_id": tool_id,
-                "input_delta": input_delta,
+                # while the call is still waiting to run.
+                **tool_card_paths(root, input),
             }
 
         case ToolCallEnd(

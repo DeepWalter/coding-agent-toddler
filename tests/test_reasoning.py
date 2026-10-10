@@ -14,8 +14,7 @@ from collections.abc import AsyncIterator
 from toddler.agent.events import (
     ContentDelta,
     ReasoningDelta,
-    ToolCallDelta,
-    ToolCallStart,
+    ToolUseStart,
 )
 from toddler.agent.handler import NonStreamHandler, StreamHandler
 from toddler.context.token_counter import TokenCounter
@@ -88,8 +87,7 @@ class TestStreamHandlerReasoning:
             ReasoningDelta,
             ReasoningDelta,
             ContentDelta,
-            ToolCallStart,
-            ToolCallDelta,
+            ToolUseStart,
         ]
         result = handler.get_final_result()
         msg = result["assistant_msg"]

@@ -32,8 +32,7 @@ class ContentDelta(AgentEvent):
     """A single chunk of streaming answer text.
 
     The field is named after the shared ``text`` payload slot the fragment
-    feeds — the kind lives in the class name, mirroring
-    :class:`ToolCallDelta`'s ``input_delta`` for the ``tool_input`` slot.
+    feeds — the kind lives in the class name.
     """
 
     text_delta: str
@@ -51,20 +50,31 @@ class ReasoningDelta(AgentEvent):
 
 
 @dataclass
-class ToolCallStart(AgentEvent):
-    """The LLM has started emitting a tool call."""
+class ToolUseStart(AgentEvent):
+    """The LLM has started emitting a tool call.
+
+    Identity only: the arguments are still arriving as ``tool_use_delta``
+    stream fragments, and none of them is displayable — a JSON object has
+    no valid prefixes, so nothing parses until the document closes.  Only
+    the streaming provider emits this; a non-streaming turn goes straight
+    to :class:`ToolCallStart`.
+    """
 
     tool_id: str
     tool_name: str
-    partial_input: dict | None = None
 
 
 @dataclass
-class ToolCallDelta(AgentEvent):
-    """An incremental fragment of a tool call's input arrived."""
+class ToolCallStart(AgentEvent):
+    """A tool call is starting execution, its input already complete.
+
+    Only the agent loop produces this — the call has left the provider
+    phase whole, so ``input`` is the finished argument dict, never partial.
+    """
 
     tool_id: str
-    input_delta: dict
+    tool_name: str
+    input: dict
 
 
 @dataclass

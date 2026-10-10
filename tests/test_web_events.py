@@ -14,9 +14,9 @@ from toddler.agent.events import (
     PlanStepUpdate,
     ReasoningDelta,
     RecoverableAgentError,
-    ToolCallDelta,
     ToolCallEnd,
     ToolCallStart,
+    ToolUseStart,
 )
 from toddler.agent.planner import Plan, PlanStep
 from toddler.llm import TokenUsage
@@ -73,16 +73,26 @@ class TestSerializeEvent:
             "text_delta": "hmm",
         }
 
+    def test_tool_use_start(self):
+        """The provider phase is identity only — no input, no resolution."""
+        assert serialize_event(ToolUseStart(
+            tool_id="t1", tool_name="read_file",
+        ), ROOT) == {
+            "type": "tool_use_start",
+            "tool_id": "t1",
+            "tool_name": "read_file",
+        }
+
     def test_tool_call_start(self):
         frame = serialize_event(ToolCallStart(
             tool_id="t1", tool_name="read_file",
-            partial_input={"path": "a.py"},
+            input={"path": "a.py"},
         ), ROOT)
         assert frame == {
             "type": "tool_call_start",
             "tool_id": "t1",
             "tool_name": "read_file",
-            "partial_input": {"path": "a.py"},
+            "input": {"path": "a.py"},
             # ``path`` is not the parameter this card reads; the call names
             # no file, and the card says so from the start.
             "path": None,
@@ -95,32 +105,16 @@ class TestSerializeEvent:
         mark it external — while the call is still waiting to run."""
         frame = serialize_event(ToolCallStart(
             tool_id="t1", tool_name="read_file",
-            partial_input={"file_path": "/repo/src/a.py"},
+            input={"file_path": "/repo/src/a.py"},
         ), ROOT)
         assert frame["path"] == "src/a.py"
         assert frame["path_abs"] == "/repo/src/a.py"
         outside = serialize_event(ToolCallStart(
             tool_id="t2", tool_name="read_file",
-            partial_input={"file_path": "/etc/passwd"},
+            input={"file_path": "/etc/passwd"},
         ), ROOT)
         assert outside["path"] is None
         assert outside["path_abs"] == str(Path("/etc/passwd").resolve())
-
-    def test_tool_call_start_without_partial_input(self):
-        frame = serialize_event(ToolCallStart(
-            tool_id="t1", tool_name="read_file",
-        ), ROOT)
-        assert frame["partial_input"] is None
-        assert frame["path"] is None and frame["path_abs"] is None
-
-    def test_tool_call_delta(self):
-        assert serialize_event(ToolCallDelta(
-            tool_id="t1", input_delta={"path": "a.p"},
-        ), ROOT) == {
-            "type": "tool_call_delta",
-            "tool_id": "t1",
-            "input_delta": {"path": "a.p"},
-        }
 
     def test_tool_call_end(self):
         result = ToolResult(
@@ -189,9 +183,12 @@ class TestSerializeEvent:
         """The plan bookkeeping call is hidden by its own declaration: the
         browser learns what it did from the ``plan_step_update`` frames,
         so a card for the call itself would only repeat them."""
+        assert serialize_event(ToolUseStart(
+            tool_id="t1", tool_name="plan_update",
+        ), ROOT) is None
         assert serialize_event(ToolCallStart(
             tool_id="t1", tool_name="plan_update",
-            partial_input={"step_id": "step-1"},
+            input={"step_id": "step-1"},
         ), ROOT) is None
         assert serialize_event(ToolCallEnd(
             tool_id="t1", tool_name="plan_update",

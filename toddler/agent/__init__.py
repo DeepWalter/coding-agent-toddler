@@ -11,13 +11,12 @@ from toddler.agent.events import (
     PlanStepUpdate,
     ReasoningDelta,
     RecoverableAgentError,
-    ToolCallDelta,
     ToolCallEnd,
     ToolCallStart,
+    ToolUseStart,
 )
 from toddler.agent.handler import (
     BaseHandler,
-    IncrementalJSONParser,
     NonStreamHandler,
     StreamHandler,
     create_handler,
@@ -35,7 +34,6 @@ __all__ = [
     "BaseHandler",
     "ContentDelta",
     "FatalAgentError",
-    "IncrementalJSONParser",
     "NonStreamHandler",
     "Planner",
     "PlanProposed",
@@ -45,8 +43,8 @@ __all__ = [
     "StopConditionChecker",
     "StopReason",
     "StreamHandler",
-    "ToolCallDelta",
     "ToolCallEnd",
     "ToolCallStart",
+    "ToolUseStart",
     "create_handler",
 ]

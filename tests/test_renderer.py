@@ -16,9 +16,9 @@ from toddler.agent.events import (
     PlanProposed,
     PlanStepUpdate,
     ReasoningDelta,
-    ToolCallDelta,
     ToolCallEnd,
     ToolCallStart,
+    ToolUseStart,
 )
 from toddler.agent.planner import Plan, PlanStep
 from toddler.cli.renderer import NonStreamingRenderer, StreamingRenderer
@@ -309,8 +309,8 @@ class TestDynamicPanelHeightBudget:
         # first tool are drained to 2 and the tools panel is dropped.
         renderer = self._renderer(height=15)
         renderer._plan_steps = []
-        renderer.on_tool_call_start(
-            ToolCallStart(tool_id="t1", tool_name="read", partial_input={})
+        renderer.on_tool_use_start(
+            ToolUseStart(tool_id="t1", tool_name="read")
         )
         output_height = renderer._compute_dynamic_panel_height()
         assert renderer._max_plan_visible == 0
@@ -429,8 +429,8 @@ class TestStreamingReasoning:
         )
         renderer.on_reasoning_delta(ReasoningDelta(text_delta="first"))
         clock.advance(3.0)
-        renderer.on_tool_call_start(
-            ToolCallStart(tool_id="t1", tool_name="read", partial_input=None)
+        renderer.on_tool_use_start(
+            ToolUseStart(tool_id="t1", tool_name="read")
         )
         clock.advance(30.0)          # tool runs — not thinking time
         renderer.on_reasoning_delta(ReasoningDelta(text_delta="second"))
@@ -606,7 +606,7 @@ class TestToolTableColumns:
         renderer.on_tool_call_start(ToolCallStart(
             tool_id="t1",
             tool_name="shell",
-            partial_input={
+            input={
                 "description": "count the python files",
                 "command": "ls -la",
             },
@@ -624,17 +624,17 @@ class TestToolTableColumns:
         renderer.on_tool_call_start(ToolCallStart(
             tool_id="t1",
             tool_name="shell",
-            partial_input={"command": "ls -la\ngit status --short"},
+            input={"command": "ls -la\ngit status --short"},
         ))
 
         assert "shell(ls -la git status --short)" in self._panel_text(renderer)
 
     def test_the_end_event_parameters_are_what_the_row_keeps(self):
-        """A stream's fragments can be partial; the end event carries the
-        authoritative input, so the row must be rebuilt from it."""
+        """The end event carries the authoritative input, so the row is
+        rebuilt from it — whatever the start had said."""
         renderer = self._renderer()
         renderer.on_tool_call_start(ToolCallStart(
-            tool_id="t1", tool_name="shell", partial_input={"command": "ls"},
+            tool_id="t1", tool_name="shell", input={"command": "ls"},
         ))
         renderer.on_tool_call_end(ToolCallEnd(
             tool_id="t1",
@@ -665,7 +665,7 @@ class TestOneShotToolLine:
         renderer.on_tool_call_start(ToolCallStart(
             tool_id="t1",
             tool_name="shell",
-            partial_input={
+            input={
                 "description": "list the files",
                 "command": "ls -la",
             },
@@ -678,7 +678,7 @@ class TestOneShotToolLine:
         renderer.on_tool_call_start(ToolCallStart(
             tool_id="t1",
             tool_name="read_file",
-            partial_input={"file_path": "README.md"},
+            input={"file_path": "README.md"},
         ))
 
         assert "▶ read_file(file_path='README.md')" in buf.getvalue()
@@ -706,27 +706,27 @@ class TestHiddenToolCallInPanel:
 
     def test_the_start_draws_no_row(self):
         renderer = self._renderer()
-        renderer.on_tool_call_start(ToolCallStart(
+        renderer.on_tool_use_start(ToolUseStart(
             tool_id="t1",
             tool_name="plan_update",
-            partial_input={"step_id": "step-1"},
         ))
 
         assert renderer._tools == {}
         assert "plan_update" not in self._panel_text(renderer)
 
     def test_the_rest_of_the_call_leaves_no_trace_either(self):
-        """Deltas carry no tool name, so the id is what keeps a nameless
-        row from being drawn for a call the start turned away."""
+        """The id is what keeps the rest of a turned-away call from drawing
+        a row: both starts are filtered before either can create one."""
         renderer = self._renderer()
+        renderer.on_tool_use_start(ToolUseStart(
+            tool_id="t1",
+            tool_name="plan_update",
+        ))
+
         renderer.on_tool_call_start(ToolCallStart(
             tool_id="t1",
             tool_name="plan_update",
-            partial_input={"step_id": "step-1"},
-        ))
-
-        renderer.on_tool_call_delta(ToolCallDelta(
-            tool_id="t1", input_delta='{"status": "in_progress"}',
+            input={"step_id": "step-1", "status": "in_progress"},
         ))
         renderer.on_tool_call_end(ToolCallEnd(
             tool_id="t1",
@@ -747,7 +747,7 @@ class TestHiddenToolCallInPanel:
         """The filter is the declaration's, not every tool's."""
         renderer = self._renderer()
         renderer.on_tool_call_start(ToolCallStart(
-            tool_id="t1", tool_name="shell", partial_input={"command": "ls"},
+            tool_id="t1", tool_name="shell", input={"command": "ls"},
         ))
 
         assert renderer._tools["t1"].name == "shell"
@@ -763,7 +763,7 @@ class TestOneShotHiddenToolCall:
         renderer.on_tool_call_start(ToolCallStart(
             tool_id="t1",
             tool_name="plan_update",
-            partial_input={"step_id": "step-1"},
+            input={"step_id": "step-1"},
         ))
         renderer.on_tool_call_end(ToolCallEnd(
             tool_id="t1",
