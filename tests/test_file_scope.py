@@ -130,6 +130,40 @@ class TestRestricted:
         assert policy.classify(env) is FileScope.RESTRICTED
 
 
+class TestSymlinkedPrefix:
+    """A path spelled through a link is the path the tool opens — on macOS
+    ``/tmp`` and ``/home`` are links, so this is every temp directory and
+    every home directory reached by its short name.
+
+    Root and entries are resolved at construction and every classified
+    path is resolved too, which is what makes the two spellings agree.
+    Resolving only one side would make an entire workspace read as
+    external — a wall of prompts rather than a hole, but a wall all the
+    same.
+    """
+
+    @pytest.fixture
+    def linked(self, tmp_path: Path):
+        real = tmp_path / "real"
+        real.mkdir()
+        link = tmp_path / "linked"
+        link.symlink_to(real)
+        (real / ".env").write_text("k\n")
+        (real / "mod.py").write_text("x = 1\n")
+        return real, link
+
+    @pytest.mark.parametrize("spell_root", ["real", "linked"])
+    def test_both_spellings_land_in_the_same_scope(self, linked, spell_root):
+        real, link = linked
+        policy = FileScopePolicy(real if spell_root == "real" else link, (".env",))
+
+        assert policy.classify(link / "mod.py") is FileScope.WORKSPACE
+        assert policy.classify(real / "mod.py") is FileScope.WORKSPACE
+        assert policy.classify(link / ".env") is FileScope.RESTRICTED
+        assert policy.classify(real / ".env") is FileScope.RESTRICTED
+        assert policy.classify("/etc/hosts") is FileScope.EXTERNAL
+
+
 class TestClassifyMany:
     """One call can name several paths; the strictest of them decides."""
 
