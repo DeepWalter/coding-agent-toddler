@@ -274,6 +274,57 @@ class TestRestrictedPathsConfig:
         assert Settings().restricted_paths == defaults.RESTRICTED_PATHS
 
 
+class TestSessionWiring:
+    """The session is what knows the working directory, and the settings
+    are what know which paths are off-limits — this is the join between
+    them, and the only place the two meet.
+
+    Driven all the way through a turn, because that is where a mistake in
+    the joining shows up: the real ``read_file`` tool, the session's own
+    policy, the loop's gate.
+    """
+
+    @pytest.fixture
+    def settings(self):
+        from toddler.config.settings import Settings
+
+        return Settings(restricted_paths=(".env",))
+
+    @pytest.fixture
+    def storage(self, tmp_path):
+        from toddler.session.database import SQLiteDatabase
+        from toddler.session.storage import StorageManager
+
+        db = SQLiteDatabase(tmp_path / "sessions.db")
+        db.open()
+        return StorageManager(db)
+
+    async def test_a_restricted_read_never_reaches_the_tool(
+        self, tmp_path, settings, storage
+    ):
+        from tests.mocks import make_mock_llm, text_response, tool_use_response
+        from toddler.agent.events import AgentPaused, ToolCallEnd
+        from toddler.session.manager import SessionManager
+
+        (tmp_path / ".env").write_text("API_KEY=secret\n")
+        llm = make_mock_llm(
+            tool_use_response(
+                "read_file", {"file_path": str(tmp_path / ".env")}
+            ),
+            text_response("Understood."),
+        )
+        mgr = SessionManager(settings, storage, llm, repo_root=tmp_path)
+        await mgr.resolve()
+
+        events = [event async for event in mgr.process_turn("read .env")]
+
+        assert not [e for e in events if isinstance(e, AgentPaused)]
+        ends = [e for e in events if isinstance(e, ToolCallEnd)]
+        assert len(ends) == 1
+        assert not ends[0].result.success
+        assert "restricted" in ends[0].result.error
+
+
 class TestPolicyThreading:
     """Every default tool carries the session's policy — the gate reads the
     tool's answer, so a tool that kept a default one would be judged
