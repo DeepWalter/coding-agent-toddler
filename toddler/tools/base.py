@@ -109,6 +109,31 @@ def _resolve_path(
         return None
 
 
+def display_path(value: str | os.PathLike[str]) -> Path:
+    """*value* as an absolute path with the links left where they are.
+
+    What a tool opens is the resolved path; what a message should name is
+    the path the caller wrote.  On macOS whole trees differ between the
+    two — ``/tmp`` is ``/private/tmp``, ``/home`` is
+    ``/System/Volumes/Data/home`` — and someone looking for the file they
+    named is served better by the spelling they used.
+
+    A path whose ``..`` stands after a link is the exception, and is
+    resolved: the kernel reads ``link/..`` as the parent of what the link
+    points at, not of the link, so the spelling as written would name a
+    file the call never touches.
+    """
+    try:
+        path = Path(value).expanduser()
+    except (RuntimeError, ValueError):
+        # ``~user`` for a user this machine has not got, or a NUL — the
+        # caller's own handling refuses it; there is nothing to name.
+        return Path(str(value))
+    if ".." in path.parts:
+        return path.resolve()
+    return Path(os.path.abspath(path))
+
+
 def _normalize_path(
     value: str | os.PathLike[str] | None,
     *,
@@ -242,12 +267,12 @@ class FileScopePolicy:
 
         For the denial message, so a refusal can name what it refused
         rather than leaving the model to guess which argument was the
-        problem.
+        problem.  Named as it was given, for the same reason messages
+        read the written path everywhere else.
         """
         for path in paths:
             if self.classify(path) is FileScope.RESTRICTED:
-                resolved = _resolve_path(path, base=self._root)
-                return resolved if resolved is not None else Path(str(path))
+                return Path(str(path))
         return None
 
     def _is_restricted(self, path: Path) -> bool:
@@ -578,18 +603,23 @@ class BaseTool(ABC):
         return self._scope_policy
 
     def get_scope_paths(self, **kwargs) -> list[Path]:
-        """The paths this invocation would touch, resolved.
+        """The paths this invocation would touch.
 
         Default: whatever :attr:`path_params` names.  Overridden where
         the paths are not plain parameters — ``Shell`` reads them out of
         the command string — because only the tool knows what base its
         arguments resolve against.
+
+        The paths are named as they were given, not resolved: the policy
+        resolves them itself before comparing, and a refusal reads better
+        when it names the path the caller used than the one the
+        filesystem knows it by.
         """
         paths: list[Path] = []
         for name in self.path_params:
-            resolved = _resolve_path(kwargs.get(name))
-            if resolved is not None:
-                paths.append(resolved)
+            path = _expand_path(kwargs.get(name))
+            if path is not None:
+                paths.append(path)
         return paths
 
     def get_file_scope(self, **kwargs) -> FileScope:

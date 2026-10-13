@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from toddler.tools.base import BaseTool, Permission, ToolResult
+from toddler.tools.base import (
+    BaseTool,
+    Permission,
+    ToolResult,
+    display_path,
+)
 from toddler.tools.registry import TOOL_CATALOG
 
 # ---------------------------------------------------------------------------
@@ -62,13 +67,17 @@ class ReadFile(BaseTool):
         limit: int | None = None,
     ) -> ToolResult:
         path = Path(file_path).expanduser().resolve()
+        # What the file is called to whoever asked for it: the resolved
+        # path is what gets opened, and on macOS it can be spelled quite
+        # differently (``/tmp`` is ``/private/tmp``).
+        named = display_path(file_path)
         if not path.exists():
             return ToolResult(
                 tool_id="",
                 tool_name=self.name,
                 success=False,
                 output="",
-                error=f"File not found: {path}",
+                error=f"File not found: {named}",
             )
         if path.is_dir():
             return ToolResult(
@@ -76,7 +85,7 @@ class ReadFile(BaseTool):
                 tool_name=self.name,
                 success=False,
                 output="",
-                error=f"Path is a directory, not a file: {path}",
+                error=f"Path is a directory, not a file: {named}",
             )
 
         try:
@@ -87,7 +96,7 @@ class ReadFile(BaseTool):
                 tool_name=self.name,
                 success=False,
                 output="",
-                error=f"Cannot read {path} — not a UTF-8 text file.",
+                error=f"Cannot read {named} — not a UTF-8 text file.",
             )
 
         lines = text.splitlines(keepends=True)
@@ -163,6 +172,7 @@ class WriteFile(BaseTool):
 
     async def execute(self, file_path: str, content: str) -> ToolResult:
         path = Path(file_path).expanduser().resolve()
+        named = display_path(file_path)
 
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -173,14 +183,14 @@ class WriteFile(BaseTool):
                 tool_name=self.name,
                 success=False,
                 output="",
-                error=f"Failed to write {path}: {exc}",
+                error=f"Failed to write {named}: {exc}",
             )
 
         return ToolResult(
             tool_id="",
             tool_name=self.name,
             success=True,
-            output=f"Wrote {len(content)} bytes to {path}.",
+            output=f"Wrote {len(content)} bytes to {named}.",
             metadata={"path": str(path), "bytes": len(content)},
         )
 
@@ -256,6 +266,7 @@ class EditFile(BaseTool):
         replace_all: bool = False,
     ) -> ToolResult:
         path = Path(file_path).expanduser().resolve()
+        named = display_path(file_path)
 
         if not path.exists():
             return ToolResult(
@@ -263,7 +274,7 @@ class EditFile(BaseTool):
                 tool_name=self.name,
                 success=False,
                 output="",
-                error=f"File not found: {path}",
+                error=f"File not found: {named}",
             )
         if path.is_dir():
             return ToolResult(
@@ -271,7 +282,7 @@ class EditFile(BaseTool):
                 tool_name=self.name,
                 success=False,
                 output="",
-                error=f"Path is a directory, not a file: {path}",
+                error=f"Path is a directory, not a file: {named}",
             )
 
         try:
@@ -282,7 +293,7 @@ class EditFile(BaseTool):
                 tool_name=self.name,
                 success=False,
                 output="",
-                error=f"Cannot edit {path} — not a UTF-8 text file.",
+                error=f"Cannot edit {named} — not a UTF-8 text file.",
             )
 
         count = original.count(old_string)
@@ -294,7 +305,7 @@ class EditFile(BaseTool):
                 success=False,
                 output="",
                 error=(
-                    f"old_string not found in {path}. "
+                    f"old_string not found in {named}. "
                     "The text to replace must match exactly, including "
                     "whitespace and indentation."
                 ),
@@ -307,7 +318,7 @@ class EditFile(BaseTool):
                 success=False,
                 output="",
                 error=(
-                    f"old_string appears {count} times in {path}. "
+                    f"old_string appears {count} times in {named}. "
                     "Add more context to make it unique, or set "
                     "``replace_all=true`` to replace every occurrence."
                 ),
@@ -323,7 +334,7 @@ class EditFile(BaseTool):
                 tool_name=self.name,
                 success=False,
                 output="",
-                error=f"Failed to write {path}: {exc}",
+                error=f"Failed to write {named}: {exc}",
             )
 
         replaced = count if replace_all else 1
@@ -331,7 +342,7 @@ class EditFile(BaseTool):
             tool_id="",
             tool_name=self.name,
             success=True,
-            output=f"Replaced {replaced} occurrence(s) in {path}.",
+            output=f"Replaced {replaced} occurrence(s) in {named}.",
             metadata={
                 "path": str(path),
                 "occurrences_replaced": replaced,

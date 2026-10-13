@@ -119,6 +119,15 @@ through `create_default_registry`.
   workspace (`ls ..`, `find /tmp`, `git -C /other status`) now prompts where it
   used to run unasked.  The classifier cannot tell a harmless look from a
   reach, and the agent can usually say what it wants inside the workspace.
+- **Messages name the path as written; the disk is given the resolved one.**
+  `resolve()` is what opening needs, and on macOS it rewrites whole trees
+  (`/tmp` → `/private/tmp`, `/home` → `/System/Volumes/Data/home`), so a
+  refusal or a "wrote N bytes to …" that echoed it would name a file the
+  reader never asked for.  `display_path()` keeps the spelling and resolves
+  only a `..` standing after a link, where the written form genuinely names a
+  different file.  The one place the two must not be conflated is `grep`:
+  BSD grep will not descend into a directory handed to it as a link, so the
+  search runs against the resolved path and the match lines are renamed back.
 
 ## Verification
 

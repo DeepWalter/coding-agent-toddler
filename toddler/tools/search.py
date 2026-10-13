@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 
-from toddler.tools.base import BaseTool, Permission, ToolResult
+from toddler.tools.base import (
+    BaseTool,
+    Permission,
+    ToolResult,
+    display_path,
+)
 from toddler.tools.registry import TOOL_CATALOG
 
 # Directories never worth searching — build artifacts, caches, and vendored
@@ -94,14 +100,21 @@ class Grep(BaseTool):
         max_results: int = 100,
         ignore_case: bool = False,
     ) -> ToolResult:
+        # Searched as the filesystem knows it, named as the caller wrote
+        # it.  The two have to be kept apart here: BSD grep — what
+        # ``/usr/bin/grep`` is on macOS — will not descend into a
+        # directory handed to it as a link, so a search rooted at one
+        # comes back empty rather than wrong.  The match lines are
+        # renamed back below.
         search_path = Path(path).expanduser().resolve()
+        named = display_path(path)
         if not search_path.exists():
             return ToolResult(
                 tool_id="",
                 tool_name=self.name,
                 success=False,
                 output="",
-                error=f"Path not found: {search_path}",
+                error=f"Path not found: {named}",
             )
 
         cmd = _build_grep_cmd(
@@ -130,12 +143,18 @@ class Grep(BaseTool):
                 error="Grep timed out after 30s.",
             )
         except FileNotFoundError:
-            # grep not available → pure-Python fallback
+            # grep not available → pure-Python fallback.  It walks the
+            # tree itself and has no links to lose, so it reads — and
+            # names — the path as the caller wrote it.
             return await self._fallback_search(
-                pattern, search_path, include, max_results, ignore_case
+                pattern, named, include, max_results, ignore_case
             )
 
-        output = stdout.decode("utf-8", errors="replace").strip()
+        output = _named_matches(
+            stdout.decode("utf-8", errors="replace").strip(),
+            search_path,
+            named,
+        )
         err_output = stderr.decode("utf-8", errors="replace").strip()
 
         if proc.returncode not in (0, 1):
@@ -248,6 +267,27 @@ def _build_grep_cmd(
     return cmd
 
 
+def _named_matches(output: str, root: Path, named: Path) -> str:
+    """Match lines with the searched tree named as the caller wrote it.
+
+    ``grep`` prefixes every line with the path it was given, which is the
+    resolved one; the reader asked for the other spelling.  The rename is
+    a no-op whenever the two agree, which is most of the time — they
+    differ only for a path reached through a link.
+    """
+    if not output or root == named:
+        return output
+    renamed: list[str] = []
+    for line in output.splitlines():
+        for separator in (os.sep, ":"):
+            prefix = str(root) + separator
+            if line.startswith(prefix):
+                line = str(named) + separator + line[len(prefix):]
+                break
+        renamed.append(line)
+    return "\n".join(renamed)
+
+
 def _match_result(
     *,
     tool_name: str,
@@ -352,7 +392,9 @@ class Glob(BaseTool):
         path: str = ".",
         max_results: int = 200,
     ) -> ToolResult:
-        base = Path(path).expanduser().resolve()
+        # The matches are printed under this base, so it is named as the
+        # caller wrote it; a link still resolves when it is opened.
+        base = display_path(path)
         if not base.is_dir():
             return ToolResult(
                 tool_id="",

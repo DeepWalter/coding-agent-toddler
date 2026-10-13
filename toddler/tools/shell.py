@@ -16,6 +16,7 @@ from toddler.tools.base import (
     FileScopePolicy,
     Permission,
     ToolResult,
+    display_path,
 )
 from toddler.tools.registry import TOOL_CATALOG
 
@@ -265,18 +266,14 @@ _GLOB_CHARS = "*?["
 _GLOB_LIMIT = 200
 
 
-def _working_dir(working_dir: str | None) -> Path | None:
+def _working_dir(working_dir: str | None) -> Path:
     """Where the command runs — ``working_dir``, or the process cwd.
 
-    ``None`` when the argument cannot be resolved at all; the caller reads
-    that as unknowable rather than as nowhere.
+    Named as the caller wrote it, since that is what a message about it
+    should say; running in it is the same directory either way, links and
+    all.
     """
-    if not working_dir:
-        return Path.cwd()
-    try:
-        return Path(working_dir).expanduser().resolve()
-    except (OSError, RuntimeError, ValueError):
-        return None
+    return display_path(working_dir) if working_dir else Path.cwd()
 
 
 def _scan_command(command: str, cwd: Path) -> tuple[list[Path], bool]:
@@ -492,8 +489,6 @@ class Shell(BaseTool):
         directory asks rather than allowing whatever the command finds.
         """
         cwd = _working_dir(kwargs.get("working_dir"))
-        if cwd is None:
-            return [], True     # nowhere to run, and nothing placeable
         paths, has_expansion = _scan_command(
             str(kwargs.get("command", "")), cwd
         )
@@ -509,11 +504,7 @@ class Shell(BaseTool):
         working_dir: str | None = None,
         timeout: int | None = None,
     ) -> ToolResult:
-        cwd = (
-            str(Path(working_dir).expanduser().resolve())
-            if working_dir
-            else os.getcwd()
-        )
+        cwd = str(_working_dir(working_dir))
         if working_dir and not Path(cwd).is_dir():
             return ToolResult(
                 tool_id="",
