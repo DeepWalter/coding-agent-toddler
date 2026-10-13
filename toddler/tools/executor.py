@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 from toddler.tools.base import (
     BaseTool,
+    Decision,
     Permission,
     PermissionManager,
     PermissionMode,
     ToolCall,
     ToolResult,
+    blocked_message,
     execution_params,
 )
 from toddler.tools.registry import ToolRegistry
@@ -22,6 +25,8 @@ __all__ = [
     "ToolExecutor",
     "always_approve",
 ]
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Type aliases for callbacks
@@ -73,12 +78,18 @@ async def always_approve(
 class ToolExecutor:
     """Executes tool calls with permission gating and checkpoint integration.
 
-    Permission logic delegates to
-    :meth:`~PermissionManager.needs_confirmation` via a shared
-    :class:`PermissionManager`::
+    The verdict comes from :meth:`~PermissionManager.decide`, shared with
+    the agent loop, over a call's tier and the scope of its files::
 
-        MANUAL (default): READ/SHELL_SAFE auto; WRITE/SHELL_DANGEROUS confirm
-        AUTO:             READ/SHELL_SAFE/WRITE auto; SHELL_DANGEROUS confirm
+        restricted (any tier, any mode): deny
+        outside the workspace:           ask, whatever the mode
+        workspace, MANUAL:               READ/SHELL_SAFE allow;
+                                         WRITE/SHELL_DANGEROUS ask
+        workspace, AUTO:                 as MANUAL, plus WRITE allows
+
+    Only ``ask`` reaches *confirm_cb*: a denial is policy rather than a
+    question, so it holds even when no callback is configured — gating is
+    then assumed to be handled upstream by the agent loop.
 
     The executor is deliberately decoupled from the agent loop — it receives
     a ``ToolCall`` and returns a ``ToolResult``, with all side-effect concerns
@@ -89,9 +100,9 @@ class ToolExecutor:
     registry : ToolRegistry
         The tool registry to resolve tool names from.
     confirm_cb : ConfirmCallback | None
-        Async callback invoked when user confirmation is needed.
-        When ``None`` (the default), all tools are auto-approved —
-        gating is assumed to be handled upstream by the agent loop.
+        Async callback invoked when user confirmation is needed.  When
+        ``None`` (the default), every confirmation is granted — the loop
+        pre-gates before calling the executor — but a denial still is not.
     checkpoint_cb : CheckpointCallback | None
         Pre-execution hook for creating checkpoints before mutating tools.
     permission_manager : PermissionManager | None
@@ -146,7 +157,20 @@ class ToolExecutor:
 
         # --- permission gate ---
         perm = tool.get_permission(**params)
-        if not await self._check_permission(tool, params, perm):
+        decision = self._perm_mgr.decide(perm, tool.get_file_scope(**params))
+        if decision is Decision.DENY:
+            # Refused before the confirmation callback is consulted: a
+            # restricted path is not a question, so no callback — least of
+            # all the auto-approving default — may answer it.
+            logger.warning("Blocked restricted call: %s", call.tool_name)
+            return ToolResult(
+                tool_id=call.tool_id,
+                tool_name=call.tool_name,
+                success=False,
+                output="",
+                error=blocked_message(tool, params),
+            )
+        if decision is Decision.ASK and not await self._confirm(tool, params, perm):
             return ToolResult(
                 tool_id=call.tool_id,
                 tool_name=call.tool_name,
@@ -181,19 +205,6 @@ class ToolExecutor:
     # ------------------------------------------------------------------
     # Permission helpers
     # ------------------------------------------------------------------
-
-    async def _check_permission(
-        self, tool: BaseTool, params: dict[str, Any], perm: Permission
-    ) -> bool:
-        """Return ``True`` if execution is allowed for this tool + params.
-
-        Delegates the policy decision to the shared
-        :class:`PermissionManager` and only invokes
-        the user-confirmation callback when the policy says so.
-        """
-        if not self._perm_mgr.needs_confirmation(perm):
-            return True
-        return await self._confirm(tool, params, perm)
 
     async def _confirm(
         self, tool: BaseTool, params: dict[str, Any], perm: Permission

@@ -32,9 +32,11 @@ from toddler.agent.stop_conditions import StopConditionChecker
 from toddler.config.models import TurnConfig
 from toddler.llm import Message, MessageBlock, TokenUsage
 from toddler.tools.base import (
+    Decision,
     PermissionManager,
     ToolCall,
     ToolResult,
+    blocked_message,
 )
 
 if TYPE_CHECKING:
@@ -373,10 +375,15 @@ class AgentLoop:
             )
 
             # --- permission gating ---
+            # The decision is made once here and handed to the executor
+            # below, so the pause and the execution can never disagree
+            # about what was asked.
+            decision = self._decision_for(call)
+
             # Create the approval event *before* yielding AgentPaused so
             # that external code can call approve/deny immediately without
-            # a race.
-            if self._needs_confirmation_for(call):
+            # a race.  A denied call never pauses: there is nothing to ask.
+            if decision is Decision.ASK:
                 self._approval_event = asyncio.Event()
                 self._approval_granted = False
 
@@ -391,7 +398,7 @@ class AgentLoop:
                     choices=["approve", "deny"],
                 )
 
-            result = await self._execute_with_gating(call)
+            result = await self._execute_with_gating(call, decision)
 
             yield ToolCallEnd(
                 tool_id=call.tool_id,
@@ -420,17 +427,18 @@ class AgentLoop:
     # Internal helpers
     # ==================================================================
 
-    async def _execute_with_gating(self, call: ToolCall) -> ToolResult:
-        """Execute *call*, respecting the confirmation gate.
+    async def _execute_with_gating(
+        self, call: ToolCall, decision: Decision
+    ) -> ToolResult:
+        """Execute *call* under *decision*.
 
-        When the caller (the ``run()`` loop body) has determined that
-        confirmation is needed, it creates ``_approval_event`` and yields
-        :class:`AgentPaused` **before** calling this method.  This method
-        then blocks on the event until :meth:`approve_tool_call` or
-        :meth:`deny_tool_call` is called externally.
-
-        When no confirmation is needed the call is passed straight through
-        to the executor.
+        For :attr:`Decision.ASK` the caller (the ``run()`` loop body) has
+        already created ``_approval_event`` and yielded
+        :class:`AgentPaused`, so this method blocks on the event until
+        :meth:`approve_tool_call` or :meth:`deny_tool_call` is called
+        externally.  :attr:`Decision.ALLOW` passes straight through, and
+        :attr:`Decision.DENY` never runs at all — it is the policy
+        answering, not a question left open.
         """
         # Unknown tool — produce error result directly.
         tool = self._registry.get(call.tool_name)
@@ -443,12 +451,24 @@ class AgentLoop:
                 error=f"Unknown tool: '{call.tool_name}'",
             )
 
-        # If confirmation is not needed, go straight to execution.
-        if not self._needs_confirmation_for(call):
+        if decision is Decision.DENY:
+            logger.warning(
+                "Blocked restricted call: %s", call.tool_name
+            )
+            return ToolResult(
+                tool_id=call.tool_id,
+                tool_name=call.tool_name,
+                success=False,
+                output="",
+                error=blocked_message(tool, call.parameters),
+            )
+
+        # Nothing to ask — go straight to execution.
+        if decision is Decision.ALLOW:
             return await self._executor.execute(call)
 
-        # Confirmation is needed — the event was already created by run().
-        # Wait for external approval.
+        # The event was already created by run() before it yielded the
+        # pause; wait for the answer.
         if self._approval_event is not None:
             await self._approval_event.wait()
 
@@ -463,12 +483,24 @@ class AgentLoop:
 
         return await self._executor.execute(call)
 
-    def _needs_confirmation_for(self, call: ToolCall) -> bool:
-        """Return ``True`` when *call* requires user confirmation under the
-        current permission gating mode.
+    def _decision_for(self, call: ToolCall) -> Decision:
+        """The gate's verdict on *call*.
+
+        Both halves are the tool's own answer — its tier, and where its
+        files live — so a tool that classifies dynamically (``shell``,
+        ``git_branch``) is judged on this call rather than on its class.
+        An unclassifiable call asks: a policy that cannot place a call
+        has not cleared it.
         """
         tool = self._registry.get(call.tool_name)
         if tool is None:
-            return False  # executor will produce the error
-        perm = tool.get_permission(**call.parameters)
-        return self._perm_mgr.needs_confirmation(perm)
+            return Decision.ALLOW   # the executor produces the error
+        try:
+            perm = tool.get_permission(**call.parameters)
+            scope = tool.get_file_scope(**call.parameters)
+        except Exception:
+            logger.exception(
+                "Could not classify %s — asking", call.tool_name
+            )
+            return Decision.ASK
+        return self._perm_mgr.decide(perm, scope)

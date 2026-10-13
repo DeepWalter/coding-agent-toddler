@@ -264,12 +264,14 @@ class FileScopePolicy:
 
 
 class PermissionManager:
-    """Mutable container for the current :class:`PermissionMode`.
+    """The session's gating policy — the mode, and what it decides.
 
     Owned by :class:`~toddler.session.manager.SessionManager` and
     shared with :class:`~toddler.agent.loop.AgentLoop` and
     :class:`~toddler.tools.executor.ToolExecutor` so they always see the
-    same live mode without coupling to the state machine.
+    same live mode without coupling to the state machine.  Both gates
+    ask :meth:`decide`, so the two of them answer alike by construction
+    rather than by keeping two copies of the policy in step.
 
     Parameters
     ----------
@@ -289,19 +291,49 @@ class PermissionManager:
         """Replace the current permission gating mode."""
         self._mode = mode
 
-    def needs_confirmation(self, perm: Permission) -> bool:
-        """Return ``True`` when *perm* requires user confirmation under the
-        current mode.
+    def decide(self, perm: Permission, scope: FileScope) -> Decision:
+        """What to do with a call of tier *perm* reaching *scope*.
 
-        This is the **single source of truth** for the permission gating
-        policy — no mirrored logic to keep in sync.
+        This is the **single source of truth** for the gating policy —
+        no mirrored logic to keep in sync.
+
+        Scope is read first.  A restricted file is refused whatever the
+        tier and whatever the mode — ``READ`` included, ``AUTO``
+        included — and no approval lifts it: it is policy, not a
+        question.  Reaching outside the workspace is never automatic
+        either, though for a different reason: how far past the ground
+        the agent was given is the user's decision to make, and the
+        answer to an unmade decision is to ask.  Inside the workspace
+        the tiers hold, with ``AUTO`` adding ``WRITE``.
         """
+        if scope is FileScope.RESTRICTED:
+            return Decision.DENY
+        if scope is FileScope.EXTERNAL:
+            return Decision.ASK
         if perm in (Permission.READ, Permission.SHELL_SAFE):
-            return False
-        if perm is Permission.WRITE:
-            return self._mode is not PermissionMode.AUTO
-        # SHELL_DANGEROUS and unknown — always confirm
-        return True
+            return Decision.ALLOW
+        if perm is Permission.WRITE and self._mode is PermissionMode.AUTO:
+            return Decision.ALLOW
+        # WRITE under MANUAL, SHELL_DANGEROUS in both, and any tier a
+        # later tool introduces — a new tier has to ask before it may run.
+        return Decision.ASK
+
+
+def blocked_message(tool: BaseTool, params: dict) -> str:
+    """What a call refused by the restricted policy reports.
+
+    It reaches the model as the call's result and stays in the transcript,
+    so it names the path that was refused and says that retrying is
+    pointless — a bare refusal invites the same call, spelled differently.
+    """
+    match = tool.scope_policy.restricted_match(tool.get_scope_paths(**params))
+    where = f"'{match}'" if match is not None else "a restricted path"
+    return (
+        f"Blocked: {tool.summarize_call(**params)} touches {where}, which "
+        f"is restricted and cannot be read or written. The call was not "
+        f"executed and cannot be approved — tell the user this path is "
+        f"off-limits instead of retrying it."
+    )
 
 
 # ---------------------------------------------------------------------------

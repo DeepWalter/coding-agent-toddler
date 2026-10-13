@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
@@ -38,16 +38,15 @@ from toddler.llm import (
 from toddler.llm.base import BaseLLMProvider
 from toddler.tools.base import (
     BaseTool,
+    FileScopePolicy,
     Permission,
     PermissionManager,
     PermissionMode,
+    ToolCall,
     ToolResult,
 )
 from toddler.tools.executor import ToolExecutor
 from toddler.tools.registry import ToolRegistry
-
-if TYPE_CHECKING:
-    pass
 
 # ============================================================================
 # Mock LLM Provider
@@ -741,6 +740,154 @@ class TestPermissionMode:
 
         paused = [e for e in events if isinstance(e, AgentPaused)]
         assert len(paused) == 1  # WRITE pauses (MANUAL default)
+
+
+class PathTool(BaseTool):
+    """A mock READ tool whose reach is the file it names."""
+
+    name = "read_path"
+    description = "Read the named file"
+    parameters = {
+        "type": "object",
+        "properties": {
+            "file_path": {"type": "string", "description": "File to read"}
+        },
+        "required": ["file_path"],
+    }
+    path_params = ("file_path",)
+
+    async def execute(self, **kwargs) -> ToolResult:
+        return ToolResult(
+            tool_id="",
+            tool_name=self.name,
+            success=True,
+            output=f"Read: {kwargs.get('file_path')}",
+        )
+
+    @property
+    def permission(self) -> Permission:
+        return Permission.READ
+
+
+class TestFileScopeGating:
+    """Where a call reaches counts as much as what it does.
+
+    A restricted file is refused without a prompt — it is policy, not a
+    question — and a file outside the workspace is never taken on the
+    agent's own judgement, in either mode.
+    """
+
+    @pytest.fixture
+    def workspace(self, tmp_path: Path) -> Path:
+        (tmp_path / ".env").write_text("API_KEY=secret\n")
+        (tmp_path / "notes.txt").write_text("notes\n")
+        return tmp_path
+
+    @pytest.fixture
+    def make_loop(self, settings, conv_ctx):
+        """Build a loop over a registry whose tool carries *workspace*'s
+        policy — the wiring :class:`SessionManager` does."""
+
+        def build(workspace: Path, responses, mode=PermissionMode.MANUAL):
+            policy = FileScopePolicy(workspace, (".env",))
+            registry = ToolRegistry()
+            registry.register(PathTool(scope_policy=policy))
+            perm_mgr = PermissionManager(mode)
+            executor = ToolExecutor(registry, permission_manager=perm_mgr)
+            return AgentLoop(
+                MockLLMProvider(responses=responses),
+                registry,
+                executor,
+                settings,
+                context=conv_ctx,
+                permission_manager=perm_mgr,
+            )
+
+        return build
+
+    @staticmethod
+    def _responses(file_path: str) -> list:
+        return [
+            _make_llm_response(
+                tool_blocks=[
+                    _make_tool_use_block("c1", "read_path", {"file_path": file_path})
+                ],
+                stop_reason="tool_use",
+            ),
+            _make_llm_response(text="Done", stop_reason="end_turn"),
+        ]
+
+    @pytest.mark.parametrize("mode", [PermissionMode.MANUAL, PermissionMode.AUTO])
+    async def test_a_restricted_file_is_denied_without_asking(
+        self, make_loop, workspace, mode
+    ):
+        """No pause: there is nothing to ask.  A restricted path is
+        refused whatever the mode, so approving is not an option the user
+        is offered."""
+        loop = make_loop(workspace, self._responses(str(workspace / ".env")), mode)
+        events = await _collect_events(loop.run("Read .env", config=TEST_TURN_CONFIG))
+
+        assert not [e for e in events if isinstance(e, AgentPaused)]
+
+        ends = [e for e in events if isinstance(e, ToolCallEnd)]
+        assert len(ends) == 1
+        assert not ends[0].result.success
+        assert "restricted" in ends[0].result.error
+        assert ".env" in ends[0].result.error
+
+    @pytest.mark.parametrize("mode", [PermissionMode.MANUAL, PermissionMode.AUTO])
+    async def test_an_external_file_pauses(self, make_loop, workspace, mode):
+        """Outside the workspace is the user's call — in AUTO too, where
+        the agent is otherwise trusted to run on its own."""
+        loop = make_loop(workspace, self._responses("/etc/hosts"), mode)
+
+        gen = loop.run("Read /etc/hosts", config=TEST_TURN_CONFIG)
+        events = []
+        async for event in gen:
+            events.append(event)
+            if isinstance(event, AgentPaused):
+                loop.approve_tool_call()
+
+        paused = [e for e in events if isinstance(e, AgentPaused)]
+        assert len(paused) == 1
+        assert "read_path" in paused[0].prompt
+
+        ends = [e for e in events if isinstance(e, ToolCallEnd)]
+        assert ends[0].result.success  # approved, so it ran
+
+    async def test_a_workspace_file_runs_unasked(self, make_loop, workspace):
+        """The fast path: nothing changed for a call inside the workspace."""
+        loop = make_loop(workspace, self._responses(str(workspace / "notes.txt")))
+        events = await _collect_events(loop.run("Read notes", config=TEST_TURN_CONFIG))
+
+        assert not [e for e in events if isinstance(e, AgentPaused)]
+        ends = [e for e in events if isinstance(e, ToolCallEnd)]
+        assert ends[0].result.success
+
+
+class TestExecutorDenyGuard:
+    """The executor is the second gate, and the denial holds there even
+    when its confirmation callback would have approved anything."""
+
+    async def test_the_default_executor_still_denies(self, tmp_path: Path):
+        """No ``confirm_cb`` means "approve whatever is asked" — a denial
+        is not something it may be asked, so it stands."""
+        policy = FileScopePolicy(tmp_path, (".env",))
+        registry = ToolRegistry()
+        registry.register(PathTool(scope_policy=policy))
+        executor = ToolExecutor(registry)
+
+        result = await executor.execute(
+            ToolCall(
+                tool_id="c1",
+                tool_name="read_path",
+                parameters={"file_path": str(tmp_path / ".env")},
+            )
+        )
+
+        assert not result.success
+        assert result.output == ""          # the tool never ran
+        assert "restricted" in result.error
 
 
 # ============================================================================

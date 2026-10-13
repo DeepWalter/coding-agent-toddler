@@ -34,7 +34,7 @@ from toddler.cli.renderer import ConfirmResult
 from toddler.llm import LLMResponse, Message, MessageBlock, TokenUsage
 from toddler.llm.base import BaseLLMProvider
 from toddler.llm.provider import OpenAICompatibleProvider
-from toddler.tools.base import Permission, PermissionMode
+from toddler.tools.base import Decision, FileScope, Permission, PermissionMode
 from toddler.tools.plan import PlanState, PlanUpdateTool
 
 # ============================================================================
@@ -1777,18 +1777,60 @@ class TestPermissionMode:
         mgr.set_mode(PermissionMode.AUTO)
         assert mgr.mode == PermissionMode.AUTO
 
-    def test_needs_confirmation_delegates(self):
-        from toddler.tools.base import Permission, PermissionManager
-        mgr = PermissionManager()
-        # READ never needs confirmation
-        assert not mgr.needs_confirmation(Permission.READ)
-        # WRITE needs confirmation in MANUAL
-        assert mgr.needs_confirmation(Permission.WRITE)
-        # WRITE does NOT need confirmation in AUTO
-        mgr.set_mode(PermissionMode.AUTO)
-        assert not mgr.needs_confirmation(Permission.WRITE)
-        # SHELL_DANGEROUS always needs confirmation
-        assert mgr.needs_confirmation(Permission.SHELL_DANGEROUS)
+    @pytest.mark.parametrize(
+        ("mode", "perm", "scope", "expected"),
+        [
+            # Workspace files: the tiers as they have always been.
+            (PermissionMode.MANUAL, Permission.READ, FileScope.WORKSPACE, Decision.ALLOW),
+            (PermissionMode.MANUAL, Permission.SHELL_SAFE, FileScope.WORKSPACE, Decision.ALLOW),
+            (PermissionMode.MANUAL, Permission.WRITE, FileScope.WORKSPACE, Decision.ASK),
+            (
+                PermissionMode.MANUAL,
+                Permission.SHELL_DANGEROUS,
+                FileScope.WORKSPACE,
+                Decision.ASK,
+            ),
+            (PermissionMode.AUTO, Permission.READ, FileScope.WORKSPACE, Decision.ALLOW),
+            (PermissionMode.AUTO, Permission.WRITE, FileScope.WORKSPACE, Decision.ALLOW),
+            (
+                PermissionMode.AUTO,
+                Permission.SHELL_DANGEROUS,
+                FileScope.WORKSPACE,
+                Decision.ASK,
+            ),
+            # Outside the workspace nothing is automatic, AUTO included.
+            (PermissionMode.MANUAL, Permission.READ, FileScope.EXTERNAL, Decision.ASK),
+            (PermissionMode.AUTO, Permission.READ, FileScope.EXTERNAL, Decision.ASK),
+            (PermissionMode.AUTO, Permission.WRITE, FileScope.EXTERNAL, Decision.ASK),
+            (
+                PermissionMode.AUTO,
+                Permission.SHELL_SAFE,
+                FileScope.EXTERNAL,
+                Decision.ASK,
+            ),
+            # A restricted path is refused at every tier, in every mode —
+            # no approval lifts it.
+            (PermissionMode.MANUAL, Permission.READ, FileScope.RESTRICTED, Decision.DENY),
+            (PermissionMode.AUTO, Permission.READ, FileScope.RESTRICTED, Decision.DENY),
+            (PermissionMode.AUTO, Permission.WRITE, FileScope.RESTRICTED, Decision.DENY),
+            (
+                PermissionMode.AUTO,
+                Permission.SHELL_SAFE,
+                FileScope.RESTRICTED,
+                Decision.DENY,
+            ),
+            (
+                PermissionMode.AUTO,
+                Permission.SHELL_DANGEROUS,
+                FileScope.RESTRICTED,
+                Decision.DENY,
+            ),
+        ],
+    )
+    def test_decide(self, mode, perm, scope, expected):
+        from toddler.tools.base import PermissionManager
+        mgr = PermissionManager(mode)
+        assert mgr.decide(perm, scope) is expected
 
     # Tests for plan-entry reset at the SessionManager level are in
     # TestSessionManagerPlanWorkflow below.
