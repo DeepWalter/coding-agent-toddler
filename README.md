@@ -131,7 +131,10 @@ toddler/
 - **LLM-agnostic** — OpenAI-compatible provider works with DeepSeek, OpenAI, and
   any compatible endpoint.
 - **Permission model** — Tools declare a tier (`READ`, `WRITE`, `SHELL_SAFE`,
-  `SHELL_DANGEROUS`); the agent pauses for confirmation before destructive ops.
+  `SHELL_DANGEROUS`) and the scope of the files a call reaches (the workspace,
+  outside it, or a restricted path); the agent pauses before destructive work
+  or anything out of the workspace, and refuses restricted paths such as
+  `.env` outright.
 - **Plan mode** — State machine that detects complex tasks, researches first,
   proposes a plan, then executes after user approval.
 - **Context window** — Automatic token counting with LLM-powered compaction to

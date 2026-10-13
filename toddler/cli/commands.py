@@ -446,13 +446,26 @@ class SlashCommandDispatcher:
             workflow = "EXECUTE"
 
         # -- gating --
+        # What differs between the modes is what the agent may do unasked
+        # *inside* its workspace; past it both modes ask, and the
+        # restricted list refuses in both — worth saying here, since a
+        # refusal is the one answer the user cannot overrule.
         gating = self._session_mgr.permission_mode.value.upper()
         if gating == "AUTO":
-            detail = "WRITE tools auto-approved; dangerous shell still confirms"  # noqa: E501
+            detail = (
+                "reads and writes inside the workspace run unasked; "
+                "anything outside it and dangerous shell ask"
+            )
         else:
-            detail = "WRITE and dangerous shell commands require confirmation"
+            detail = (
+                "reads inside the workspace run unasked; writes, anything "
+                "outside it and dangerous shell ask"
+            )
 
-        return f"**Mode:** {workflow}  •  **Gating:** {gating} — {detail}"
+        return (
+            f"**Mode:** {workflow}  •  **Gating:** {gating} — {detail}; "
+            f"restricted paths are refused"
+        )
 
     async def _cmd_rollback(self, args: str) -> CommandResult:
         """``/rollback <checkpoint_id>`` — rollback to a checkpoint."""
