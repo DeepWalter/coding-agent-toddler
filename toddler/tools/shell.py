@@ -6,10 +6,13 @@ import asyncio
 import os
 import re
 import shlex
+from collections.abc import Iterator
+from itertools import islice
 from pathlib import Path
 
 from toddler.tools.base import (
     BaseTool,
+    FileScope,
     FileScopePolicy,
     Permission,
     ToolResult,
@@ -231,6 +234,156 @@ def _is_executing_script(args: list[str]) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# File scope — the files a command names
+# ---------------------------------------------------------------------------
+
+# Commands whose first non-flag token is a pattern or a script, never a file
+# they open: ``grep -rn .env .`` searches for the string, it does not read
+# the file.  Reading it as a path would refuse a call that opens nothing,
+# and a refusal is not something the user can overrule — so the distinction
+# is worth the rule.
+_PATTERN_FIRST_COMMANDS = {"grep", "egrep", "fgrep", "sed", "awk"}
+
+# Flags whose value is a pattern for the same reason, not a file.
+_PATTERN_FLAGS = {"-name", "-iname", "-path", "-ipath", "-regex", "-regexp"}
+
+# Redirections whose next token names a file — the target of a write, or
+# the source of a read.  The others (``<<``, ``<<<``, ``<&``, ``>&``) name
+# a delimiter or a file descriptor instead.
+_FILE_REDIRECTIONS = {"<", ">", ">>"}
+
+# What the shell expands at run time.  A token carrying one names a file
+# this scanner cannot know — only that there is one to ask about.
+_EXPANSION_MARK = "$"
+
+# Glob metacharacters: a token carrying one and matching nothing literally
+# names whatever it expands to.
+_GLOB_CHARS = "*?["
+
+# How many files one glob is read as, so that a broad pattern is a scan
+# rather than a walk of the whole tree.
+_GLOB_LIMIT = 200
+
+
+def _working_dir(working_dir: str | None) -> Path | None:
+    """Where the command runs — ``working_dir``, or the process cwd.
+
+    ``None`` when the argument cannot be resolved at all; the caller reads
+    that as unknowable rather than as nowhere.
+    """
+    if not working_dir:
+        return Path.cwd()
+    try:
+        return Path(working_dir).expanduser().resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+
+def _scan_command(command: str, cwd: Path) -> tuple[list[Path], bool]:
+    """The files *command* names, and whether one hides behind an expansion.
+
+    A scan, not a parse: it reads the tokens a command hands to a program
+    that opens files, and answers with what they name.  Missing one is
+    cheap — the call falls back to the scope its command was placed in,
+    and anything the classifier doubted is confirmed with the user anyway.
+    Reading a token that is not a file is the expensive mistake: the
+    refusal it causes is one the user cannot overrule.  So the rule is
+    inclusion by evidence — a token is a path when it exists, when the
+    shell would create it (a redirection target), or when it is a glob
+    that matches something.
+    """
+    segments = _split_segments(command) or []
+    paths: list[Path] = []
+    has_expansion = False
+    for tokens in segments:
+        has_expansion = has_expansion or any(
+            _EXPANSION_MARK in token for token in tokens
+        )
+        for token, names_a_file in _segment_operands(tokens):
+            paths.extend(_token_paths(token, cwd, names_a_file=names_a_file))
+    return paths, has_expansion
+
+
+def _segment_operands(tokens: list[str]) -> Iterator[tuple[str, bool]]:
+    """The tokens of one segment that could name a file, and whether they
+    name one *whether or not it exists*.
+
+    Flags, the command itself, a pattern in pattern position and a heredoc
+    delimiter are all dropped here, so that what comes out can be read as
+    a path without the caller second-guessing it.
+    """
+    command = next((t for t in tokens if t not in _REDIRECTIONS), "")
+    base = command.rsplit("/", 1)[-1]
+    pattern_next = base in _PATTERN_FIRST_COMMANDS
+    seen_command = False
+    redirection: str | None = None
+
+    for token in tokens:
+        if token in _REDIRECTIONS:
+            redirection = token
+            continue
+        if redirection is not None:
+            names_a_file = redirection in _FILE_REDIRECTIONS
+            redirection = None
+            if names_a_file:
+                # ``echo x > .env`` creates the file it names: this is the
+                # one operand that is a path before it exists.
+                yield token, True
+            continue
+        if not seen_command:
+            seen_command = True
+            continue
+        if token.startswith("-"):
+            # ``--file=.env`` carries its operand in the flag itself; a
+            # flag with none is not a path, and a few flags take a pattern
+            # rather than a file.
+            _, separator, value = token.partition("=")
+            if separator and value:
+                yield value, True
+            elif token in _PATTERN_FLAGS:
+                pattern_next = True
+            continue
+        if pattern_next:
+            # The pattern position — reached after any flags, which is why
+            # it is tested here rather than on the first token.
+            pattern_next = False
+            continue
+        yield token, False
+
+
+def _token_paths(token: str, cwd: Path, *, names_a_file: bool) -> list[Path]:
+    """The files *token* could name, resolved against *cwd*."""
+    if not token or _EXPANSION_MARK in token:
+        # The shell expands it at run time — the scan reports the
+        # expansion instead of guessing at the file behind it.
+        return []
+    try:
+        path = Path(token).expanduser()
+    except (RuntimeError, ValueError):
+        return []
+    if not path.is_absolute():
+        path = cwd / path
+    if names_a_file or path.exists():
+        return [path]
+    if any(char in token for char in _GLOB_CHARS):
+        return _glob_matches(path)
+    return []
+
+
+def _glob_matches(path: Path) -> list[Path]:
+    """What a glob token matches, capped.
+
+    ``cat .*.env`` reads every file it matches, so the matches are what
+    has to be placed — the pattern alone names no file to place.
+    """
+    try:
+        matches = path.parent.glob(path.name)
+        return list(islice(matches, _GLOB_LIMIT))
+    except (OSError, ValueError):
+        return []
+
+
+# ---------------------------------------------------------------------------
 # Shell tool
 # ---------------------------------------------------------------------------
 
@@ -304,6 +457,47 @@ class Shell(BaseTool):
         if not command:
             return Permission.SHELL_DANGEROUS
         return classify_command(command)
+
+    # ------------------------------------------------------------------
+    # File scope (dynamic — based on the command string)
+    # ------------------------------------------------------------------
+
+    def get_scope_paths(self, **kwargs) -> list[Path]:
+        """The files the command names, plus where it runs."""
+        return self._scan(kwargs)[0]
+
+    def get_file_scope(self, **kwargs) -> FileScope:
+        """Place the command's files.
+
+        A command is not confined to what it names on its face: ``cat``
+        with a path takes it, but so does a redirection, a flag value, or
+        a glob.  What the scan cannot see through — an expansion the shell
+        performs at run time — asks instead of being assumed local, since
+        assuming is what would let ``cat $SECRET`` through.
+        """
+        paths, has_expansion = self._scan(kwargs)
+        scope = self.scope_policy.classify_many(paths)
+        if scope is FileScope.RESTRICTED:
+            return scope
+        if has_expansion:
+            return FileScope.EXTERNAL
+        return scope
+
+    def _scan(self, kwargs: dict) -> tuple[list[Path], bool]:
+        """The paths this call reaches, and whether one hides behind an
+        expansion.
+
+        The working directory is part of the reach — the command runs *in*
+        it — so a session rooted somewhere other than the process working
+        directory asks rather than allowing whatever the command finds.
+        """
+        cwd = _working_dir(kwargs.get("working_dir"))
+        if cwd is None:
+            return [], True     # nowhere to run, and nothing placeable
+        paths, has_expansion = _scan_command(
+            str(kwargs.get("command", "")), cwd
+        )
+        return [cwd, *paths], has_expansion
 
     # ------------------------------------------------------------------
     # Execution
