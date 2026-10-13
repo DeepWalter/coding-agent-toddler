@@ -66,3 +66,13 @@ PLAN_MODE_MULTI_FILE_INDICATORS = ["across", "multiple files", "and also"]
 # --- Shell ---
 SHELL_DEFAULT_TIMEOUT = 60  # seconds
 SHELL_MAX_TIMEOUT = 300
+
+# --- File scope ---
+# Paths the agent may never touch, whatever the gating mode: a call that
+# reaches one is refused outright and cannot be approved from the prompt.
+# An entry without a separator names a path inside the workspace; ``~``
+# expands to home.  Secrets live in these files — ``.env`` holds whatever
+# this project keeps out of git, and the toddler one holds the API key,
+# which a single read would put in the transcript and the model's context.
+# Replace the whole list with TODDLER_RESTRICTED_PATHS (pathsep-separated).
+RESTRICTED_PATHS = (".env", ".env.local", "~/.toddler/.env")

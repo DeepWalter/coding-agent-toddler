@@ -6,7 +6,15 @@ what makes it available to :func:`create_default_registry`.  The plan tool
 is imported for the same reason, even though it opts out of the default set.
 """
 
-from toddler.tools.base import BaseTool, Permission, ToolCall, ToolResult
+from toddler.tools.base import (
+    BaseTool,
+    Decision,
+    FileScope,
+    FileScopePolicy,
+    Permission,
+    ToolCall,
+    ToolResult,
+)
 from toddler.tools.executor import (
     CheckpointCallback,
     ConfirmCallback,
@@ -22,6 +30,9 @@ from toddler.tools.shell import Shell
 __all__ = [
     # Base
     "BaseTool",
+    "Decision",
+    "FileScope",
+    "FileScopePolicy",
     "Permission",
     "ToolCall",
     "ToolResult",
@@ -78,7 +89,9 @@ HIDDEN_TOOL_NAMES = frozenset(
 # ---------------------------------------------------------------------------
 
 
-def create_default_registry() -> ToolRegistry:
+def create_default_registry(
+    *, scope_policy: FileScopePolicy | None = None
+) -> ToolRegistry:
     """Return a :class:`ToolRegistry` holding every default tool.
 
     The tool modules above register themselves at import time (each class
@@ -89,10 +102,19 @@ def create_default_registry() -> ToolRegistry:
 
     Every call builds new instances: the caller owns the registry it gets,
     free to add ``plan_update`` for a plan phase or drop a tool, without
-    reaching the definitions or any other session.
+    reaching the definitions or any other session.  *scope_policy* is the
+    session's, handed to each tool so it can place the files a call names;
+    a tool that never receives one falls back to the working directory.
+
+    Parameters
+    ----------
+    scope_policy:
+        Where this session's workspace and restricted paths are.  Built
+        by :class:`~toddler.session.manager.SessionManager`, which owns
+        the working directory the tools run in.
     """
     registry = ToolRegistry(name="default")
     for tool in TOOL_CATALOG.list_all():
         if tool.in_default_registry:
-            registry.register(type(tool)())
+            registry.register(type(tool)(scope_policy=scope_policy))
     return registry

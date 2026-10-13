@@ -10,7 +10,12 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from toddler.tools.base import BaseTool, Permission, ToolResult
+from toddler.tools.base import (
+    BaseTool,
+    FileScopePolicy,
+    Permission,
+    ToolResult,
+)
 from toddler.tools.registry import TOOL_CATALOG
 
 if TYPE_CHECKING:
@@ -255,10 +260,16 @@ class PlanUpdateTool(BaseTool):
     #: plan step updates, so a card would only say it a second time.
     visible = False
 
-    def __init__(self, plan_state: PlanState | None = None) -> None:
+    def __init__(
+        self,
+        plan_state: PlanState | None = None,
+        *,
+        scope_policy: FileScopePolicy | None = None,
+    ) -> None:
         # The default covers definition-time registration, which constructs
         # with no arguments; a session always passes the state it shares
         # with the agent loop.
+        super().__init__(scope_policy=scope_policy)
         self._plan_state = plan_state if plan_state is not None else PlanState()
 
     @property

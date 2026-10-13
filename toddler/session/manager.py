@@ -36,7 +36,7 @@ from toddler.llm import BaseLLMProvider, Message, TokenUsage
 from toddler.session.models import MAX_TITLE_LENGTH, Conversation, Session
 from toddler.session.storage import StorageManager
 from toddler.tools import create_default_registry
-from toddler.tools.base import PermissionManager, PermissionMode
+from toddler.tools.base import FileScopePolicy, PermissionManager, PermissionMode
 from toddler.tools.executor import ToolExecutor
 from toddler.tools.plan import PlanState, PlanUpdateTool
 
@@ -102,8 +102,18 @@ class SessionManager:
         # a plan runs.
         self._plan_state = PlanState()
 
+        # Where the tools' files live — the working directory the registry
+        # hands to every tool, so a tool can place the paths a call names
+        # rather than judging them from wherever the process happens to be.
+        self._scope_policy = FileScopePolicy(
+            workspace_root=self._repo_root,
+            restricted=settings.restricted_paths,
+        )
+
         # Build tool system
-        self._registry = create_default_registry()
+        self._registry = create_default_registry(
+            scope_policy=self._scope_policy
+        )
         self._executor = ToolExecutor(
             self._registry,
             checkpoint_cb=create_checkpoint_callback(
@@ -189,6 +199,11 @@ class SessionManager:
     def permission_mode(self) -> PermissionMode:
         """The current permission gating mode (from the shared manager)."""
         return self._perm_mgr.mode
+
+    @property
+    def scope_policy(self) -> FileScopePolicy:
+        """Where this session's workspace and restricted paths are."""
+        return self._scope_policy
 
     @property
     def mode_label(self) -> str:
@@ -718,7 +733,9 @@ class SessionManager:
         """
         self._plan_state.activate(plan)
         if "plan_update" not in self._registry:
-            self._registry.register(PlanUpdateTool(self._plan_state))
+            self._registry.register(
+                PlanUpdateTool(self._plan_state, scope_policy=self._scope_policy)
+            )
 
     def _deactivate_plan_execution(self) -> None:
         """Tear down plan tracking after the execution phase.

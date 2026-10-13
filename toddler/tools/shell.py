@@ -8,7 +8,12 @@ import re
 import shlex
 from pathlib import Path
 
-from toddler.tools.base import BaseTool, Permission, ToolResult
+from toddler.tools.base import (
+    BaseTool,
+    FileScopePolicy,
+    Permission,
+    ToolResult,
+)
 from toddler.tools.registry import TOOL_CATALOG
 
 # ---------------------------------------------------------------------------
@@ -275,8 +280,13 @@ class Shell(BaseTool):
     }
 
     def __init__(
-        self, default_timeout: int = 60, max_output: int = 50_000
+        self,
+        default_timeout: int = 60,
+        max_output: int = 50_000,
+        *,
+        scope_policy: FileScopePolicy | None = None,
     ) -> None:
+        super().__init__(scope_policy=scope_policy)
         self._default_timeout = default_timeout
         self._max_output = max_output
 

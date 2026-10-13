@@ -36,6 +36,20 @@ def _env_bool(key: str, default: bool) -> bool:
     return val.lower() in ("1", "true", "yes", "on")
 
 
+def _env_paths(key: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    """Read a list of paths, separated by the platform's path separator.
+
+    An empty value means "unset", not "no restrictions": a stray
+    ``TODDLER_RESTRICTED_PATHS=`` should not silently unprotect the files
+    the defaults exist to keep the agent out of.
+    """
+    val = _env(key)
+    if val is None:
+        return default
+    entries = tuple(p.strip() for p in val.split(os.pathsep) if p.strip())
+    return entries or default
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -116,6 +130,16 @@ class Settings:
     # --- Shell ---
     shell_timeout: int = field(
         default_factory=lambda: _env_int("TODDLER_SHELL_TIMEOUT", defaults.SHELL_DEFAULT_TIMEOUT)
+    )
+
+    # --- File scope ---
+    # Paths the agent may never touch, whatever the gating mode.  Seeded
+    # from the defaults so that a session built from an out-of-date
+    # config object still protects them.
+    restricted_paths: tuple[str, ...] = field(
+        default_factory=lambda: _env_paths(
+            "TODDLER_RESTRICTED_PATHS", defaults.RESTRICTED_PATHS
+        )
     )
 
     # ------------------------------------------------------------------

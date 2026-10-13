@@ -48,6 +48,9 @@ class ReadFile(BaseTool):
     #: The file it names is what the call does — no call-description param.
     require_description_parameter = False
 
+    #: The file it reads is the whole of its reach — the gate places it.
+    path_params = ("file_path",)
+
     @property
     def permission(self) -> Permission:
         return Permission.READ
@@ -151,6 +154,9 @@ class WriteFile(BaseTool):
     #: The file it names is what the call does — no call-description param.
     require_description_parameter = False
 
+    #: The file it writes is the whole of its reach — the gate places it.
+    path_params = ("file_path",)
+
     @property
     def permission(self) -> Permission:
         return Permission.WRITE
@@ -234,6 +240,9 @@ class EditFile(BaseTool):
 
     #: The file it names is what the call does — no call-description param.
     require_description_parameter = False
+
+    #: The file it rewrites is the whole of its reach — the gate places it.
+    path_params = ("file_path",)
 
     @property
     def permission(self) -> Permission:

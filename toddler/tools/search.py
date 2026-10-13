@@ -74,9 +74,17 @@ class Grep(BaseTool):
         "required": ["pattern"],
     }
 
+    #: The tree it searches is the whole of its reach — the gate places it.
+    path_params = ("path",)
+
     @property
     def permission(self) -> Permission:
         return Permission.READ
+
+    def get_scope_paths(self, **kwargs) -> list[Path]:
+        """The searched directory — the working one when ``path`` is
+        omitted, which is what ``execute`` reads."""
+        return super().get_scope_paths(path=kwargs.get("path") or ".")
 
     async def execute(
         self,
@@ -326,9 +334,17 @@ class Glob(BaseTool):
         "required": ["pattern"],
     }
 
+    #: The tree it globs is the whole of its reach — the gate places it.
+    path_params = ("path",)
+
     @property
     def permission(self) -> Permission:
         return Permission.READ
+
+    def get_scope_paths(self, **kwargs) -> list[Path]:
+        """The globbed directory — the working one when ``path`` is
+        omitted, which is what ``execute`` reads."""
+        return super().get_scope_paths(path=kwargs.get("path") or ".")
 
     async def execute(
         self,

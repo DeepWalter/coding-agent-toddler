@@ -89,12 +89,36 @@ def _truncate(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Base
+# ---------------------------------------------------------------------------
+
+
+class _RepoScopedTool(BaseTool):
+    """A git tool's reach is one repository.
+
+    Each of them runs in the repo ``repo_path`` names and falls back to
+    the working directory when it is omitted — exactly what
+    :func:`_resolve_repo_path` reads at execution time — so the gate has
+    to place that same directory rather than nothing.  A pathspec such as
+    ``git diff -- <target>`` only narrows what is read *inside* the repo,
+    so the repo is the reach either way.
+    """
+
+    path_params = ("repo_path",)
+
+    def get_scope_paths(self, **kwargs) -> list[Path]:
+        return super().get_scope_paths(
+            repo_path=kwargs.get("repo_path") or Path.cwd()
+        )
+
+
+# ---------------------------------------------------------------------------
 # GitStatus
 # ---------------------------------------------------------------------------
 
 
 @TOOL_CATALOG.register()
-class GitStatus(BaseTool):
+class GitStatus(_RepoScopedTool):
     """Show the working tree status."""
 
     name = "git_status"
@@ -146,7 +170,7 @@ class GitStatus(BaseTool):
 
 
 @TOOL_CATALOG.register()
-class GitDiff(BaseTool):
+class GitDiff(_RepoScopedTool):
     """Show changes between commits, the index, or the working tree."""
 
     name = "git_diff"
@@ -231,7 +255,7 @@ class GitDiff(BaseTool):
 
 
 @TOOL_CATALOG.register()
-class GitLog(BaseTool):
+class GitLog(_RepoScopedTool):
     """Show the commit history."""
 
     name = "git_log"
@@ -315,7 +339,7 @@ class GitLog(BaseTool):
 
 
 @TOOL_CATALOG.register()
-class GitCommit(BaseTool):
+class GitCommit(_RepoScopedTool):
     """Create a new commit with staged changes."""
 
     name = "git_commit"
@@ -380,7 +404,7 @@ class GitCommit(BaseTool):
 
 
 @TOOL_CATALOG.register()
-class GitBranch(BaseTool):
+class GitBranch(_RepoScopedTool):
     """List, create, or delete branches."""
 
     name = "git_branch"
