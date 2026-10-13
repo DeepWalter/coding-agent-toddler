@@ -97,6 +97,7 @@ class TestSerializeEvent:
             # no file, and the card says so from the start.
             "path": None,
             "path_abs": None,
+            "path_named": None,
         }
 
     def test_tool_call_start_names_the_file_before_the_gate(self):
@@ -109,12 +110,16 @@ class TestSerializeEvent:
         ), ROOT)
         assert frame["path"] == "src/a.py"
         assert frame["path_abs"] == "/repo/src/a.py"
+        assert frame["path_named"] == "/repo/src/a.py"
         outside = serialize_event(ToolCallStart(
             tool_id="t2", tool_name="read_file",
             input={"file_path": "/etc/passwd"},
         ), ROOT)
         assert outside["path"] is None
         assert outside["path_abs"] == str(Path("/etc/passwd").resolve())
+        # What the card shows is the path the call named — on macOS
+        # resolving it would read back as ``/private/etc/passwd``.
+        assert outside["path_named"] == "/etc/passwd"
 
     def test_tool_call_end(self):
         result = ToolResult(
@@ -131,11 +136,12 @@ class TestSerializeEvent:
             "tool_id": "t1",
             "tool_name": "read_file",
             "input": {"file_path": "a.py"},
-            # The call's file in both spellings: what a tab opens (relative
-            # to the served root) and where the file is (what the title
-            # offers on hover) — not the string the model wrote.
+            # The call's file in all three spellings: what a tab opens
+            # (relative to the served root), where the file is, and the name
+            # the card shows it under.
             "path": "a.py",
             "path_abs": "/repo/a.py",
+            "path_named": "/repo/a.py",
             "result": {
                 "success": True,
                 "output": "content",
@@ -335,6 +341,7 @@ class TestSerializeTranscript:
                 # transcript keeps no resolved path.
                 "path": "a.py",
                 "path_abs": "/repo/a.py",
+                "path_named": "/repo/a.py",
                 "result": {
                     "success": True,
                     "output": "content",

@@ -89,6 +89,7 @@ export interface ReplayMessage {
   /** See the tool_call_end frame. */
   path?: string | null
   path_abs?: string | null
+  path_named?: string | null
   result?: ToolResult | null
 }
 
@@ -191,6 +192,7 @@ export type Frame =
       input: Record<string, unknown>
       path: string | null
       path_abs: string | null
+      path_named: string | null
     }
   | {
       type: 'tool_call_end'
@@ -198,16 +200,18 @@ export type Frame =
       tool_name: string
       input: Record<string, unknown>
       /**
-       * The file the call was about, in the two spellings a card needs.
+       * The file the call was about, in the three spellings a card needs.
        * `path` is the relative-to-root form — null when the call named none
        * or named one the root cannot hold — and `path_abs` is where it
        * actually is; a file with no relative form opens in the editor under
-       * its absolute path, read-only.  Resolving is the server's job: it
-       * alone knows the home directory a `~` path needs, and where a
-       * relative path starts.
+       * its absolute path, read-only.  `path_named` is that same file under
+       * the name the call used, which is what the card shows a reader.
+       * Resolving is the server's job: it alone knows the home directory a
+       * `~` path needs, and where a relative path starts.
        */
       path: string | null
       path_abs: string | null
+      path_named: string | null
       result: ToolResult | null
     }
   | { type: 'plan_proposed'; plan: Plan }
@@ -274,9 +278,12 @@ export type Block =
       input: Record<string, unknown>
       /** The call's file, as the server resolved it — null until the call
        *  ends and the resolution arrives.  `path` is the root-relative one a
-       *  tab holds; `path_abs` is where the file actually is. */
+       *  tab holds; `path_abs` is where the file actually is, and
+       *  `path_named` is the same file under the name the call used, which
+       *  is the one the card shows. */
       path: string | null
       path_abs: string | null
+      path_named: string | null
       result: ToolResult | null
       open: boolean
     }

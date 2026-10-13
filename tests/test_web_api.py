@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from tests.mocks import make_mock_llm, text_response
 from toddler.config.settings import Settings
 from toddler.web.app import create_app
-from toddler.web.files import tool_path, tool_path_abs
+from toddler.web.files import tool_path, tool_path_abs, tool_path_named
 
 # ============================================================================
 # Helpers
@@ -362,6 +362,63 @@ class TestToolPath:
         root = _repo(tmp_path)
         assert tool_path(root, "~nosuchuser9977/notes.md") is None
         assert tool_path_abs(root, "~nosuchuser9977/notes.md") is None
+
+
+class TestToolPathNamed:
+    """The same file under the name the call used — what the card shows.
+
+    Resolving is for opening; a reader is handed back the path they would
+    recognise, which on macOS is the only one of the two that looks like
+    anything they typed (``/tmp`` is ``/private/tmp``).
+    """
+
+    def test_a_plain_path_is_named_as_it_was_given(self, tmp_path):
+        root = _repo(tmp_path)
+        assert tool_path_named(root, "/etc/passwd") == "/etc/passwd"
+        assert tool_path_named(root, str(root / "src" / "a.py")) == str(
+            root / "src" / "a.py"
+        )
+
+    def test_a_link_is_left_in_the_name(self, tmp_path):
+        root = _repo(tmp_path)
+        link = tmp_path / "linked"
+        link.symlink_to(root)
+
+        assert tool_path_named(root, str(link / "src" / "a.py")) == str(
+            link / "src" / "a.py"
+        )
+        # And the resolved spelling is still the one that opens.
+        assert tool_path(root, str(link / "src" / "a.py")) == "src/a.py"
+
+    def test_a_relative_path_is_named_where_it_starts(self, tmp_path):
+        root = _repo(tmp_path)
+        assert tool_path_named(root, "src/a.py") == str(root / "src" / "a.py")
+
+    def test_home_is_expanded_but_not_resolved(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        root = _repo(tmp_path)
+        assert tool_path_named(root, "~/notes.md") == str(
+            tmp_path / "home/notes.md"
+        )
+
+    def test_dotdot_after_a_link_is_resolved(self, tmp_path):
+        """The one case where the named form would be a different file:
+        the kernel reads ``link/..`` as the parent of what the link points
+        at, not of the link."""
+        root = _repo(tmp_path)
+        link = tmp_path / "linked"
+        link.symlink_to(root)
+
+        assert tool_path_named(root, str(link / ".." / "outside.txt")) == str(
+            tmp_path / "outside.txt"
+        )
+
+    def test_nothing_named_is_no_path(self, tmp_path):
+        root = _repo(tmp_path)
+        assert tool_path_named(root, None) is None
+        assert tool_path_named(root, "   ") is None
+        assert tool_path_named(root, 7) is None
+        assert tool_path_named(root, "~nosuchuser9977/notes.md") is None
 
 
 # ============================================================================

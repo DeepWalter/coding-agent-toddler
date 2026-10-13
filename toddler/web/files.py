@@ -15,6 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from toddler.context.workspace import GitignoreMatcher
+from toddler.tools.base import display_path
 
 __all__ = [
     "FileApiError",
@@ -25,6 +26,7 @@ __all__ = [
     "resolve_relative",
     "tool_path",
     "tool_path_abs",
+    "tool_path_named",
     "write_file",
 ]
 
@@ -119,6 +121,30 @@ def tool_path_abs(root: Path, raw: object) -> str | None:
     if not candidate.is_absolute():
         candidate = root.resolve() / candidate
     return str(candidate.resolve())
+
+
+def tool_path_named(root: Path, raw: object) -> str | None:
+    """The same file again, named the way the call wrote it.
+
+    Where :func:`tool_path_abs` answers where the file *is* — resolved,
+    which on macOS rewrites whole trees (``/tmp`` reads back as
+    ``/private/tmp``, ``/home`` as ``/System/Volumes/Data/home``) — this
+    is the spelling the card puts in front of a reader, who named the
+    file the other way.  Same file, both times.
+
+    A ``..`` standing after a link is the exception, and resolves: the
+    kernel reads ``link/..`` as the parent of what the link points at, so
+    the written form would name a file the call never touched.
+    """
+    if not isinstance(raw, str) or not raw.strip() or "\x00" in raw:
+        return None
+    try:
+        candidate = Path(raw).expanduser()
+    except RuntimeError:  # ``~user`` for a user this machine hasn't got
+        return None
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    return str(display_path(candidate))
 
 
 def tool_path(root: Path, raw: object) -> str | None:

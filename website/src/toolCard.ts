@@ -105,13 +105,13 @@ export interface ToolCard {
   /** The call's own line about what it does; empty when it made none. */
   description: string
   /** The file this call is about, when it is about one: what the title
-   *  prints in place of the description, and what it does.  Three spellings
-   *  of the same file, because a card does three things with it — `label`
-   *  is the basename the title shows, `target` the name a click hands the
-   *  editor (root-relative inside the root, absolute outside), and `abs`
-   *  where it actually is, which the title offers on hover.  `external`
-   *  marks the outside case, whose tab opens read-only.  Null for a call
-   *  that names no file. */
+   *  prints in place of the description, and what it does.  `label` is the
+   *  basename the title shows, `target` the name a click hands the editor
+   *  (root-relative inside the root, absolute outside), and `abs` the path
+   *  the title offers on hover — the file as the call named it, since that
+   *  is the spelling whoever asked for it recognises.  `external` marks the
+   *  outside case, whose tab opens read-only.  Null for a call that names
+   *  no file. */
   path: {
     label: string
     target: string | null
@@ -187,19 +187,21 @@ export function toolCard(block: ToolBlock): ToolCard {
     // A path the model left out is no path: the title falls back to the
     // call's own description rather than showing an empty link.
     //
-    // Both spellings come from the server, which is the only side that can
+    // The spellings come from the server, which is the only side that can
     // resolve what the call named: `~` needs the home directory, and a
-    // relative path starts at its cwd.  What it resolved is a whole path —
-    // the hover names it, which is where a reader checks a file they cannot
-    // open — and the title prints the basename.  It arrives with the
-    // execution `tool_call_start` frame, before the tool runs and before any
-    // permission gate, so a card in flight already names its file (and wears
-    // the external marker); the provider-phase skeleton has no input at all
-    // yet, so its title is the bare tool name.
+    // relative path starts at its cwd.  `path_named` is the readable one —
+    // the file under the name the call used, which is what the hover shows,
+    // where a reader checks a file they may not be able to open — and
+    // `path_abs` the resolved one, the fallback for a frame from a server
+    // too old to send it.  The title prints the basename either way.  It
+    // arrives with the execution `tool_call_start` frame, before the tool
+    // runs and before any permission gate, so a card in flight already
+    // names its file (and wears the external marker); the provider-phase
+    // skeleton has no input at all yet, so its title is the bare tool name.
     path: spec?.path && named
       ? {
-          abs: block.path_abs ?? named,
-          label: basename(block.path_abs ?? named),
+          abs: block.path_named ?? block.path_abs ?? named,
+          label: basename(block.path_named ?? block.path_abs ?? named),
           target,
           external: block.path === null && block.path_abs !== null,
           opens: target !== null

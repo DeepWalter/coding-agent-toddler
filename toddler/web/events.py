@@ -32,7 +32,7 @@ from toddler.agent.planner import Plan
 from toddler.llm import TokenUsage
 from toddler.llm.messages import Message
 from toddler.tools import HIDDEN_TOOL_NAMES, ToolResult
-from toddler.web.files import tool_path, tool_path_abs
+from toddler.web.files import tool_path, tool_path_abs, tool_path_named
 
 __all__ = [
     "serialize_event",
@@ -108,27 +108,31 @@ def _tool_results(messages: list[Message]) -> dict[str, dict]:
 
 def tool_card_paths(root: Path, input: dict) -> dict:
     """The file a tool call names, resolved for the card that draws it —
-    both spellings of it.  Any tool whose parameters carry a
+    all three spellings of it.  Any tool whose parameters carry a
     ``file_path`` — the file tools, and nothing else — gets them; a call
-    that names no file gets two ``None``s, and the browser draws its
-    title from whatever else the call said.
+    that names no file gets ``None``s, and the browser draws its title
+    from whatever else the call said.
 
     ``path`` is where a tab opens it, relative to the served root, and is
     ``None`` for a file the root cannot hold.  ``path_abs`` is where the
-    file actually is: the card hovers it, and a file with no relative
-    name opens under it instead — read-only, since it lies outside the
-    root.
+    file actually is: a file with no relative name opens under it
+    instead — read-only, since it lies outside the root.  ``path_named``
+    is the same file under the name the call used, which is what the card
+    shows: resolving is the server's job, but reading
+    ``/System/Volumes/Data/home/...`` back at whoever asked for
+    ``/home/...`` is nobody's idea of an answer.
 
     The ``tool_call_start`` and ``tool_call_end`` frames carry this (see
     :func:`serialize_event`).  The start frame is the one that matters for
     how early the card can name the file: the call's input is complete by
     then, and the frame arrives before any permission gate.  The
-    identity-only ``tool_use_start`` carries neither.
+    identity-only ``tool_use_start`` carries none of them.
     """
     raw = input.get("file_path")
     return {
         "path": tool_path(root, raw),
         "path_abs": tool_path_abs(root, raw),
+        "path_named": tool_path_named(root, raw),
     }
 
 

@@ -2367,7 +2367,12 @@ await page.waitForTimeout(300)
 // yet: it reads as plain text, still saying on hover where the file is.
 const READ_PATH = 'mock-a.md'
 const READ_PATH_ABS = '/tmp/mock-a.md'
-const OUTSIDE_PATH = '/home/mock/.toddler/notes.md'
+// The mock's home sits behind a link, the way macOS has /home behind one:
+// what the call names and where the file actually is are two strings for one
+// file.  The card shows the name the call used, the editor opens the file it
+// resolved to.
+const OUTSIDE_PATH = '/tmp/mock-home/.toddler/notes.md'
+const OUTSIDE_PATH_ABS = '/home/mock/.toddler/notes.md'
 await page.fill('textarea.input-bar-textarea', 'files: read and write')
 await page.click('button:has-text("Send")')
 await page.waitForFunction(
@@ -2539,10 +2544,10 @@ function checkFileCards(cards) {
   const external = opened.tabs.find((t) => t.external === 'external')
   const ok =
     external?.name === 'notes.md' &&
-    external.title === OUTSIDE_PATH &&
+    external.title === OUTSIDE_PATH_ABS &&
     external.dirty === false &&
     opened.tabs.filter((t) => t.external !== null).length === 1 &&
-    opened.header === OUTSIDE_PATH &&
+    opened.header === OUTSIDE_PATH_ABS &&
     opened.headerExternal &&
     opened.doc.includes('outside the repo') &&
     opened.status === 'read-only · 2 lines'
@@ -2596,9 +2601,9 @@ function checkFileCards(cards) {
   })
   const okRestored =
     restored.name === 'notes.md' &&
-    restored.title === OUTSIDE_PATH &&
+    restored.title === OUTSIDE_PATH_ABS &&
     restored.active &&
-    restored.header === OUTSIDE_PATH &&
+    restored.header === OUTSIDE_PATH_ABS &&
     restored.doc.includes('outside the repo') &&
     restored.status === 'read-only · 2 lines'
   console.log(`phase15 the external tab survives a reload ${JSON.stringify(restored)} ${okRestored ? 'PASS' : 'FAIL'}`)

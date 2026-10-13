@@ -94,11 +94,25 @@ const WRITE_PATH = '/tmp/mock-b.md'
 const WRITE_DESCRIPTION = 'write the second seeded file'
 const FAILED_WRITE_PATH = '/tmp/read-only/mock-c.md'
 const FAILED_WRITE_DESCRIPTION = 'write a file that cannot be written'
-// A file the repository does not hold.  The tools take the model's `~`
-// paths literally, so this is the shape a call names whenever it reaches
-// outside the project — and the editor opens it read-only, under the
-// absolute path the card resolves it to.
-const OUTSIDE_PATH = '~/.toddler/notes.md'
+// A link standing in front of it, which is what macOS has: `/home` is a
+// symlink to `/System/Volumes/Data/home`, so a call naming the short
+// spelling and the file it opens are two different strings for one file.
+// The fixtures reach the outside file through this one, so the card has to
+// show the name the call used while the editor opens the file it resolved
+// to.
+const MOCK_HOME_LINK = '/tmp/mock-home'
+function unlinked(path) {
+  return path.startsWith(`${MOCK_HOME_LINK}/`)
+    ? `${MOCK_HOME}/${path.slice(MOCK_HOME_LINK.length + 1)}`
+    : path
+}
+
+// A file the repository does not hold, reached through the link above.  The
+// tools take the model's `~` paths literally, so this is the shape a call
+// names whenever it reaches outside the project — and the editor opens it
+// read-only, under the absolute path the card resolves it to, while the card
+// itself shows the name the call used.
+const OUTSIDE_PATH = `${MOCK_HOME_LINK}/.toddler/notes.md`
 const OUTSIDE_DESCRIPTION = 'read a file outside the repository'
 
 // The plan fixture: a `plan` turn proposes two steps and holds for the
@@ -219,6 +233,14 @@ const MOCK_HOME = '/home/mock'
 
 // toddler/web/files.tool_path_abs: where a call's `file_path` actually is.
 function absolutePath(raw) {
+  if (typeof raw !== 'string' || !raw.trim()) return null
+  if (raw.startsWith('~/')) return `${MOCK_HOME}/${raw.slice(2)}`
+  return unlinked(raw.startsWith('/') ? raw : `${REPO_ROOT}/${raw}`)
+}
+
+// toddler/web/files.tool_path_named: the same file under the name the call
+// used — expanded and absolute, links left alone.
+function namedPath(raw) {
   if (typeof raw !== 'string' || !raw.trim()) return null
   if (raw.startsWith('~/')) return `${MOCK_HOME}/${raw.slice(2)}`
   return raw.startsWith('/') ? raw : `${REPO_ROOT}/${raw}`
@@ -715,6 +737,7 @@ wss.on('connection', (ws) => {
             const paths = {
               path: rootRelative(input.file_path),
               path_abs: absolutePath(input.file_path),
+              path_named: namedPath(input.file_path),
             }
             useStart(id, name)
             send({
@@ -807,6 +830,7 @@ wss.on('connection', (ws) => {
             paths: {
               path: rootRelative(OUTSIDE_PATH),
               path_abs: absolutePath(OUTSIDE_PATH),
+              path_named: namedPath(OUTSIDE_PATH),
             },
             result: {
               success: true,
