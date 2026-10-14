@@ -36,7 +36,11 @@ from toddler.llm import BaseLLMProvider, Message, TokenUsage
 from toddler.session.models import MAX_TITLE_LENGTH, Conversation, Session
 from toddler.session.storage import StorageManager
 from toddler.tools import create_default_registry
-from toddler.tools.base import FileScopePolicy, PermissionManager, PermissionMode
+from toddler.tools.base import (
+    FileScopePolicy,
+    PermissionManager,
+    PermissionMode,
+)
 from toddler.tools.executor import ToolExecutor
 from toddler.tools.plan import PlanState, PlanUpdateTool
 
@@ -734,7 +738,9 @@ class SessionManager:
         self._plan_state.activate(plan)
         if "plan_update" not in self._registry:
             self._registry.register(
-                PlanUpdateTool(self._plan_state, scope_policy=self._scope_policy)
+                PlanUpdateTool(
+                    self._plan_state, scope_policy=self._scope_policy
+                )
             )
 
     def _deactivate_plan_execution(self) -> None:
@@ -968,7 +974,7 @@ class SessionManager:
         # ran it.
         self._conv.total_tokens = self._ctx.count_tokens()
         self._conv.model = self._ctx.model
-        self._conv.reasoning_effort = self._current_selection().reasoning_effort
+        self._conv.reasoning_effort = self._current_selection().reasoning_effort  # noqa: E501
 
         # Persist conversation metadata.
         self._storage_mgr.update_conversation(self._conv)

@@ -1,4 +1,4 @@
-"""Shell tool — run shell commands with timeout, sandboxing, and classification."""
+"""Shell tool — run shell commands with timeout, sandboxing, and classification."""  # noqa: E501
 
 from __future__ import annotations
 
