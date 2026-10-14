@@ -20,7 +20,7 @@ const state = computed(() => blockStatus(props.block))
  *  empty one to fall through to the call's own description.  A shape rather
  *  than a null keeps the template free of narrowing. */
 const path = computed(
-  () => card.value.path ?? { label: '', target: null, abs: '', external: false, symlink: false, opens: false },
+  () => card.value.path ?? { label: '', target: null, abs: '', resolved: '', external: false, symlink: false, opens: false },
 )
 
 function open(row: ToolCardRow) {
@@ -66,15 +66,14 @@ function openPath() {
         :title="path.abs"
       >{{ path.label }}</span>
       <span v-else-if="card.description" class="tool-call-desc">{{ card.description }}</span>
-      <!-- A file outside the served root is named by its absolute path and
-           opens read-only — the marker says both, so the basename is never
-           read as the only file of that name.  A name that reaches its file
-           through a link wears its marker too: the card names one path and
-           a click opens another, and without it the two read as a mistake.
-           After the title chain, not inside it: the button's text stays the
-           basename alone. -->
+      <!-- The markers ride after the title chain, not inside it: the
+           button's text stays the basename alone.  Symlink first — it
+           explains the path, which is what the two that follow it are
+           about — then the one that says a file outside the served root is
+           named by its absolute path and opens read-only, so the basename
+           is never read as the only file of that name. -->
+      <SymlinkTag v-if="path.symlink" :resolved="path.resolved" />
       <ExternalTag v-if="path.external" />
-      <SymlinkTag v-if="path.symlink" />
     </div>
     <!-- A call can be its title alone, and a file call is: the file opens in
          the editor, so a row of its content here would be a worse copy of

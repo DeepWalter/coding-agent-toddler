@@ -6,13 +6,21 @@
  * traverses a symbolic link, and on macOS that is ordinary rather than
  * exotic (`/tmp` is `/private/tmp`, `/home` is `/System/Volumes/...`).
  * Without the marker the two spellings read as a mistake.
+ *
+ * Its hover names where the file really is — the one thing the marker
+ * knows that the card beside it does not say, since the title's own
+ * hover already carries the other spelling.
  */
+defineProps<{
+  /** Where the file is: the resolved path. */
+  resolved: string
+}>()
 </script>
 
 <template>
   <span
     class="symlink-tag"
-    title="named through a symbolic link — the same file, resolved elsewhere"
+    :title="`named through a symbolic link — the file is at ${resolved}`"
   >
     <svg
       viewBox="0 0 24 24"

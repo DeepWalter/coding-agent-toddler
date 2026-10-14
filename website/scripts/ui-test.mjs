@@ -2426,9 +2426,14 @@ const readFileCards = () =>
         // where there is one, plain text where there is not.
         tag: link?.tagName ?? null,
         static: link?.classList.contains('static') ?? null,
-        // The markers ride beside the button, not inside it.
+        // The markers ride beside the button, not inside it, and in
+        // document order: the symlink one explains the path, the external
+        // one says how the file behind it is reached.
         external: el.querySelector('.external-tag')?.textContent.trim() ?? null,
         symlink: el.querySelector('.symlink-tag')?.textContent.trim() ?? null,
+        markers: [...el.querySelectorAll('.symlink-tag, .external-tag')]
+          .map((tag) => tag.className),
+        symlinkHover: el.querySelector('.symlink-tag')?.getAttribute('title') ?? null,
         // One path slot per title: the button/static pair is a chain, and a
         // marker wedged into it once made every card name its file twice.
         paths: el.querySelectorAll('.tool-call-path').length,
@@ -2472,14 +2477,18 @@ function checkFileCards(cards) {
     outside.external === 'external' &&
     // Its file sits behind a link, so the name the card shows and the path
     // a click opens are two spellings of one file — said out loud, or read
-    // as a mistake.
+    // as a mistake.  The marker comes first and its hover names the file,
+    // which is the one thing left to say once the title names the other
+    // spelling.
     outside.symlink === 'symlink' &&
+    outside.markers.join() === 'symlink-tag,external-tag' &&
+    outside.symlinkHover === `named through a symbolic link — the file is at ${OUTSIDE_PATH_ABS}` &&
     // The markers ride only on the outside file, which is both outside the
     // root and named through a link; the in-root four carry neither.
-    read.external === null && read.symlink === null &&
-    edit.external === null && edit.symlink === null &&
-    write.external === null && write.symlink === null &&
-    failed.external === null && failed.symlink === null &&
+    read.external === null && read.symlink === null && read.markers.length === 0 &&
+    edit.external === null && edit.symlink === null && edit.markers.length === 0 &&
+    write.external === null && write.symlink === null && write.markers.length === 0 &&
+    failed.external === null && failed.symlink === null && failed.markers.length === 0 &&
     // No box and no rows on any of them, no description either, and exactly
     // one path slot per title.
     cards.every((c) => c.boxes === 0 && c.rows === 0 && c.desc === null && c.paths === 1)
