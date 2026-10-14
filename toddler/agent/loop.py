@@ -75,6 +75,26 @@ def _extract_tool_calls(msg: Message) -> list[ToolCall]:
 # ---------------------------------------------------------------------------
 
 
+class _PendingApproval:
+    """The answer channel for one paused call.
+
+    Created when the pause is yielded and consumed by the call it paused,
+    so an answer cannot outlive the question: a call that finds no
+    channel here was never paused for, and says so rather than waiting on
+    a channel that is not its own — or, worse, reading one left answered
+    by the call before it.
+    """
+
+    def __init__(self) -> None:
+        self.event = asyncio.Event()
+        self.granted = False
+
+    def answer(self, granted: bool) -> None:
+        """Record the user's answer and release the waiting call."""
+        self.granted = granted
+        self.event.set()
+
+
 class AgentLoop:
     """Orchestrates the core tool-calling loop.
 
@@ -125,9 +145,9 @@ class AgentLoop:
         # the agent loop.
         self._perm_mgr = permission_manager
 
-        # Confirmation gate — see _execute_with_gating for the protocol.
-        self._approval_event: asyncio.Event | None = None
-        self._approval_granted: bool = False
+        # Confirmation gate — the live pause, if any.  See
+        # _execute_with_gating for the protocol.
+        self._pending: _PendingApproval | None = None
 
     # ==================================================================
     # Public API
@@ -299,18 +319,19 @@ class AgentLoop:
     # ==================================================================
 
     def approve_tool_call(self, tool_id: str = "") -> None:  # noqa: ARG002
-        """Approve the pending tool confirmation and unblock the loop."""
-        self._approval_granted = True
-        self._signal_approval()
+        """Approve the pending tool confirmation and unblock the loop.
+
+        A no-op when nothing is paused — the front-ends answer
+        optimistically, and a stale answer must land nowhere rather than
+        on whatever is paused by the time it arrives.
+        """
+        if self._pending is not None:
+            self._pending.answer(True)
 
     def deny_tool_call(self, tool_id: str = "") -> None:  # noqa: ARG002
         """Deny the pending tool confirmation and unblock the loop."""
-        self._approval_granted = False
-        self._signal_approval()
-
-    def _signal_approval(self) -> None:
-        if self._approval_event is not None:
-            self._approval_event.set()
+        if self._pending is not None:
+            self._pending.answer(False)
 
     # ==================================================================
     # LLM calling helpers
@@ -380,12 +401,13 @@ class AgentLoop:
             # about what was asked.
             decision = self._decision_for(call)
 
-            # Create the approval event *before* yielding AgentPaused so
-            # that external code can call approve/deny immediately without
-            # a race.  A denied call never pauses: there is nothing to ask.
+            # Open the answer channel *before* yielding AgentPaused so
+            # external code can call approve/deny immediately without a
+            # race, and so the answer is already waiting when this
+            # generator resumes.  A denial never pauses: there is nothing
+            # to ask.
             if decision is Decision.ASK:
-                self._approval_event = asyncio.Event()
-                self._approval_granted = False
+                self._pending = _PendingApproval()
 
                 tool = self._registry.get(call.tool_name)
                 summary = (
@@ -433,10 +455,10 @@ class AgentLoop:
         """Execute *call* under *decision*.
 
         For :attr:`Decision.ASK` the caller (the ``run()`` loop body) has
-        already created ``_approval_event`` and yielded
-        :class:`AgentPaused`, so this method blocks on the event until
-        :meth:`approve_tool_call` or :meth:`deny_tool_call` is called
-        externally.  :attr:`Decision.ALLOW` passes straight through, and
+        already opened a :class:`_PendingApproval` and yielded
+        :class:`AgentPaused`, so this method blocks on that channel until
+        :meth:`approve_tool_call` or :meth:`deny_tool_call` answers it.
+        :attr:`Decision.ALLOW` passes straight through, and
         :attr:`Decision.DENY` never runs at all — it is the policy
         answering, not a question left open.
         """
@@ -467,12 +489,37 @@ class AgentLoop:
         if decision is Decision.ALLOW:
             return await self._executor.execute(call)
 
-        # The event was already created by run() before it yielded the
-        # pause; wait for the answer.
-        if self._approval_event is not None:
-            await self._approval_event.wait()
+        # The channel the pause opened.  It stays on the loop until the
+        # answer has arrived: a front-end answers on a task of its own,
+        # and the loop has usually resumed and be waiting here by then —
+        # so taking it off the loop first would drop exactly the answers
+        # that come from anywhere but the caller's own thread of control.
+        pending = self._pending
+        if pending is None:
+            # Only reachable if a pause was never yielded for this call:
+            # a bug in this file, and not one to run a call over.
+            logger.error(
+                "Paused call without an approval channel: %s", call.tool_name
+            )
+            return ToolResult(
+                tool_id=call.tool_id,
+                tool_name=call.tool_name,
+                success=False,
+                output="",
+                error=(
+                    "Internal error: this call was gated but never asked "
+                    "about. It was not executed — nothing was approved."
+                ),
+            )
 
-        if not self._approval_granted:
+        await pending.event.wait()
+
+        # Spent: released now rather than before the wait, so a late or
+        # duplicate answer lands nowhere instead of on the next pause.
+        if self._pending is pending:
+            self._pending = None
+
+        if not pending.granted:
             return ToolResult(
                 tool_id=call.tool_id,
                 tool_name=call.tool_name,

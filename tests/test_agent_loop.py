@@ -38,6 +38,7 @@ from toddler.llm import (
 from toddler.llm.base import BaseLLMProvider
 from toddler.tools.base import (
     BaseTool,
+    Decision,
     FileScopePolicy,
     Permission,
     PermissionManager,
@@ -888,6 +889,126 @@ class TestExecutorDenyGuard:
         assert not result.success
         assert result.output == ""          # the tool never ran
         assert "restricted" in result.error
+
+
+class TestApprovalChannel:
+    """The pause and the answer are one channel, open for exactly as long
+    as the call it paused is waiting on it — no longer (a spent answer
+    must not become the next call's) and no shorter (a front-end answers
+    on a task of its own, after the loop has resumed and is waiting)."""
+
+    def _loop(self, registry, executor, settings, conv_ctx, responses):
+        return AgentLoop(
+            MockLLMProvider(responses=responses),
+            registry,
+            executor,
+            settings,
+            context=conv_ctx,
+            permission_manager=PermissionManager(),
+        )
+
+    @staticmethod
+    def _write_response(content: str, tool_id: str = "c1"):
+        return _make_llm_response(
+            tool_blocks=[
+                _make_tool_use_block(tool_id, "write_stuff", {"content": content})
+            ],
+            stop_reason="tool_use",
+        )
+
+    async def test_an_answer_arriving_after_the_loop_resumed_lands(
+        self, registry, executor, settings, conv_ctx
+    ):
+        """The browser answers from its socket task, so the loop has
+        resumed and is waiting on the channel before the click lands —
+        the shape the CLI never shows, since it asks the user from inside
+        the consumer loop and resumes only afterwards."""
+        loop = self._loop(registry, executor, settings, conv_ctx, [
+            self._write_response("from the browser"),
+            _make_llm_response(text="Done", stop_reason="end_turn"),
+        ])
+        paused = asyncio.Event()
+        events: list = []
+
+        async def drain() -> None:
+            async for event in loop.run("Write this", config=TEST_TURN_CONFIG):
+                events.append(event)
+                if isinstance(event, AgentPaused):
+                    paused.set()
+
+        task = asyncio.create_task(drain())
+        await asyncio.wait_for(paused.wait(), timeout=5)
+        # Let the generator resume and reach its wait, as the runner does
+        # the moment it has broadcast the pause.
+        await asyncio.sleep(0.05)
+        loop.approve_tool_call()
+        await asyncio.wait_for(task, timeout=5)
+
+        ends = [e for e in events if isinstance(e, ToolCallEnd)]
+        assert len(ends) == 1
+        assert ends[0].result.success
+
+    async def test_a_late_answer_does_not_answer_the_next_call(
+        self, registry, executor, settings, conv_ctx
+    ):
+        """Two gated calls in one turn: approving the first must leave the
+        second still a question.  A channel that stayed answered — or an
+        answer read off the next call's channel — would run it unasked."""
+        loop = self._loop(registry, executor, settings, conv_ctx, [
+            _make_llm_response(
+                tool_blocks=[
+                    _make_tool_use_block("c1", "write_stuff", {"content": "one"}),
+                    _make_tool_use_block("c2", "write_stuff", {"content": "two"}),
+                ],
+                stop_reason="tool_use",
+            ),
+            _make_llm_response(text="Done", stop_reason="end_turn"),
+        ])
+
+        pauses = 0
+        events: list = []
+        async for event in loop.run("Write twice", config=TEST_TURN_CONFIG):
+            events.append(event)
+            if isinstance(event, AgentPaused):
+                pauses += 1
+                if pauses == 1:
+                    loop.approve_tool_call()
+                else:
+                    loop.deny_tool_call()
+
+        assert pauses == 2      # the second call was asked about on its own
+        ends = [e for e in events if isinstance(e, ToolCallEnd)]
+        assert [e.result.success for e in ends] == [True, False]
+        assert "denied" in ends[1].result.error.lower()
+
+    async def test_answering_nothing_is_a_no_op(self, loop):
+        """Both front-ends answer optimistically, and an answer with no
+        pause to land on must land nowhere — not on whatever is paused by
+        the time it arrives."""
+        loop.approve_tool_call()
+        loop.deny_tool_call()
+        assert loop._pending is None
+
+    async def test_a_gated_call_with_no_channel_is_not_run(
+        self, registry, executor, settings, conv_ctx
+    ):
+        """A call that reaches the gate with no channel opened for it is a
+        bug in the loop, not a question.  It must not run, and must not
+        fall back on whatever the previous call left behind."""
+        loop = self._loop(registry, executor, settings, conv_ctx, [])
+        loop.approve_tool_call()    # an answered call's leftovers, if any
+
+        result = await loop._execute_with_gating(
+            ToolCall(
+                tool_id="c1",
+                tool_name="write_stuff",
+                parameters={"content": "unapproved"},
+            ),
+            Decision.ASK,
+        )
+
+        assert not result.success
+        assert "Internal error" in result.error
 
 
 # ============================================================================
