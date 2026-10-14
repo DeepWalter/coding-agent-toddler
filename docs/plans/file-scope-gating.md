@@ -79,9 +79,10 @@ each segment yields the tokens that could name a file:
   ask — and returns a failed result carrying `blocked_message(...)`, which
   names the path and says retrying is pointless (it reaches the model and stays
   in the transcript);
-- the executor reaches the same verdict through the shared manager and returns
-  on `DENY` *before* its confirmation callback, so an auto-approving callback
-  (or no callback at all) cannot launder a denial.
+- the executor does not gate at all: the loop is the only gate, and it hands
+  the executor the tier it classified the call with — `Permission.is_mutating`,
+  which orders the pre-execution checkpoint.  A denial is refused in exactly
+  one place, and a call is classified once rather than twice.
 
 ### 5. `toddler/config/` — the restricted list
 

@@ -47,7 +47,7 @@ call keep today's exact sequential path.
 `Write` calls can target overlapping files; concurrent git commands contend on
 the index.  The tool registry already classifies every call — reuse it: a round
 with any `WRITE` / `SHELL_DANGEROUS` permission (the same set as
-`ToolExecutor._is_mutating`, [executor.py:205-208](toddler/tools/executor.py#L205-L208))
+`Permission.is_mutating`, [base.py:26](toddler/tools/base.py#L26))
 runs sequentially.  Reads of the same file are safe; only mutations race.
 
 **3. Event order stays deterministic; only wall-clock overlaps.**  All
