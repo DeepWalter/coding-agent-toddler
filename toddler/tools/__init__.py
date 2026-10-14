@@ -17,7 +17,6 @@ from toddler.tools.base import (
 )
 from toddler.tools.executor import (
     CheckpointCallback,
-    ConfirmCallback,
     ToolExecutor,
 )
 from toddler.tools.files import EditFile, ReadFile, WriteFile
@@ -43,7 +42,6 @@ __all__ = [
     # Executor
     "ToolExecutor",
     "CheckpointCallback",
-    "ConfirmCallback",
     # File tools
     "ReadFile",
     "WriteFile",

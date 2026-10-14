@@ -1832,6 +1832,20 @@ class TestPermissionMode:
         mgr = PermissionManager(mode)
         assert mgr.decide(perm, scope) is expected
 
+    @pytest.mark.parametrize(
+        ("perm", "expected"),
+        [
+            (Permission.READ, False),
+            (Permission.SHELL_SAFE, False),
+            (Permission.WRITE, True),
+            (Permission.SHELL_DANGEROUS, True),
+        ],
+    )
+    def test_is_mutating(self, perm, expected):
+        """The tiers the executor checkpoints a call of — the loop reads
+        this answer off the tier it classified the call with."""
+        assert perm.is_mutating is expected
+
     # Tests for plan-entry reset at the SessionManager level are in
     # TestSessionManagerPlanWorkflow below.
 

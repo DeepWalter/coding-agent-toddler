@@ -25,7 +25,7 @@ from toddler.agent.events import (
     ToolUseStart,
 )
 from toddler.agent.handler import NonStreamHandler, StreamHandler
-from toddler.agent.loop import AgentLoop
+from toddler.agent.loop import AgentLoop, _Verdict
 from toddler.config.settings import Settings
 from toddler.context.manager import ContextManager
 from toddler.llm import (
@@ -46,7 +46,7 @@ from toddler.tools.base import (
     ToolCall,
     ToolResult,
 )
-from toddler.tools.executor import ToolExecutor
+from toddler.tools.executor import CheckpointCallback, ToolExecutor
 from toddler.tools.registry import ToolRegistry
 
 # ============================================================================
@@ -238,6 +238,36 @@ class DangerousTool(BaseTool):
         return Permission.SHELL_DANGEROUS
 
 
+class RecordingTool(BaseTool):
+    """A mock tool that logs its execution, with a settable tier."""
+
+    name = "recording_tool"
+    description = "Records that it ran"
+    parameters = {
+        "type": "object",
+        "properties": {
+            "content": {"type": "string", "description": "Content"}
+        },
+    }
+
+    def __init__(self, log: list[str], tier: Permission = Permission.WRITE):
+        self._log = log
+        self._tier = tier
+
+    async def execute(self, **kwargs) -> ToolResult:
+        self._log.append("tool")
+        return ToolResult(
+            tool_id="",
+            tool_name=self.name,
+            success=True,
+            output=f"Ran: {kwargs.get('content', '')}",
+        )
+
+    @property
+    def permission(self) -> Permission:
+        return self._tier
+
+
 # ============================================================================
 # Fixtures
 # ============================================================================
@@ -261,7 +291,7 @@ def registry() -> ToolRegistry:
 
 @pytest.fixture
 def executor(registry) -> ToolExecutor:
-    """Executor that auto-approves — gating is handled by AgentLoop."""
+    """Executor that does not gate — AgentLoop is the only gate."""
     return ToolExecutor(registry)
 
 
@@ -794,7 +824,7 @@ class TestFileScopeGating:
             registry = ToolRegistry()
             registry.register(PathTool(scope_policy=policy))
             perm_mgr = PermissionManager(mode)
-            executor = ToolExecutor(registry, permission_manager=perm_mgr)
+            executor = ToolExecutor(registry)
             return AgentLoop(
                 MockLLMProvider(responses=responses),
                 registry,
@@ -866,29 +896,145 @@ class TestFileScopeGating:
         assert ends[0].result.success
 
 
-class TestExecutorDenyGuard:
-    """The executor is the second gate, and the denial holds there even
-    when its confirmation callback would have approved anything."""
+class TestExecutorCheckpoint:
+    """The executor takes the checkpoint its caller asked for.
 
-    async def test_the_default_executor_still_denies(self, tmp_path: Path):
-        """No ``confirm_cb`` means "approve whatever is asked" — a denial
-        is not something it may be asked, so it stands."""
-        policy = FileScopePolicy(tmp_path, (".env",))
+    It reads no tier of its own: *mutating* is the caller's answer, and
+    that answer alone orders the checkpoint — taken before the call runs,
+    so the write it records is the write it can undo.
+    """
+
+    @staticmethod
+    def _executor(
+        log: list[str], cb: CheckpointCallback | None
+    ) -> ToolExecutor:
         registry = ToolRegistry()
-        registry.register(PathTool(scope_policy=policy))
-        executor = ToolExecutor(registry)
+        registry.register(RecordingTool(log))
+        return ToolExecutor(registry, checkpoint_cb=cb)
 
-        result = await executor.execute(
-            ToolCall(
-                tool_id="c1",
-                tool_name="read_path",
-                parameters={"file_path": str(tmp_path / ".env")},
-            )
+    @staticmethod
+    def _call() -> ToolCall:
+        return ToolCall(
+            tool_id="c1",
+            tool_name="recording_tool",
+            parameters={"content": "hi"},
         )
 
-        assert not result.success
-        assert result.output == ""          # the tool never ran
-        assert "restricted" in result.error
+    async def test_a_mutating_call_is_checkpointed_before_it_runs(self):
+        log: list[str] = []
+
+        def checkpoint(tool, params):   # noqa: ARG001
+            log.append("checkpoint")
+            return "ck1"
+
+        executor = self._executor(log, checkpoint)
+
+        result = await executor.execute(self._call(), mutating=True)
+
+        assert log == ["checkpoint", "tool"]
+        assert result.success
+        assert result.checkpoint_id == "ck1"
+
+    async def test_a_read_only_call_is_not_checkpointed(self):
+        log: list[str] = []
+
+        def checkpoint(tool, params):   # noqa: ARG001
+            log.append("checkpoint")
+            return "ck1"
+
+        executor = self._executor(log, checkpoint)
+
+        result = await executor.execute(self._call(), mutating=False)
+
+        assert log == ["tool"]
+        assert result.success
+        assert result.checkpoint_id is None
+
+    async def test_without_a_callback_the_call_still_runs(self):
+        """A session with no checkpoint manager is not a broken session."""
+        log: list[str] = []
+        executor = self._executor(log, None)
+
+        result = await executor.execute(self._call(), mutating=True)
+
+        assert log == ["tool"]
+        assert result.success
+        assert result.checkpoint_id is None
+
+
+class TestCheckpointOnWrite:
+    """What the gate read is what orders the checkpoint.
+
+    The loop classifies the call once and hands the answer down, so an
+    approved write is snapshotted before it runs and a read never is —
+    the hand-off the executor's own cases cannot see.
+    """
+
+    @staticmethod
+    def _loop(log, tier, responses, settings, conv_ctx) -> AgentLoop:
+        def checkpoint(tool, params):   # noqa: ARG001
+            log.append("checkpoint")
+            return "ck1"
+
+        registry = ToolRegistry()
+        registry.register(RecordingTool(log, tier=tier))
+        executor = ToolExecutor(registry, checkpoint_cb=checkpoint)
+        return AgentLoop(
+            MockLLMProvider(responses=responses),
+            registry,
+            executor,
+            settings,
+            context=conv_ctx,
+            permission_manager=PermissionManager(),
+        )
+
+    @staticmethod
+    def _responses() -> list:
+        return [
+            _make_llm_response(
+                tool_blocks=[
+                    _make_tool_use_block(
+                        "c1", "recording_tool", {"content": "hi"}
+                    )
+                ],
+                stop_reason="tool_use",
+            ),
+            _make_llm_response(text="Done", stop_reason="end_turn"),
+        ]
+
+    async def test_an_approved_write_is_checkpointed(
+        self, settings, conv_ctx
+    ):
+        """MANUAL asks about a write; approving it still snapshots first."""
+        log: list[str] = []
+        loop = self._loop(
+            log, Permission.WRITE, self._responses(), settings, conv_ctx
+        )
+
+        gen = loop.run("Write it", config=TEST_TURN_CONFIG)
+        events = []
+        async for event in gen:
+            events.append(event)
+            if isinstance(event, AgentPaused):
+                loop.approve_tool_call()
+
+        ends = [e for e in events if isinstance(e, ToolCallEnd)]
+        assert log == ["checkpoint", "tool"]
+        assert ends[0].result.checkpoint_id == "ck1"
+
+    async def test_a_read_is_not_checkpointed(self, settings, conv_ctx):
+        log: list[str] = []
+        loop = self._loop(
+            log, Permission.READ, self._responses(), settings, conv_ctx
+        )
+
+        events = await _collect_events(
+            loop.run("Read it", config=TEST_TURN_CONFIG)
+        )
+
+        ends = [e for e in events if isinstance(e, ToolCallEnd)]
+        assert log == ["tool"]
+        assert ends[0].result.checkpoint_id is None
 
 
 class TestApprovalChannel:
@@ -1004,7 +1150,7 @@ class TestApprovalChannel:
                 tool_name="write_stuff",
                 parameters={"content": "unapproved"},
             ),
-            Decision.ASK,
+            _Verdict(Permission.WRITE, Decision.ASK),
         )
 
         assert not result.success

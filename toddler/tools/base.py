@@ -13,14 +13,24 @@ from pathlib import Path
 class Permission(Enum):
     """Permission tier for a tool.
 
-    Used by the ``ToolExecutor`` to decide whether auto-approval is allowed
-    or user confirmation is needed.
+    Read by the loop's gate to decide whether auto-approval is allowed or
+    user confirmation is needed.
     """
 
     READ = "read"               # side-effect-free reads (auto-approve)
     WRITE = "write"             # file mutations (confirm by default)
     SHELL_SAFE = "shell_safe"   # safe shell commands — ls, git status, etc.
     SHELL_DANGEROUS = "shell_dangerous"  # rm, sudo, curl, etc. (always confirm)  # noqa: E501
+
+    @property
+    def is_mutating(self) -> bool:
+        """Whether a call of this tier changes state.
+
+        These are the tiers a checkpoint is taken before: something is
+        about to be touched, and the checkpoint is what undoes it.
+        ``READ`` and ``SHELL_SAFE`` leave nothing to undo.
+        """
+        return self in (Permission.WRITE, Permission.SHELL_DANGEROUS)
 
 
 class FileScope(Enum):
@@ -291,12 +301,11 @@ class FileScopePolicy:
 class PermissionManager:
     """The session's gating policy — the mode, and what it decides.
 
-    Owned by :class:`~toddler.session.manager.SessionManager` and
-    shared with :class:`~toddler.agent.loop.AgentLoop` and
-    :class:`~toddler.tools.executor.ToolExecutor` so they always see the
-    same live mode without coupling to the state machine.  Both gates
-    ask :meth:`decide`, so the two of them answer alike by construction
-    rather than by keeping two copies of the policy in step.
+    Owned by :class:`~toddler.session.manager.SessionManager` and shared
+    with :class:`~toddler.agent.loop.AgentLoop`, so the loop always sees
+    the live mode without coupling to the state machine.  The loop's gate
+    is the only caller of :meth:`decide`, and it is the only thing
+    standing between a tool call and its execution.
 
     Parameters
     ----------
@@ -581,8 +590,8 @@ class BaseTool(ABC):
         that need to inspect the parameters (e.g. the command string) can
         override this method to return a dynamic permission level.
 
-        The executor always calls this method (not the property directly)
-        so that dynamic classification works transparently.
+        The loop's gate always calls this method (not the property
+        directly) so that dynamic classification works transparently.
         """
         return self.permission
 

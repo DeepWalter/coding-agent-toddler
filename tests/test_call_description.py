@@ -292,7 +292,7 @@ class TestExecutorStrip:
             },
         )
 
-        result = await executor.execute(call)
+        result = await executor.execute(call, mutating=False)
 
         assert result.success is True
         assert tool.seen == {"message": "hi"}
@@ -307,7 +307,7 @@ class TestExecutorStrip:
         }
         call = ToolCall(tool_id="c1", tool_name=tool.name, parameters=params)
 
-        await executor.execute(call)
+        await executor.execute(call, mutating=False)
 
         assert params[CALL_DESCRIPTION_PARAM] == "send a greeting"
         assert call.parameters is params

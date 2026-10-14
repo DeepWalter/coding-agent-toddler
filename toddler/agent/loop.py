@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from toddler.agent.events import (
@@ -33,6 +34,7 @@ from toddler.config.models import TurnConfig
 from toddler.llm import Message, MessageBlock, TokenUsage
 from toddler.tools.base import (
     Decision,
+    Permission,
     PermissionManager,
     ToolCall,
     ToolResult,
@@ -95,6 +97,29 @@ class _PendingApproval:
         self.event.set()
 
 
+@dataclass(frozen=True)
+class _Verdict:
+    """The gate's answer for one call: what it does, and what was decided.
+
+    The tier rides with the decision because the executor orders its
+    checkpoint by it — one classification per call, and the pause and the
+    execution cannot disagree about what was asked.
+    """
+
+    permission: Permission | None   # None: the classification raised
+    decision: Decision
+
+    @property
+    def mutating(self) -> bool:
+        """Whether the executor should checkpoint before running.
+
+        A tier that could not be read counts as mutating: the call is
+        about to run on an approval, and the safe direction is a
+        checkpoint it may not have needed.
+        """
+        return self.permission is None or self.permission.is_mutating
+
+
 class AgentLoop:
     """Orchestrates the core tool-calling loop.
 
@@ -102,9 +127,10 @@ class AgentLoop:
     CLI layer (Phase 5) iterates over these to drive the display.
 
     Permission gating is done *inline* in the loop body so that
-    :class:`AgentPaused` events can be yielded naturally.  The
-    :class:`ToolExecutor` should be configured to auto-approve everything
-    (the loop pre-gates before calling it).
+    :class:`AgentPaused` events can be yielded naturally — this gate is
+    the only one a call passes.  :class:`ToolExecutor` runs what the gate
+    clears, and is told whether the call mutates so it can take the
+    checkpoint first.
 
     Parameters
     ----------
@@ -113,7 +139,8 @@ class AgentLoop:
     tool_registry:
         Registry of available tools.
     tool_executor:
-        Executor that runs tool calls (with checkpoint hooks if configured).
+        Executor that runs tool calls — handed the gate's classification,
+        so it can checkpoint a mutating call before running it.
     settings:
         Resolved settings (limits, permissions, etc.).
     context:
@@ -396,17 +423,18 @@ class AgentLoop:
             )
 
             # --- permission gating ---
-            # The decision is made once here and handed to the executor
+            # The verdict is reached once here and handed to the executor
             # below, so the pause and the execution can never disagree
-            # about what was asked.
-            decision = self._decision_for(call)
+            # about what was asked — and the tier rides with it, so the
+            # executor never classifies the call a second time.
+            verdict = self._decision_for(call)
 
             # Open the answer channel *before* yielding AgentPaused so
             # external code can call approve/deny immediately without a
             # race, and so the answer is already waiting when this
             # generator resumes.  A denial never pauses: there is nothing
             # to ask.
-            if decision is Decision.ASK:
+            if verdict.decision is Decision.ASK:
                 self._pending = _PendingApproval()
 
                 tool = self._registry.get(call.tool_name)
@@ -420,7 +448,7 @@ class AgentLoop:
                     choices=["approve", "deny"],
                 )
 
-            result = await self._execute_with_gating(call, decision)
+            result = await self._execute_with_gating(call, verdict)
 
             yield ToolCallEnd(
                 tool_id=call.tool_id,
@@ -450,9 +478,9 @@ class AgentLoop:
     # ==================================================================
 
     async def _execute_with_gating(
-        self, call: ToolCall, decision: Decision
+        self, call: ToolCall, verdict: _Verdict
     ) -> ToolResult:
-        """Execute *call* under *decision*.
+        """Execute *call* under *verdict*.
 
         For :attr:`Decision.ASK` the caller (the ``run()`` loop body) has
         already opened a :class:`_PendingApproval` and yielded
@@ -461,7 +489,12 @@ class AgentLoop:
         :attr:`Decision.ALLOW` passes straight through, and
         :attr:`Decision.DENY` never runs at all — it is the policy
         answering, not a question left open.
+
+        A call that does reach the executor takes the verdict's own answer
+        about whether it mutates: that is what orders the checkpoint.
         """
+        decision = verdict.decision
+
         # Unknown tool — produce error result directly.
         tool = self._registry.get(call.tool_name)
         if tool is None:
@@ -487,7 +520,9 @@ class AgentLoop:
 
         # Nothing to ask — go straight to execution.
         if decision is Decision.ALLOW:
-            return await self._executor.execute(call)
+            return await self._executor.execute(
+                call, mutating=verdict.mutating
+            )
 
         # The channel the pause opened.  It stays on the loop until the
         # answer has arrived: a front-end answers on a task of its own,
@@ -528,10 +563,10 @@ class AgentLoop:
                 error="User denied permission to execute this tool.",
             )
 
-        return await self._executor.execute(call)
+        return await self._executor.execute(call, mutating=verdict.mutating)
 
-    def _decision_for(self, call: ToolCall) -> Decision:
-        """The gate's verdict on *call*.
+    def _decision_for(self, call: ToolCall) -> _Verdict:
+        """The gate's verdict on *call*, with the tier it was read from.
 
         Both halves are the tool's own answer — its tier, and where its
         files live — so a tool that classifies dynamically (``shell``,
@@ -541,7 +576,7 @@ class AgentLoop:
         """
         tool = self._registry.get(call.tool_name)
         if tool is None:
-            return Decision.ALLOW   # the executor produces the error
+            return _Verdict(None, Decision.ALLOW)   # the executor errors
         try:
             perm = tool.get_permission(**call.parameters)
             scope = tool.get_file_scope(**call.parameters)
@@ -549,5 +584,5 @@ class AgentLoop:
             logger.exception(
                 "Could not classify %s — asking", call.tool_name
             )
-            return Decision.ASK
-        return self._perm_mgr.decide(perm, scope)
+            return _Verdict(None, Decision.ASK)
+        return _Verdict(perm, self._perm_mgr.decide(perm, scope))

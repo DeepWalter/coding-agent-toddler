@@ -95,9 +95,9 @@ class SessionManager:
         # State machine — tracks plan workflow state only
         self._sm = AgentStateMachine()
 
-        # Shared permission manager — single source of truth for both
-        # AgentLoop and ToolExecutor.  Mode changes (via /mode or
-        # plan approval) take effect immediately without rebuilding.
+        # Shared permission manager — the loop's gate reads this live
+        # reference, so mode changes (via /mode or plan approval) take
+        # effect immediately without rebuilding.
         self._perm_mgr = PermissionManager()
 
         # Shared plan step-status tracker — the plan_update tool mutates
@@ -123,7 +123,6 @@ class SessionManager:
             checkpoint_cb=create_checkpoint_callback(
                 ckpt_manager=self._ckpt_mgr,
             ),
-            permission_manager=self._perm_mgr,
         )
 
         # Planner instance for the current turn (created in process_turn).
@@ -492,8 +491,8 @@ class SessionManager:
         self._sm.notify_observers()
 
     def set_permission_mode(self, mode: PermissionMode) -> None:
-        """Set the permission gating mode — shared manager updates both
-        AgentLoop and ToolExecutor automatically.
+        """Set the permission gating mode — the loop's gate reads the
+        shared manager, so the change takes effect automatically.
 
         State-machine observers are notified too: gating feeds the UI's
         session payload (``permission_mode``) but is not a transition, so
