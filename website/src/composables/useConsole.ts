@@ -175,6 +175,7 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
             path: msg.path ?? null,
             path_abs: msg.path_abs ?? null,
             path_named: msg.path_named ?? null,
+            path_symlink: msg.path_symlink ?? false,
             result: msg.result ?? null,
             open: false,
           })
@@ -272,6 +273,7 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
           path: null,
           path_abs: null,
           path_named: null,
+          path_symlink: false,
           result: null,
           open: true,
         })
@@ -294,6 +296,7 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
         existing.path = action.path
         existing.path_abs = action.path_abs
         existing.path_named = action.path_named
+        existing.path_symlink = action.path_symlink
       } else {
         push(s, {
           kind: 'tool',
@@ -303,6 +306,7 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
           path: action.path,
           path_abs: action.path_abs,
           path_named: action.path_named,
+          path_symlink: action.path_symlink,
           result: null,
           open: true,
         })
@@ -316,6 +320,7 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
         block.path = action.path
         block.path_abs = action.path_abs
         block.path_named = action.path_named
+        block.path_symlink = action.path_symlink
         block.result = action.result
         block.open = false
       }

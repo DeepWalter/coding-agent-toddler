@@ -2395,12 +2395,14 @@ await page.waitForSelector('.pause-prompt', { timeout: 8000 })
       running: row?.querySelector('.status-mark')?.className.includes('running') ?? false,
       label: row?.querySelector('.tool-call-path')?.textContent.trim() ?? null,
       external: row?.querySelector('.external-tag')?.textContent.trim() ?? null,
+      symlink: row?.querySelector('.symlink-tag')?.textContent.trim() ?? null,
       tag: row?.querySelector('.tool-call-path')?.tagName ?? null,
     }
   })
   const ok =
     gated.paused && gated.running &&
     gated.label === 'notes.md' && gated.external === 'external' &&
+    gated.symlink === 'symlink' &&
     gated.tag === 'BUTTON'
   console.log(`phase15 the outside card is complete before the gate resolves ${JSON.stringify(gated)} ${ok ? 'PASS' : 'FAIL'}`)
   if (!ok) fails++
@@ -2424,8 +2426,9 @@ const readFileCards = () =>
         // where there is one, plain text where there is not.
         tag: link?.tagName ?? null,
         static: link?.classList.contains('static') ?? null,
-        // The external marker rides beside the button, not inside it.
+        // The markers ride beside the button, not inside it.
         external: el.querySelector('.external-tag')?.textContent.trim() ?? null,
+        symlink: el.querySelector('.symlink-tag')?.textContent.trim() ?? null,
         // One path slot per title: the button/static pair is a chain, and a
         // marker wedged into it once made every card name its file twice.
         paths: el.querySelectorAll('.tool-call-path').length,
@@ -2467,11 +2470,16 @@ function checkFileCards(cards) {
     outside.tag === 'BUTTON' &&
     outside.static === false &&
     outside.external === 'external' &&
-    // The marker rides only on the outside file; the in-root four carry none.
-    read.external === null &&
-    edit.external === null &&
-    write.external === null &&
-    failed.external === null &&
+    // Its file sits behind a link, so the name the card shows and the path
+    // a click opens are two spellings of one file — said out loud, or read
+    // as a mistake.
+    outside.symlink === 'symlink' &&
+    // The markers ride only on the outside file, which is both outside the
+    // root and named through a link; the in-root four carry neither.
+    read.external === null && read.symlink === null &&
+    edit.external === null && edit.symlink === null &&
+    write.external === null && write.symlink === null &&
+    failed.external === null && failed.symlink === null &&
     // No box and no rows on any of them, no description either, and exactly
     // one path slot per title.
     cards.every((c) => c.boxes === 0 && c.rows === 0 && c.desc === null && c.paths === 1)

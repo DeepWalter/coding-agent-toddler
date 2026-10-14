@@ -90,6 +90,7 @@ export interface ReplayMessage {
   path?: string | null
   path_abs?: string | null
   path_named?: string | null
+  path_symlink?: boolean
   result?: ToolResult | null
 }
 
@@ -193,6 +194,7 @@ export type Frame =
       path: string | null
       path_abs: string | null
       path_named: string | null
+      path_symlink: boolean
     }
   | {
       type: 'tool_call_end'
@@ -205,13 +207,15 @@ export type Frame =
        * or named one the root cannot hold — and `path_abs` is where it
        * actually is; a file with no relative form opens in the editor under
        * its absolute path, read-only.  `path_named` is that same file under
-       * the name the call used, which is what the card shows a reader.
-       * Resolving is the server's job: it alone knows the home directory a
-       * `~` path needs, and where a relative path starts.
+       * the name the call used, which is what the card shows a reader, and
+       * `path_symlink` marks the case where that name reaches it through a
+       * link.  Resolving is the server's job: it alone knows the home
+       * directory a `~` path needs, and where a relative path starts.
        */
       path: string | null
       path_abs: string | null
       path_named: string | null
+      path_symlink: boolean
       result: ToolResult | null
     }
   | { type: 'plan_proposed'; plan: Plan }
@@ -278,12 +282,14 @@ export type Block =
       input: Record<string, unknown>
       /** The call's file, as the server resolved it — null until the call
        *  ends and the resolution arrives.  `path` is the root-relative one a
-       *  tab holds; `path_abs` is where the file actually is, and
-       *  `path_named` is the same file under the name the call used, which
-       *  is the one the card shows. */
+       *  tab holds; `path_abs` is where the file actually is, `path_named`
+       *  is the same file under the name the call used — the one the card
+       *  shows — and `path_symlink` says the two are one file reached
+       *  through a link. */
       path: string | null
       path_abs: string | null
       path_named: string | null
+      path_symlink: boolean
       result: ToolResult | null
       open: boolean
     }

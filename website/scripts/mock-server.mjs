@@ -738,6 +738,7 @@ wss.on('connection', (ws) => {
               path: rootRelative(input.file_path),
               path_abs: absolutePath(input.file_path),
               path_named: namedPath(input.file_path),
+              path_symlink: namedPath(input.file_path) !== absolutePath(input.file_path),
             }
             useStart(id, name)
             send({
@@ -831,6 +832,7 @@ wss.on('connection', (ws) => {
               path: rootRelative(OUTSIDE_PATH),
               path_abs: absolutePath(OUTSIDE_PATH),
               path_named: namedPath(OUTSIDE_PATH),
+              path_symlink: namedPath(OUTSIDE_PATH) !== absolutePath(OUTSIDE_PATH),
             },
             result: {
               success: true,

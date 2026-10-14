@@ -110,13 +110,15 @@ export interface ToolCard {
    *  (root-relative inside the root, absolute outside), and `abs` the path
    *  the title offers on hover — the file as the call named it, since that
    *  is the spelling whoever asked for it recognises.  `external` marks the
-   *  outside case, whose tab opens read-only.  Null for a call that names
-   *  no file. */
+   *  outside case, whose tab opens read-only; `symlink` marks a name that
+   *  reaches its file through a link, so the title's two spellings are not
+   *  read as two files.  Null for a call that names no file. */
   path: {
     label: string
     target: string | null
     abs: string
     external: boolean
+    symlink: boolean
     opens: boolean
   } | null
   /** Top to bottom: what ran, then what came back — the OUT row joining
@@ -204,6 +206,7 @@ export function toolCard(block: ToolBlock): ToolCard {
           label: basename(block.path_named ?? block.path_abs ?? named),
           target,
           external: block.path === null && block.path_abs !== null,
+          symlink: block.path_symlink ?? false,
           opens: target !== null
             && (!spec.path.written || blockStatus(block) === 'ok'),
         }
