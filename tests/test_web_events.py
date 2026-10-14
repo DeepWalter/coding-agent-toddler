@@ -98,6 +98,7 @@ class TestSerializeEvent:
             "path": None,
             "path_abs": None,
             "path_named": None,
+            "path_symlink": False,
         }
 
     def test_tool_call_start_names_the_file_before_the_gate(self):
@@ -121,6 +122,34 @@ class TestSerializeEvent:
         # resolving it would read back as ``/private/etc/passwd``.
         assert outside["path_named"] == "/etc/passwd"
 
+    def test_the_link_marker_rides_where_the_name_reaches_through_one(
+        self, tmp_path
+    ):
+        """``/repo``-style fixtures cannot say this: whether a path goes
+        through a link is a fact about the filesystem."""
+
+        def frame(raw: str) -> dict:
+            return serialize_event(
+                ToolCallStart(
+                    tool_id="t1", tool_name="read_file",
+                    input={"file_path": raw},
+                ),
+                tmp_path,
+            )
+
+        (tmp_path / "real").mkdir()
+        (tmp_path / "real" / "a.py").write_text("x = 1\n")
+        link = tmp_path / "linked"
+        link.symlink_to(tmp_path / "real")
+
+        through_link = frame(str(link / "a.py"))
+        assert through_link["path_symlink"] is True
+        assert through_link["path_named"] == str(link / "a.py")
+        assert through_link["path_abs"] == str(tmp_path / "real" / "a.py")
+
+        straight = frame(str(tmp_path / "real" / "a.py"))
+        assert straight["path_symlink"] is False
+
     def test_tool_call_end(self):
         result = ToolResult(
             tool_id="t1", tool_name="read_file", success=True,
@@ -142,6 +171,7 @@ class TestSerializeEvent:
             "path": "a.py",
             "path_abs": "/repo/a.py",
             "path_named": "/repo/a.py",
+            "path_symlink": False,
             "result": {
                 "success": True,
                 "output": "content",
@@ -342,6 +372,7 @@ class TestSerializeTranscript:
                 "path": "a.py",
                 "path_abs": "/repo/a.py",
                 "path_named": "/repo/a.py",
+                "path_symlink": False,
                 "result": {
                     "success": True,
                     "output": "content",

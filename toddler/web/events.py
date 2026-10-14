@@ -122,6 +122,11 @@ def tool_card_paths(root: Path, input: dict) -> dict:
     ``/System/Volumes/Data/home/...`` back at whoever asked for
     ``/home/...`` is nobody's idea of an answer.
 
+    ``path_symlink`` says those last two are one file reached two ways —
+    the name goes through a link.  Worth marking: without it a card that
+    names one path and opens another looks like a mistake, and on macOS
+    it is not even unusual (``/tmp`` and ``/home`` are links).
+
     The ``tool_call_start`` and ``tool_call_end`` frames carry this (see
     :func:`serialize_event`).  The start frame is the one that matters for
     how early the card can name the file: the call's input is complete by
@@ -129,10 +134,13 @@ def tool_card_paths(root: Path, input: dict) -> dict:
     identity-only ``tool_use_start`` carries none of them.
     """
     raw = input.get("file_path")
+    named = tool_path_named(root, raw)
+    resolved = tool_path_abs(root, raw)
     return {
         "path": tool_path(root, raw),
-        "path_abs": tool_path_abs(root, raw),
-        "path_named": tool_path_named(root, raw),
+        "path_abs": resolved,
+        "path_named": named,
+        "path_symlink": named is not None and named != resolved,
     }
 
 
