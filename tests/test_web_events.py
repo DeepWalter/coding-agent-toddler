@@ -99,6 +99,7 @@ class TestSerializeEvent:
             "path_abs": None,
             "path_named": None,
             "path_symlink": False,
+            "path_is_file": False,
         }
 
     def test_tool_call_start_names_the_file_before_the_gate(self):
@@ -146,9 +147,54 @@ class TestSerializeEvent:
         assert through_link["path_symlink"] is True
         assert through_link["path_named"] == str(link / "a.py")
         assert through_link["path_abs"] == str(tmp_path / "real" / "a.py")
+        # Both spellings reach one real file, so the card's title is a
+        # control whichever of them it opens.
+        assert through_link["path_is_file"] is True
 
         straight = frame(str(tmp_path / "real" / "a.py"))
         assert straight["path_symlink"] is False
+
+    def test_the_frame_says_whether_there_is_a_file_to_open(self, tmp_path):
+        """The card's basename is a control only where a click has
+        somewhere to land, and where it lands is the editor's read
+        endpoint — which serves files and 404s everything else, so a
+        directory counts as nothing there."""
+
+        def frame(raw: str) -> dict:
+            return serialize_event(
+                ToolCallStart(
+                    tool_id="t1", tool_name="write_file",
+                    input={"file_path": raw},
+                ),
+                tmp_path,
+            )
+
+        (tmp_path / "a.py").write_text("x = 1\n")
+        (tmp_path / "pkg").mkdir()
+
+        assert frame(str(tmp_path / "a.py"))["path_is_file"] is True
+        assert frame(str(tmp_path / "missing.py"))["path_is_file"] is False
+        assert frame(str(tmp_path / "pkg"))["path_is_file"] is False
+        assert frame("")["path_is_file"] is False
+
+    def test_a_write_has_a_file_behind_it_once_it_has_landed(self, tmp_path):
+        """A write is the one call whose answer to this can change: the
+        start frame is serialized before it runs, the end frame after —
+        so the file it brings into being is there for the frame that
+        carries its result, and not for the frame the gate held on."""
+        target = tmp_path / "out.txt"
+        call = {
+            "tool_id": "t1",
+            "tool_name": "write_file",
+            "input": {"file_path": str(target), "content": "hello"},
+        }
+
+        start = serialize_event(ToolCallStart(**call), tmp_path)
+        assert start["path_is_file"] is False
+
+        target.write_text("hello")
+        end = serialize_event(ToolCallEnd(**call), tmp_path)
+        assert end["path_is_file"] is True
 
     def test_tool_call_end(self):
         result = ToolResult(
@@ -172,6 +218,9 @@ class TestSerializeEvent:
             "path_abs": "/repo/a.py",
             "path_named": "/repo/a.py",
             "path_symlink": False,
+            # Nothing lives under the fixture root, so there is no file for
+            # the card's title to open.
+            "path_is_file": False,
             "result": {
                 "success": True,
                 "output": "content",
@@ -373,6 +422,7 @@ class TestSerializeTranscript:
                 "path_abs": "/repo/a.py",
                 "path_named": "/repo/a.py",
                 "path_symlink": False,
+                "path_is_file": False,
                 "result": {
                     "success": True,
                     "output": "content",

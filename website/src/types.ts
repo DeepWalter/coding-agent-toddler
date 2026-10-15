@@ -91,6 +91,7 @@ export interface ReplayMessage {
   path_abs?: string | null
   path_named?: string | null
   path_symlink?: boolean
+  path_is_file?: boolean
   result?: ToolResult | null
 }
 
@@ -195,6 +196,7 @@ export type Frame =
       path_abs: string | null
       path_named: string | null
       path_symlink: boolean
+      path_is_file: boolean
     }
   | {
       type: 'tool_call_end'
@@ -211,11 +213,17 @@ export type Frame =
        * `path_symlink` marks the case where that name reaches it through a
        * link.  Resolving is the server's job: it alone knows the home
        * directory a `~` path needs, and where a relative path starts.
+       *
+       * `path_is_file` is the one thing no spelling says: whether there is
+       * a file there to open, which is what decides whether the card's
+       * title is a control.  This frame is serialized after the call ran,
+       * so a write that brought its file into being reports it here.
        */
       path: string | null
       path_abs: string | null
       path_named: string | null
       path_symlink: boolean
+      path_is_file: boolean
       result: ToolResult | null
     }
   | { type: 'plan_proposed'; plan: Plan }
@@ -280,16 +288,20 @@ export type Block =
       tool_id: string
       tool_name: string
       input: Record<string, unknown>
-      /** The call's file, as the server resolved it — null until the call
-       *  ends and the resolution arrives.  `path` is the root-relative one a
-       *  tab holds; `path_abs` is where the file actually is, `path_named`
-       *  is the same file under the name the call used — the one the card
-       *  shows — and `path_symlink` says the two are one file reached
-       *  through a link. */
+      /** The call's file, as the server resolved it — null until the
+       *  execution frame arrives, which is before the call runs.  `path` is
+       *  the root-relative one a tab holds; `path_abs` is where the file
+       *  actually is, `path_named` is the same file under the name the call
+       *  used — the one the card shows — and `path_symlink` says the two are
+       *  one file reached through a link.  `path_is_file` says whether the
+       *  title is a control at all: it is a reading of the disk when the
+       *  last frame arrived, so a write's own result is what brings its
+       *  file into being for the card. */
       path: string | null
       path_abs: string | null
       path_named: string | null
       path_symlink: boolean
+      path_is_file: boolean
       result: ToolResult | null
       open: boolean
     }

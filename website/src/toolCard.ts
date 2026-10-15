@@ -1,4 +1,3 @@
-import { blockStatus } from './blockStatus'
 import type { Block, TabEntry, ToolResult } from './types'
 import { basename } from './utils'
 
@@ -10,12 +9,10 @@ interface CardSpec {
   /** The path this call is about: named in the title in place of the
    *  description — by its basename, since the heading is a glance and the
    *  directory is usually the same one the call beside it names — and
-   *  opening in the editor on a click.
-   *
-   *  `written` marks the calls that bring the file into being: a read or an
-   *  edit names a path that is already there, whatever the call itself did,
-   *  where a write has nothing to open until it has succeeded. */
-  path?: { param: string; written?: boolean }
+   *  opening in the editor on a click.  The click is offered where there
+   *  is a file to open, whatever the tool: the frames say so, and no call
+   *  is special-cased here. */
+  path?: { param: string }
   /** No box at all: a call that has said everything it has to say in its
    *  title.  A file call is one — its result is the file, which the title
    *  already opens. */
@@ -68,13 +65,10 @@ const CARDS = new Map<string, CardSpec>([
   ['git_branch', { name: 'Git branch' }],
   // A file call is its title and nothing else: the path is what identifies
   // it, and the file itself opens in the editor on a click, so a row of
-  // content here would only be a worse copy of the pane next door.
+  // content here would only be a worse copy of the pane next door.  Read,
+  // write and edit are the same card, and open under the same rule.
   ['read_file', { name: 'Read', titleOnly: true, path: { param: 'file_path' } }],
-  ['write_file', {
-    name: 'Write',
-    titleOnly: true,
-    path: { param: 'file_path', written: true },
-  }],
+  ['write_file', { name: 'Write', titleOnly: true, path: { param: 'file_path' } }],
   ['edit_file', { name: 'Edit', titleOnly: true, path: { param: 'file_path' } }],
 ])
 
@@ -109,11 +103,13 @@ export interface ToolCard {
    *  basename the title shows, `target` the name a click hands the editor
    *  (root-relative inside the root, absolute outside), and `abs` the path
    *  the title offers on hover — the file as the call named it, since that
-   *  is the spelling whoever asked for it recognises.  `external` marks the
-   *  outside case, whose tab opens read-only; `symlink` marks a name that
-   *  reaches its file through a link, and wears `resolved` on its hover so
-   *  the two spellings are not read as two files.  Null for a call that
-   *  names no file. */
+   *  is the spelling whoever asked for it recognises.  `exists` is whether
+   *  there is a file at the end of it to open: true is a title that opens,
+   *  false a title that only reads, whatever the tool and whenever the
+   *  frame that said so arrived.  `external` marks the outside case, whose
+   *  tab opens read-only; `symlink` marks a name that reaches its file
+   *  through a link, and wears `resolved` on its hover so the two spellings
+   *  are not read as two files.  Null for a call that names no file. */
   path: {
     label: string
     target: string | null
@@ -121,7 +117,7 @@ export interface ToolCard {
     resolved: string
     external: boolean
     symlink: boolean
-    opens: boolean
+    exists: boolean
   } | null
   /** Top to bottom: what ran, then what came back — the OUT row joining
    *  the box only once it has. */
@@ -202,6 +198,13 @@ export function toolCard(block: ToolBlock): ToolCard {
     // runs and before any permission gate, so a card in flight already
     // names its file (and wears the external marker); the provider-phase
     // skeleton has no input at all yet, so its title is the bare tool name.
+    //
+    // Whether that name is a control is the server's answer too, and the
+    // only question here it cannot be asked twice: there is a file at the
+    // end of the path, or there is not.  A write creating one is the case
+    // that moves — its own result frame is what makes the file exist — and
+    // a frame from a server too old to say falls back to plain text, which
+    // still hovers the path rather than opening a tab onto a 404.
     path: spec?.path && named
       ? {
           abs: block.path_named ?? block.path_abs ?? named,
@@ -210,8 +213,7 @@ export function toolCard(block: ToolBlock): ToolCard {
           target,
           external: block.path === null && block.path_abs !== null,
           symlink: block.path_symlink ?? false,
-          opens: target !== null
-            && (!spec.path.written || blockStatus(block) === 'ok'),
+          exists: target !== null && block.path_is_file,
         }
       : null,
     rows,

@@ -20,7 +20,7 @@ const state = computed(() => blockStatus(props.block))
  *  empty one to fall through to the call's own description.  A shape rather
  *  than a null keeps the template free of narrowing. */
 const path = computed(
-  () => card.value.path ?? { label: '', target: null, abs: '', resolved: '', external: false, symlink: false, opens: false },
+  () => card.value.path ?? { label: '', target: null, abs: '', resolved: '', external: false, symlink: false, exists: false },
 )
 
 function open(row: ToolCardRow) {
@@ -32,7 +32,8 @@ function open(row: ToolCardRow) {
  *  the root-relative path, the one every pane opens a file by — or the
  *  absolute path for a file the root cannot hold, which opens read-only;
  *  the heading prints the basename of it and the hover names where the file
- *  really is. */
+ *  really is.  A call that names a file with nothing behind it does not get
+ *  here: the server said so, and the title reads as plain text. */
 function openPath() {
   const target = path.value.target
   if (target) emit('open-file', target)
@@ -50,16 +51,16 @@ function openPath() {
     <div class="tool-call-heading">
       <span class="tool-call-name">{{ card.name }}</span>
       <button
-        v-if="path.opens"
+        v-if="path.exists"
         type="button"
         class="tool-call-path"
         :title="`Open ${path.abs}`"
         @click="openPath"
       >{{ path.label }}</button>
-      <!-- A path with nothing behind it — a write that failed — reads as
-           plain text: the click would have nowhere to land.  The hover
-           still names where the file is, which is what a reader wants most
-           about one they cannot open. -->
+      <!-- A path with no file behind it — a write that never landed, a
+           file since deleted — reads as plain text: the click would have
+           nowhere to land.  The hover still names where the file is, which
+           is what a reader wants most about one they cannot open. -->
       <span
         v-else-if="path.label"
         class="tool-call-path static"

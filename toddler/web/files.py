@@ -26,6 +26,7 @@ __all__ = [
     "resolve_relative",
     "tool_path",
     "tool_path_abs",
+    "tool_path_is_file",
     "tool_path_named",
     "write_file",
 ]
@@ -121,6 +122,25 @@ def tool_path_abs(root: Path, raw: object) -> str | None:
     if not candidate.is_absolute():
         candidate = root.resolve() / candidate
     return str(candidate.resolve())
+
+
+def tool_path_is_file(root: Path, raw: object) -> bool:
+    """Whether a call's path has a file behind it — the one thing about
+    it the browser cannot ask the disk itself.
+
+    A card prints the basename as a control only where a click has
+    somewhere to land, and where it lands is :func:`read_file`, which
+    serves files and 404s the rest.  A directory is the difference:
+    it exists, and there is still nothing to open, so ``is_file`` is the
+    honest predicate rather than ``exists``.
+
+    Answered from the same resolution as the card's other spellings, so
+    the whole frame speaks for one moment on disk.  That moment is the
+    frame's own: a ``tool_call_end`` is serialized after the call ran,
+    which is how a write that brought a file into being reports one.
+    """
+    resolved = tool_path_abs(root, raw)
+    return resolved is not None and Path(resolved).is_file()
 
 
 def tool_path_named(root: Path, raw: object) -> str | None:

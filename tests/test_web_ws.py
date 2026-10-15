@@ -189,6 +189,11 @@ class TestTurnStream:
             with client.websocket_connect("/ws") as ws:
                 ws.receive_json()  # hello
                 ws.send_json({"cmd": "turn", "input": "write it"})
+                # The gate holds the call before it runs, so the card is
+                # told there is nothing to open yet — the file this write
+                # is about to create does not exist.
+                start = _wait_for(ws, "tool_call_start")
+                assert start["path_is_file"] is False
                 _wait_for(ws, "agent_paused")
                 ws.send_json({
                     "cmd": "approve_tool", "tool_id": "call_write",
@@ -197,6 +202,9 @@ class TestTurnStream:
                 # both spellings: the tool wrote an absolute path, and the
                 # browser opens the root-relative one and hovers the other.
                 end = _wait_for(ws, "tool_call_end")
+                # …and the same frame is serialized after the call ran, so
+                # by now the file is there and the title is a control.
+                assert end["path_is_file"] is True
                 assert end["path"] == "out.txt"
                 assert end["path_abs"] == str(out)
                 _wait_for(ws, "agent_finished")
@@ -220,6 +228,9 @@ class TestTurnStream:
                 # has to open (and name) what the live one did.
                 assert tool["path"] == "out.txt"
                 assert tool["path_abs"] == str(out)
+                # Recomputed against the disk as it is now, which is how a
+                # replayed card knows the write's file is there.
+                assert tool["path_is_file"] is True
                 assert tool["result"]["success"] is True
                 assert tool["result"]["output"] is not None
                 assert tool["result"]["error"] is None

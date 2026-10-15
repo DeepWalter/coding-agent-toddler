@@ -176,6 +176,7 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
             path_abs: msg.path_abs ?? null,
             path_named: msg.path_named ?? null,
             path_symlink: msg.path_symlink ?? false,
+            path_is_file: msg.path_is_file ?? false,
             result: msg.result ?? null,
             open: false,
           })
@@ -274,6 +275,7 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
           path_abs: null,
           path_named: null,
           path_symlink: false,
+          path_is_file: false,
           result: null,
           open: true,
         })
@@ -297,6 +299,7 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
         existing.path_abs = action.path_abs
         existing.path_named = action.path_named
         existing.path_symlink = action.path_symlink
+        existing.path_is_file = action.path_is_file
       } else {
         push(s, {
           kind: 'tool',
@@ -307,6 +310,7 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
           path_abs: action.path_abs,
           path_named: action.path_named,
           path_symlink: action.path_symlink,
+          path_is_file: action.path_is_file,
           result: null,
           open: true,
         })
@@ -321,6 +325,9 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
         block.path_abs = action.path_abs
         block.path_named = action.path_named
         block.path_symlink = action.path_symlink
+        // The frame is serialized after the call ran: this is where a write
+        // that created its file turns the card's title into a control.
+        block.path_is_file = action.path_is_file
         block.result = action.result
         block.open = false
       }

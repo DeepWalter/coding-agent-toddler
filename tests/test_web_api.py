@@ -14,7 +14,12 @@ from fastapi.testclient import TestClient
 from tests.mocks import make_mock_llm, text_response
 from toddler.config.settings import Settings
 from toddler.web.app import create_app
-from toddler.web.files import tool_path, tool_path_abs, tool_path_named
+from toddler.web.files import (
+    tool_path,
+    tool_path_abs,
+    tool_path_is_file,
+    tool_path_named,
+)
 
 # ============================================================================
 # Helpers
@@ -362,6 +367,71 @@ class TestToolPath:
         root = _repo(tmp_path)
         assert tool_path(root, "~nosuchuser9977/notes.md") is None
         assert tool_path_abs(root, "~nosuchuser9977/notes.md") is None
+
+
+class TestToolPathIsFile:
+    """Whether a click has somewhere to land: the card's basename is a
+    control only where a file is there to open, and the question is about
+    the disk rather than about the path, so the fixtures are real ones."""
+
+    def test_a_file_on_disk_is_one_to_open(self, tmp_path):
+        root = _repo(tmp_path)
+        (root / "src").mkdir()
+        (root / "src" / "a.py").write_text("x = 1\n")
+        (root / "notes.md").write_text("hello\n")
+        assert tool_path_is_file(root, str(root / "src" / "a.py")) is True
+        assert tool_path_is_file(root, "src/a.py") is True
+        assert tool_path_is_file(root, "notes.md") is True
+
+    def test_outside_the_root_counts_too(self, tmp_path):
+        """The editor opens external files read-only, so a file beyond the
+        root is as openable as one inside it — its tab is the difference,
+        not the click."""
+        root = _repo(tmp_path)
+        outside = tmp_path / "outside.txt"
+        outside.write_text("x\n")
+        assert tool_path_is_file(root, str(outside)) is True
+        assert tool_path_is_file(root, "/etc/passwd") is True
+
+    def test_a_missing_file_is_nothing_to_open(self, tmp_path):
+        root = _repo(tmp_path)
+        assert tool_path_is_file(root, "missing.py") is False
+        assert tool_path_is_file(root, str(root / "no" / "such" / "a.py")) is False
+
+    def test_a_directory_is_a_path_but_not_a_file(self, tmp_path):
+        """A directory exists and the tree lists it, but the read endpoint
+        a click lands on serves files — a card that offered the click
+        would be offering a 404."""
+        root = _repo(tmp_path)
+        (root / "src").mkdir()
+        assert tool_path(root, "src") == "src"
+        assert tool_path_is_file(root, "src") is False
+        assert tool_path_is_file(root, ".") is False
+
+    def test_nothing_named_is_nothing_to_open(self, tmp_path):
+        root = _repo(tmp_path)
+        assert tool_path_is_file(root, None) is False
+        assert tool_path_is_file(root, "   ") is False
+        assert tool_path_is_file(root, 7) is False
+        assert tool_path_is_file(root, "~nosuchuser9977/notes.md") is False
+
+    def test_a_link_to_a_file_is_that_file(self, tmp_path):
+        """The named spelling and the resolved one are two strings for one
+        file, and it is the same file either way the card spells it."""
+        root = _repo(tmp_path)
+        (root / "real").mkdir()
+        (root / "real" / "a.py").write_text("x = 1\n")
+        link = root / "linked"
+        link.symlink_to(root / "real")
+        assert tool_path_is_file(root, str(link / "a.py")) is True
+
+    def test_a_dangling_link_opens_nothing(self, tmp_path):
+        """A name that reaches no file is no file, whatever stands where
+        it used to."""
+        root = _repo(tmp_path)
+        dangling = root / "gone.py"
+        dangling.symlink_to(root / "never-was.py")
+        assert tool_path_is_file(root, "gone.py") is False
 
 
 class TestToolPathNamed:

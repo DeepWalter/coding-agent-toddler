@@ -32,7 +32,12 @@ from toddler.agent.planner import Plan
 from toddler.llm import TokenUsage
 from toddler.llm.messages import Message
 from toddler.tools import HIDDEN_TOOL_NAMES, ToolResult
-from toddler.web.files import tool_path, tool_path_abs, tool_path_named
+from toddler.web.files import (
+    tool_path,
+    tool_path_abs,
+    tool_path_is_file,
+    tool_path_named,
+)
 
 __all__ = [
     "serialize_event",
@@ -127,6 +132,14 @@ def tool_card_paths(root: Path, input: dict) -> dict:
     names one path and opens another looks like a mistake, and on macOS
     it is not even unusual (``/tmp`` and ``/home`` are links).
 
+    ``path_is_file`` is the one thing here that is not a spelling: whether
+    there is a file to open at all, which is what decides whether the
+    card's title is a control or its plain-text twin.  It is a fact about
+    the disk as the frame is built, and every frame that carries the
+    spellings carries it with them — so the browser never has to ask, and
+    a write that creates a file is clickable from the frame its result
+    lands in, not before.
+
     The ``tool_call_start`` and ``tool_call_end`` frames carry this (see
     :func:`serialize_event`).  The start frame is the one that matters for
     how early the card can name the file: the call's input is complete by
@@ -141,6 +154,7 @@ def tool_card_paths(root: Path, input: dict) -> dict:
         "path_abs": resolved,
         "path_named": named,
         "path_symlink": named is not None and named != resolved,
+        "path_is_file": tool_path_is_file(root, raw),
     }
 
 

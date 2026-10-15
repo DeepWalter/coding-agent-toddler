@@ -169,6 +169,15 @@ followed and all.  A replayed `tool` entry carries the keys too, recomputed
 from the stored input rather than stored with it, so a refreshed card opens
 exactly what the live one opened.
 
+`path_is_file` rides with them and answers the one thing no spelling can:
+whether there is a file there to open (`toddler.web.files.tool_path_is_file`
+— a directory exists and is still nothing to open).  It is the card's whole
+rule for whether a tool call's title is a click, Read, Write and Edit alike,
+and it is a reading of the disk as the frame was built: the start frame
+speaks before the call runs and before any gate, the end frame after it, so
+a write that creates its file becomes a click with the frame that carries
+the result rather than with a client-side guess.
+
 `new_conversation` and `switch_session` ack directly, then **broadcast a
 full `hello` frame** (session + conversation + transcript replay) so
 every tab re-syncs — the same frame connections get on connect, and the

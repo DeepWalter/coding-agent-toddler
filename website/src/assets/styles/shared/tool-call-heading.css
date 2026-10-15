@@ -50,8 +50,8 @@
   text-decoration: underline;
 }
 
-/* A path with nothing behind it yet — a write that has not landed — is plain
-   text, and reads as such. */
+/* A path with no file behind it — a write that has not landed, or one that
+   never will — is plain text, and reads as such. */
 .tool-call-path.static {
   color: var(--text-muted);
   cursor: default;
