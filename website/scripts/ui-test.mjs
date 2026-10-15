@@ -60,14 +60,16 @@
 //            the editor under the card's own name
 //  phase 15 — the file card: a read, an edit and a write read as their titles
 //            alone, naming the file rather than describing the call, and that
-//            path opens the file in the editor — except on a write that
-//            failed, which has nothing behind its path yet.  A file outside
-//            the served root opens too — under its absolute path, read-only,
-//            wearing the external marker — and its card says all of that
-//            before the gate on the call has been answered: the start frame
-//            resolves the file, not the result.  The titles name the
-//            basename and the hover the whole path the server resolved, and
-//            both survive a reload
+//            name is a control exactly where there is a file behind it — a
+//            write that failed and a read of a path with nothing there both
+//            read as plain text, hovering the path instead.  Which is also
+//            why a write over a file that is already there opens it while its
+//            gate still holds the call.  A file outside the served root opens
+//            too — under its absolute path, read-only, wearing the external
+//            marker — and its card says all of that before the gate on the
+//            call has been answered: the start frame resolves the file, not
+//            the result.  The titles name the basename and the hover the
+//            whole path the server resolved, and both survive a reload
 //  phase 16 — the plan: a proposed plan reads as one title-only line and
 //            opens its display markdown as a rendered, read-only document
 //            in the editor by itself (one tab per plan, never persisted;
@@ -2363,10 +2365,17 @@ await page.waitForTimeout(300)
 // a call whose file lies outside the root, the absolute path, opened
 // read-only and marked external.  That resolution arrives with the call's
 // start frame, so a card names its file — and its marker — while the call is
-// still waiting at a gate.  A write that failed has nothing behind its path
-// yet: it reads as plain text, still saying on hover where the file is.
+// still waiting at a gate.  Whether that name is a control is the frame's
+// answer too, and it is about the file rather than the tool: a path with
+// nothing behind it reads as plain text — a write that failed, a read of a
+// file that is not there — still saying on hover where the file would be.
 const READ_PATH = 'mock-a.md'
 const READ_PATH_ABS = '/tmp/mock-a.md'
+const WRITE_PATH = 'mock-b.md'
+const WRITE_PATH_ABS = '/tmp/mock-b.md'
+// A path with no file behind it at all, for the call the mock answers with a
+// failure: its title is text, whatever tool named it.
+const GONE_PATH_ABS = '/tmp/mock-gone.md'
 // The mock's home sits behind a link, the way macOS has /home behind one:
 // what the call names and where the file actually is are two strings for one
 // file.  The card shows the name the call used, the editor opens the file it
@@ -2625,6 +2634,86 @@ function checkFileCards(cards) {
     restored.status === 'read-only · 2 lines'
   console.log(`phase15 the external tab survives a reload ${JSON.stringify(restored)} ${okRestored ? 'PASS' : 'FAIL'}`)
   if (!okRestored) fails++
+}
+
+// P15e: the rule is about the file behind the name, not about the tool.  A
+// read of a path with nothing there reads as plain text — the same reading a
+// write that failed gets — and a write over a file that IS there turns its
+// basename into a control from the moment the call is named, before the gate
+// has let it run: the file it is about to replace is exactly what a reader
+// wants in front of them while deciding whether to let it.
+{
+  await page.fill('textarea.input-bar-textarea', 'overwrite it')
+  await page.click('button:has-text("Send")')
+  await page.waitForSelector('.pause-prompt', { timeout: 8000 })
+  await page.waitForTimeout(300)
+  const titles = await page.evaluate(() => {
+    const last = (tool) =>
+      [...document.querySelectorAll(`.stream-row[data-tool="${tool}"]`)].at(-1)
+    const gone = last('read_file')?.querySelector('.tool-call-path')
+    const write = last('write_file')?.querySelector('.tool-call-path')
+    return {
+      paused: !!document.querySelector('.pause-prompt'),
+      gone: {
+        label: gone?.textContent.trim() ?? null,
+        tag: gone?.tagName ?? null,
+        static: gone?.classList.contains('static') ?? null,
+        // A path with nothing to open still says where the file would be.
+        hover: gone?.getAttribute('title') ?? null,
+      },
+      write: {
+        label: write?.textContent.trim() ?? null,
+        tag: write?.tagName ?? null,
+        hover: write?.getAttribute('title') ?? null,
+      },
+    }
+  })
+  const okTitles =
+    titles.paused &&
+    titles.gone.label === 'mock-gone.md' &&
+    titles.gone.tag === 'SPAN' &&
+    titles.gone.static === true &&
+    titles.gone.hover === GONE_PATH_ABS &&
+    titles.write.label === 'mock-b.md' &&
+    titles.write.tag === 'BUTTON' &&
+    titles.write.hover === `Open ${WRITE_PATH_ABS}`
+  console.log(`phase15 a title is a control where a file is, and plain text where none is ${JSON.stringify(titles)} ${okTitles ? 'PASS' : 'FAIL'}`)
+  if (!okTitles) fails++
+
+  // The click is a real one, and it lands while the gate is still up — on
+  // the file the write has not replaced yet, which is the point of offering
+  // it this early.
+  await page.locator('.stream-row[data-tool="write_file"] .tool-call-path').last().click()
+  await page.waitForTimeout(400)
+  const opened = await page.evaluate(() => ({
+    tabs: [...document.querySelectorAll('.editor-tab-name')].map((el) => el.textContent.trim()),
+    header: document.querySelector('.editor-path')?.textContent.trim() ?? null,
+    doc: document.querySelector('.editor-cm .cm-content')?.textContent ?? '',
+  }))
+  const okOpened =
+    opened.tabs.includes(WRITE_PATH) &&
+    opened.header === WRITE_PATH &&
+    opened.doc.includes('second seeded file')
+  console.log(`phase15 the title of a pending write opens the file it would replace ${JSON.stringify(opened)} ${okOpened ? 'PASS' : 'FAIL'}`)
+  if (!okOpened) fails++
+
+  // Approving settles the call, and the title stays a control: what the end
+  // frame reports is the disk after the write, not a card that went back to
+  // guessing.
+  await page.click('.pause-prompt button:has-text("Approve")')
+  await page.waitForSelector('.pause-prompt', { state: 'detached', timeout: 8000 })
+  await page.waitForTimeout(300)
+  const landed = await page.evaluate(() => {
+    const write = [...document.querySelectorAll('.stream-row[data-tool="write_file"]')].at(-1)
+    const link = write?.querySelector('.tool-call-path')
+    return {
+      tag: link?.tagName ?? null,
+      running: write?.querySelector('.status-mark')?.className.includes('running') ?? false,
+    }
+  })
+  const okLanded = landed.tag === 'BUTTON' && !landed.running
+  console.log(`phase15 the title opens the file it wrote, once it has written it ${JSON.stringify(landed)} ${okLanded ? 'PASS' : 'FAIL'}`)
+  if (!okLanded) fails++
 }
 
 // --- Phase 16: the plan line, its document and the todo trail ---

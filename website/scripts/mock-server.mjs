@@ -94,6 +94,11 @@ const WRITE_PATH = '/tmp/mock-b.md'
 const WRITE_DESCRIPTION = 'write the second seeded file'
 const FAILED_WRITE_PATH = '/tmp/read-only/mock-c.md'
 const FAILED_WRITE_DESCRIPTION = 'write a file that cannot be written'
+const OVERWRITE_DESCRIPTION = 'rewrite the second seeded file'
+// A path no file stands at, for the call whose title has nothing to open —
+// the rule read from the side that is not a write.
+const MISSING_PATH = '/tmp/mock-gone.md'
+const MISSING_DESCRIPTION = 'read a file that is not there'
 // A link standing in front of it, which is what macOS has: `/home` is a
 // symlink to `/System/Volumes/Data/home`, so a call naming the short
 // spelling and the file it opens are two different strings for one file.
@@ -176,6 +181,11 @@ let planSeq = 0
 // the call is allowed to run.  The pending call waits here for the
 // approve/deny handler to finish it.
 const FILE_GATE_ID = 't12'
+// The overwrite turn's write holds at a gate of its own, for the same
+// reason from the other side: the card's title is a control over a file that
+// is already there, and the only way to see it before the call has run is to
+// stop the call.
+const OVERWRITE_GATE_ID = 't14'
 let pendingFileCall = null
 // One beat per plan_update call: the prose that call carried, then the whole
 // step list as it stood afterwards.
@@ -252,6 +262,31 @@ function rootRelative(raw) {
   const abs = absolutePath(raw)
   if (abs === null || !abs.startsWith(`${REPO_ROOT}/`)) return null
   return abs.slice(REPO_ROOT.length + 1)
+}
+
+// toddler/web/files.tool_path_is_file: whether there is a file behind the
+// path a call named, which is what decides if the card's title is a control.
+// Keyed the way /api/file keys FILES — repo-relative inside the root, the
+// absolute spelling outside it — so the mock answers what the editor would.
+function fileExists(raw) {
+  const abs = absolutePath(raw)
+  if (abs === null) return false
+  const key = abs.startsWith(`${REPO_ROOT}/`) ? abs.slice(REPO_ROOT.length + 1) : abs
+  return FILES.has(key)
+}
+
+// The file a call is about, in terms of everything a card's title reads it
+// by.  One builder for the start frame, the end frame and the transcript
+// entry, so the three can never drift.  A call naming no file gets the
+// Nones (and the false) those resolvers answer for a non-string.
+function cardPaths(raw) {
+  return {
+    path: rootRelative(raw),
+    path_abs: absolutePath(raw),
+    path_named: namedPath(raw),
+    path_symlink: namedPath(raw) !== absolutePath(raw),
+    path_is_file: fileExists(raw),
+  }
 }
 
 function filePayload(rel, content) {
@@ -541,6 +576,11 @@ wss.on('connection', (ws) => {
         // edit, and a write that lands — plus a write that failed, whose
         // path has nothing behind it to open.
         const files = msg.input.startsWith('files')
+        // An "overwrite" turn is the file rule read from the other side: a
+        // write over a file that is already there, held at a gate so the
+        // title can be seen opening it before the call has run, and a read
+        // of a path with nothing behind it, which is plain text.
+        const overwrite = msg.input.startsWith('overwrite')
         // A "plan" turn proposes a two-step plan and holds for the
         // decision, the way a tool gate does — the approve_plan command
         // below streams the execution beats.
@@ -734,12 +774,7 @@ wss.on('connection', (ws) => {
           // carried, since the real server recomputes them rather than
           // storing them.
           const call = (id, name, input, result) => {
-            const paths = {
-              path: rootRelative(input.file_path),
-              path_abs: absolutePath(input.file_path),
-              path_named: namedPath(input.file_path),
-              path_symlink: namedPath(input.file_path) !== absolutePath(input.file_path),
-            }
+            const paths = cardPaths(input.file_path)
             useStart(id, name)
             send({
               type: 'tool_call_start',
@@ -827,13 +862,10 @@ wss.on('connection', (ws) => {
           // a gate, so the harness can see the card say all that while the
           // call has not been allowed to run yet; approve_tool finishes it.
           pendingFileCall = {
+            tool_id: FILE_GATE_ID,
+            tool_name: 'read_file',
             input: { description: OUTSIDE_DESCRIPTION, file_path: OUTSIDE_PATH },
-            paths: {
-              path: rootRelative(OUTSIDE_PATH),
-              path_abs: absolutePath(OUTSIDE_PATH),
-              path_named: namedPath(OUTSIDE_PATH),
-              path_symlink: namedPath(OUTSIDE_PATH) !== absolutePath(OUTSIDE_PATH),
-            },
+            paths: cardPaths(OUTSIDE_PATH),
             result: {
               success: true,
               output: '1\t# notes\n2\toutside the repo\n',
@@ -854,6 +886,85 @@ wss.on('connection', (ws) => {
             type: 'agent_paused',
             tool_id: FILE_GATE_ID,
             prompt: 'The agent wants to read a file outside the project — approve?',
+            choices: null,
+          })
+          break
+        }
+        if (overwrite) {
+          send({ type: 'content_delta', text_delta: 'rewriting it\n' })
+          transcript.push({ role: 'assistant', content: 'rewriting it' })
+          // The rule is about the file, not the tool: this read names a path
+          // no file stands at, so its title is plain text with the path on
+          // its hover — the same reading a write that failed gets, from a
+          // call that never had anything to land on.
+          const gone = {
+            description: MISSING_DESCRIPTION,
+            file_path: MISSING_PATH,
+          }
+          const gonePaths = cardPaths(MISSING_PATH)
+          useStart('t13', 'read_file')
+          send({
+            type: 'tool_call_start',
+            tool_id: 't13',
+            tool_name: 'read_file',
+            input: gone,
+            ...gonePaths,
+          })
+          const goneResult = {
+            success: false,
+            output: null,
+            error: `File not found: ${MISSING_PATH}`,
+            checkpoint_id: null,
+            metadata: null,
+          }
+          send({
+            type: 'tool_call_end',
+            tool_id: 't13',
+            tool_name: 'read_file',
+            input: gone,
+            ...gonePaths,
+            result: goneResult,
+          })
+          transcript.push({
+            role: 'tool',
+            tool_id: 't13',
+            tool_name: 'read_file',
+            input: gone,
+            ...gonePaths,
+            result: goneResult,
+          })
+          // …and the write over a file that IS there, held at its gate: the
+          // title opens the very file this call is about to replace, which
+          // is what a reader wants while deciding whether to let it.
+          pendingFileCall = {
+            tool_id: OVERWRITE_GATE_ID,
+            tool_name: 'write_file',
+            input: {
+              description: OVERWRITE_DESCRIPTION,
+              file_path: WRITE_PATH,
+              content: '# mock B\n\nsecond seeded file, rewritten\n',
+            },
+            paths: cardPaths(WRITE_PATH),
+            result: {
+              success: true,
+              output: `Wrote 41 bytes to ${WRITE_PATH}.`,
+              error: null,
+              checkpoint_id: null,
+              metadata: { path: WRITE_PATH, bytes: 41 },
+            },
+          }
+          useStart(OVERWRITE_GATE_ID, 'write_file')
+          send({
+            type: 'tool_call_start',
+            tool_id: OVERWRITE_GATE_ID,
+            tool_name: 'write_file',
+            input: pendingFileCall.input,
+            ...pendingFileCall.paths,
+          })
+          send({
+            type: 'agent_paused',
+            tool_id: OVERWRITE_GATE_ID,
+            prompt: `The agent wants to write ${WRITE_PATH} — approve?`,
             choices: null,
           })
           break
@@ -897,9 +1008,10 @@ wss.on('connection', (ws) => {
       case 'approve_tool':
       case 'deny_tool':
         send({ type: 'ack', cmd: msg.cmd, accepted: true })
-        if (msg.tool_id === FILE_GATE_ID && pendingFileCall) {
-          // The gated outside read: either answer settles it and ends the
-          // file turn — a deny with the result a refusal produces.
+        if (pendingFileCall && msg.tool_id === pendingFileCall.tool_id) {
+          // A gated file call — the outside read, or the write over a file
+          // that is already there: either answer settles it and ends its
+          // turn, a deny with the result a refusal produces.
           const result = msg.cmd === 'deny_tool'
             ? {
                 success: false,
@@ -909,22 +1021,14 @@ wss.on('connection', (ws) => {
                 metadata: null,
               }
             : pendingFileCall.result
-          send({
-            type: 'tool_call_end',
-            tool_id: FILE_GATE_ID,
-            tool_name: 'read_file',
+          const call = {
+            tool_id: pendingFileCall.tool_id,
+            tool_name: pendingFileCall.tool_name,
             input: pendingFileCall.input,
             ...pendingFileCall.paths,
-            result,
-          })
-          transcript.push({
-            role: 'tool',
-            tool_id: FILE_GATE_ID,
-            tool_name: 'read_file',
-            input: pendingFileCall.input,
-            ...pendingFileCall.paths,
-            result,
-          })
+          }
+          send({ type: 'tool_call_end', ...call, result })
+          transcript.push({ role: 'tool', ...call, result })
           pendingFileCall = null
           send({ type: 'agent_finished', reason: 'completed', usage: null })
           send({ type: 'state', busy: false })
