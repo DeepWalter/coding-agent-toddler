@@ -120,12 +120,16 @@ function unlinked(path) {
 const OUTSIDE_PATH = `${MOCK_HOME_LINK}/.toddler/notes.md`
 const OUTSIDE_DESCRIPTION = 'read a file outside the repository'
 
-// The gate's card: the title every call is asked about, and — for a shell
-// call — the command as its own content block, long enough that a script
-// overflows the six lines the card shows before scrolling.  The other two
-// gates carry no content: their call is a file, and the card's file line is
-// the whole of what there is to read.
-const GATE_TITLE = 'Allow this tool call?'
+// The gate's card: each tool's own title over the call it is asking about,
+// and — for a shell call — the command as its own content block, long
+// enough that a script overflows the six lines the card shows before
+// scrolling.  The two file gates carry no content: their call is a file,
+// and the card's file line is the whole of what there is to read.
+const GATE_TITLES = {
+  shell: 'Allow this bash command?',
+  read_file: 'Allow read this file?',
+  write_file: 'Allow write this file?',
+}
 const SCRIPT_COMMAND = [
   'set -e',
   'for dir in toddler tests website; do',
@@ -915,7 +919,7 @@ wss.on('connection', (ws) => {
           send({
             type: 'agent_paused',
             prompt: {
-              title: GATE_TITLE,
+              title: GATE_TITLES.read_file,
               content: null,
               description: OUTSIDE_DESCRIPTION,
             },
@@ -997,7 +1001,7 @@ wss.on('connection', (ws) => {
           send({
             type: 'agent_paused',
             prompt: {
-              title: GATE_TITLE,
+              title: GATE_TITLES.write_file,
               content: null,
               description: OVERWRITE_DESCRIPTION,
             },
@@ -1043,7 +1047,7 @@ wss.on('connection', (ws) => {
         send({
           type: 'agent_paused',
           prompt: {
-            title: GATE_TITLE,
+            title: GATE_TITLES.shell,
             content: pendingShellCall.command,
             description: pendingShellCall.description,
           },

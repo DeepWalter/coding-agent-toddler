@@ -2407,6 +2407,9 @@ await page.waitForSelector('.pause-prompt', { timeout: 8000 })
     const row = [...document.querySelectorAll('.stream-row[data-tool="read_file"]')].at(-1)
     return {
       paused: !!document.querySelector('.pause-prompt'),
+      // The card asks about the file the tool would read, not about the
+      // call in general: each tool names its own question.
+      title: document.querySelector('.pause-prompt-title')?.textContent.trim() ?? null,
       running: row?.querySelector('.status-mark')?.className.includes('running') ?? false,
       label: row?.querySelector('.tool-call-path')?.textContent.trim() ?? null,
       external: row?.querySelector('.external-tag')?.textContent.trim() ?? null,
@@ -2416,6 +2419,7 @@ await page.waitForSelector('.pause-prompt', { timeout: 8000 })
   })
   const ok =
     gated.paused && gated.running &&
+    gated.title === 'Allow read this file?' &&
     gated.label === 'notes.md' && gated.external === 'external' &&
     gated.symlink === 'symlink' &&
     gated.tag === 'BUTTON'
@@ -3037,7 +3041,7 @@ const planTodo = (marks) =>
   // One line, so the block drew one line: a max-height, not a height — the
   // cap only ever bites on a command that overflows it.
   const okShort =
-    short.title === 'Allow this tool call?' &&
+    short.title === 'Allow this bash command?' &&
     short.content === 'ls -la' &&
     short.desc === 'list the files' &&
     short.contentBeforeDesc &&
