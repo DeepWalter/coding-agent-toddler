@@ -81,7 +81,11 @@
 //            model's line about the call under it.  The content is boxed and
 //            capped at six lines, drawing a one-line box for a one-line
 //            command and scrolling a script, with the dock reporting each
-//            height it grew to
+//            height it grew to.  The card also remembers which row it would
+//            answer with: clicking elsewhere (the theme toggle) leaves that
+//            mark where it was and gives ↑/↓ to what was clicked, and a
+//            click on the card takes them back — with the dock's edge
+//            saying which of the two owns them
 // Prints PASS/FAIL plus diagnostics; exits 1 on any failure.
 import { chromium } from 'playwright'
 import WebSocket from 'ws'
@@ -3052,8 +3056,134 @@ const planTodo = (marks) =>
   console.log(`phase17 a one-line command draws one line ${JSON.stringify(short)} ${okShort ? 'PASS' : 'FAIL'}`)
   if (!okShort) fails++
 
-  await page.click('.pause-prompt button:has-text("Approve")')
+  // The selection outlives the focus, and the arrows follow the click: with
+  // the gate up, clicking the theme toggle must leave the card's own mark
+  // where it was — a gate never reads as unanswered, or unanswerable,
+  // because the pointer was moved — while ↑/↓ belong to whatever was
+  // clicked; clicking back on the card is what takes them back.
+  await page.keyboard.press('ArrowDown') // selection to Deny
+  await page.waitForTimeout(100)
+  await page.click('.theme-toggle')
+  await page.waitForTimeout(150)
+  const clicked = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('.pause-prompt-actions button')]
+    return {
+      focus: document.activeElement?.className ?? '',
+      marked: rows.filter((row) => row.classList.contains('is-selected')).map((row) => row.textContent.trim()),
+      tinted: rows.filter((row) => getComputedStyle(row).backgroundColor !== 'rgba(0, 0, 0, 0)').length,
+    }
+  })
+  await page.keyboard.press('ArrowDown')
+  await page.waitForTimeout(100)
+  const elsewhere = await page.evaluate(() => ({
+    focus: document.activeElement?.className ?? '',
+    marked: [...document.querySelectorAll('.pause-prompt-actions button.is-selected')]
+      .map((row) => row.textContent.trim()),
+  }))
+  const okSticky =
+    clicked.focus === 'theme-toggle' &&
+    clicked.marked.join() === 'Deny' && clicked.tinted === 1 &&
+    elsewhere.focus === 'theme-toggle' && elsewhere.marked.join() === 'Deny'
+  console.log(`phase17 the selection outlives the focus ${JSON.stringify({ clicked, elsewhere })} ${okSticky ? 'PASS' : 'FAIL'}`)
+  if (!okSticky) fails++
+
+  // And the dock's edge says where the next keypress lands: the dim border
+  // while the toggle has it, the accent while the card does.
+  const edge = () => page.evaluate(() => {
+    const probe = document.createElement('span')
+    const resolve = (name) => {
+      probe.style.color = `var(${name})`
+      document.body.append(probe)
+      const value = getComputedStyle(probe).color
+      probe.remove()
+      return value
+    }
+    return {
+      border: getComputedStyle(document.querySelector('.console-dock')).borderTopColor,
+      accent: resolve('--accent-hover'),
+      dim: resolve('--editor-border'),
+    }
+  })
+  const edgeLost = await edge()
+
+  // No frame may take the keyboard back either.  The console's reducer
+  // clones the whole state on every action, so `paused` is a new object
+  // after any frame at all — the heartbeat's pong included — and a card
+  // that re-focused on that object would take the keyboard out of whatever
+  // is being read.  That is the bug this pins: it was found by holding an
+  // arrow key long enough for a pong to land mid-scroll.  `set_busy` is
+  // here only because it makes the mock emit a frame on demand.
+  await page.click('.tool-card-copy')
+  await page.waitForTimeout(150)
+  const beforeFrame = await page.evaluate(() => ({
+    focus: document.activeElement?.className ?? '',
+    marked: [...document.querySelectorAll('.pause-prompt-actions button.is-selected')]
+      .map((row) => row.textContent.trim()),
+  }))
+  await sendControl('set_busy', { busy: true })
+  await sendControl('set_busy', { busy: false })
+  await page.waitForTimeout(250)
+  const afterFrame = await page.evaluate(() => ({
+    focus: document.activeElement?.className ?? '',
+    marked: [...document.querySelectorAll('.pause-prompt-actions button.is-selected')]
+      .map((row) => row.textContent.trim()),
+  }))
+  const okQuiet =
+    beforeFrame.focus.startsWith('tool-card-copy') &&
+    afterFrame.focus === beforeFrame.focus &&
+    afterFrame.marked.join() === beforeFrame.marked.join() &&
+    afterFrame.marked.length === 1
+  console.log(`phase17 a frame does not take the keyboard back ${JSON.stringify({ beforeFrame, afterFrame })} ${okQuiet ? 'PASS' : 'FAIL'}`)
+  if (!okQuiet) fails++
+
+  // A click on the card's own body takes the arrows back, and they carry on
+  // from the row it marked: ↑ from Deny reaches Approve, where starting
+  // over at the ends would have left the selection on Deny (the last row).
+  await page.click('.pause-prompt-title')
+  await page.waitForTimeout(100)
+  const back = await page.evaluate(() => ({
+    focus: document.activeElement?.className ?? '',
+    marked: [...document.querySelectorAll('.pause-prompt-actions button.is-selected')]
+      .map((row) => row.textContent.trim()),
+  }))
+  await page.keyboard.press('ArrowUp')
+  await page.waitForTimeout(100)
+  const rearmed = await page.evaluate(() => ({
+    focus: document.activeElement?.textContent?.trim() ?? '',
+    marked: [...document.querySelectorAll('.pause-prompt-actions button.is-selected')]
+      .map((row) => row.textContent.trim()),
+  }))
+  const okRearmed =
+    back.focus === 'pause-prompt' && back.marked.join() === 'Deny' &&
+    rearmed.focus === 'Approve' && rearmed.marked.join() === 'Approve'
+  console.log(`phase17 clicking the card takes the arrows back ${JSON.stringify({ back, rearmed })} ${okRearmed ? 'PASS' : 'FAIL'}`)
+  if (!okRearmed) fails++
+
+  const edgeBack = await edge()
+  const okEdge = edgeLost.border === edgeLost.dim && edgeBack.border === edgeBack.accent
+  console.log(`phase17 the dock's edge follows the keyboard ${JSON.stringify({ edgeLost, edgeBack })} ${okEdge ? 'PASS' : 'FAIL'}`)
+  if (!okEdge) fails++
+
+  // Enter answers the row the card has marked, wherever the focus is in it:
+  // the card's own body is focusable (a click lands there), and the edge it
+  // lights says the keys are its own.  Deny is marked first so the answer is
+  // readable — the mock denies what it is told to deny.
+  await page.keyboard.press('ArrowDown') // selection to Deny
+  await page.click('.pause-prompt-title') // focus the card's body, mark stays
+  await page.waitForTimeout(150)
+  const beforeEnter = await page.evaluate(() => ({
+    focus: document.activeElement?.className ?? '',
+    marked: [...document.querySelectorAll('.pause-prompt-actions button.is-selected')]
+      .map((row) => row.textContent.trim()),
+  }))
+  await page.keyboard.press('Enter')
   await page.waitForSelector('.pause-prompt', { state: 'detached', timeout: 8000 })
+  const denied = await page.evaluate(() => document.querySelector('.console-pane').innerText.includes('denied'))
+  const okEnter = beforeEnter.focus === 'pause-prompt' && beforeEnter.marked.join() === 'Deny' && denied
+  console.log(`phase17 Enter on the card answers the marked row ${JSON.stringify({ beforeEnter, denied })} ${okEnter ? 'PASS' : 'FAIL'}`)
+  if (!okEnter) fails++
+
+  await page.click('.theme-toggle') // leave the run in the theme it started in
 
   await page.fill('textarea.input-bar-textarea', 'script: count the lines')
   await page.click('button:has-text("Send")')

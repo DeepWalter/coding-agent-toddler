@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
 import type { Paused } from '../types'
-import { onChoiceKeydown } from '../choiceNav'
+import { onChoiceFocus, onChoiceKeydown } from '../choiceNav'
 
 const props = defineProps<{ paused: Paused; busy: boolean }>()
 const emit = defineEmits<{ approve: []; deny: []; cancel: [] }>()
@@ -28,7 +28,13 @@ const focusChoice = () => {
   else if (showDeny() && props.paused.tool_id) denyEl.value?.focus()
 }
 
-watch(() => props.paused, () => {
+// Keyed on the call being asked about, not on the record: the console's
+// reducer clones the whole state on every action, so `paused` is a new
+// object after any frame at all — including the heartbeat's pong — and a
+// watch on it would put the focus back in this card every 25 seconds,
+// under whatever the user was reading.  A new question is what changes
+// the id; a replay (`tool_id: null`) asks nothing and takes nothing.
+watch(() => props.paused?.tool_id, () => {
   pending.value = false
   nextTick(focusChoice)
 })
@@ -37,7 +43,14 @@ nextTick(focusChoice)
 </script>
 
 <template>
-  <div class="pause-prompt" @keydown="onChoiceKeydown">
+  <!-- tabindex so a click on the card's own body lands in the card: the
+       arrows are the card's again, from the selection it remembers. -->
+  <div
+    class="pause-prompt"
+    tabindex="-1"
+    @keydown="onChoiceKeydown"
+    @focusin="onChoiceFocus"
+  >
     <div class="pause-prompt-head">
       <span class="pause-prompt-title">{{ paused.prompt.title }}</span>
       <button

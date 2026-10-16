@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { nextTick, ref } from 'vue'
 import type { Block } from '../types'
-import { onChoiceKeydown } from '../choiceNav'
+import { onChoiceFocus, onChoiceKeydown } from '../choiceNav'
 
 // Compact decision bar for a plan awaiting approval, shown in the console
 // dock.  Keyed by the plan block id where it's used, so every new or
@@ -42,7 +42,14 @@ function openFeedback() {
 </script>
 
 <template>
-  <div class="plan-ask" @keydown="onChoiceKeydown">
+  <!-- tabindex so a click on the card's own body lands in the card: the
+       arrows are the card's again, from the selection it remembers. -->
+  <div
+    class="plan-ask"
+    tabindex="-1"
+    @keydown="onChoiceKeydown"
+    @focusin="onChoiceFocus"
+  >
     <div class="plan-ask-head">
       <span class="plan-ask-title">
         <span class="plan-ask-label">Plan — </span>{{ block.plan.title }}

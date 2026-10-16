@@ -1084,12 +1084,23 @@ wss.on('connection', (ws) => {
           send({ type: 'state', busy: false })
           break
         }
+        // Either answer settles the shell gate: a denial reads as one, the
+        // way the file gates' denials do, so a test can tell which row was
+        // answered.
         send({
           type: 'tool_call_end',
           tool_id: 't1',
           tool_name: 'shell',
           input: pendingShellCall,
-          result: { success: true, output: 'ok\n', error: null, checkpoint_id: null, metadata: null },
+          result: msg.cmd === 'deny_tool'
+            ? {
+                success: false,
+                output: null,
+                error: 'the user denied the call',
+                checkpoint_id: null,
+                metadata: null,
+              }
+            : { success: true, output: 'ok\n', error: null, checkpoint_id: null, metadata: null },
         })
         send({ type: 'content_delta', text_delta: 'done.\n' })
         send({ type: 'agent_finished', reason: 'completed', usage: null })

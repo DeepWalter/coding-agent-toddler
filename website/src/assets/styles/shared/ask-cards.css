@@ -3,6 +3,25 @@
    IMPORTED AFTER shared/buttons.css — these rules tie `.btn` at equal
    specificity and win on source order alone.  See index.css. */
 
+/* The dock's edge says which surface the next keypress lands on: the card
+   wears the accent while the focus is in it, and the dock's own border —
+   the dim one — the moment the focus leaves, which is exactly when the
+   arrows stop being the card's (see choiceNav).  The selection it keeps is
+   another reading; this is the one that says whether ↑/↓ would move it. */
+.console-dock:has(.pause-prompt):focus-within,
+.console-dock:has(.plan-ask):focus-within {
+  border-color: var(--accent-hover);
+}
+
+/* The card's own body is focusable — a click on it lands there, and Enter
+   answers from there — but the ring the browser draws around a cardful of
+   text is not the reading meant: the edge above is.  The rows keep their
+   own focus treatment. */
+.pause-prompt:focus,
+.plan-ask:focus {
+  outline: none;
+}
+
 /* A choice fills the card width as its own row (base .btn styling applies,
    with slimmer top/bottom padding so the rows sit tight in the card). */
 .pause-prompt-actions .btn {
@@ -74,12 +93,19 @@
   background: color-mix(in srgb, var(--error) 14%, transparent);
 }
 
-/* The roving (keyboard) selection reads as a highlight, not a box: an
-   accent-tinted fill, and no outline — the UA focus ring the buttons
-   otherwise draw looks like a plain black border over the card.  The tint
+/* The selection reads as a highlight, not a box: an accent-tinted fill, and
+   no outline — the UA focus ring the buttons otherwise draw looks like a
+   plain black border over the card.  It marks the row the card would answer
+   with, which is why it is a class rather than `:focus-visible`: the mark
+   stays while the focus is elsewhere (see choiceNav's onChoiceFocus), so a
+   gate never reads as unanswered because the pointer was moved.  The tint
    keeps the selected row visible to keyboard users (hover stays neutral). */
+.pause-prompt-actions .btn.is-selected,
+.plan-ask-actions .btn.is-selected {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
 .pause-prompt-actions .btn:focus-visible,
 .plan-ask-actions .btn:focus-visible {
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
   outline: none;
 }
