@@ -39,7 +39,6 @@ nextTick(focusChoice)
 <template>
   <div class="pause-prompt" @keydown="onChoiceKeydown">
     <div class="pause-prompt-head">
-      <span class="pause-prompt-icon" aria-hidden="true">⚠</span>
       <span class="pause-prompt-title">{{ paused.prompt.title }}</span>
       <button
         v-if="busy"

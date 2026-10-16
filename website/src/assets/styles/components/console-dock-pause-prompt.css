@@ -7,9 +7,9 @@
 
 /* Tool-gate card inside the console dock (the card chrome comes from
    .console-dock): the gate question leads as the title with the ✕ close on
-   the head row, and the choices are stacked full-width rows.  Only the ⚠
-   icon keeps the warning color — inside a neutral card an all-warning title
-   would read like an error banner. */
+   the head row, and the choices are stacked full-width rows.  Nothing is
+   tinted warning — inside a neutral card an all-warning title would read
+   like an error banner, and the question is not one. */
 .pause-prompt {
   display: flex;
   flex-direction: column;
@@ -23,11 +23,6 @@
   min-width: 0;
 }
 
-.pause-prompt-icon {
-  flex: none;
-  color: var(--warning);
-}
-
 .pause-prompt-title {
   flex: 1;
   min-width: 0;
@@ -36,6 +31,9 @@
   white-space: nowrap;
   color: var(--text);
   font-weight: 600;
+  /* The console's title size — the tool card's own name is set at it — so
+     the card leads the dock the way a card leads its row in the stream. */
+  font-size: 14px;
 }
 
 /* The call's content, where it has any — a shell command, whole and
@@ -43,14 +41,17 @@
    description reads as the caption under it.  Boxed like the input bar's
    textarea, because it is the same thing: text read before answering. */
 .pause-prompt-content {
-  margin: 0; /* a <pre> brings margins of its own */
+  margin: 0;
+  /* a <pre> brings margins of its own */
   padding: 8px 10px;
   border: 1px solid var(--editor-border);
   border-radius: 6px;
   background: var(--editor-bg);
   color: var(--text);
-  white-space: pre-wrap; /* the command's own breaks */
-  overflow-wrap: anywhere; /* a long token breaks rather than side-scrolls */
+  white-space: pre-wrap;
+  /* the command's own breaks */
+  overflow-wrap: anywhere;
+  /* a long token breaks rather than side-scrolls */
   /* Six lines, then it scrolls in place — 6 × 13px/1.55 mono line-height
      ≈ 121px, plus 16px vertical padding and 2px border; the second
      declaration is the same via the modern lh unit.  A max-height, not a
@@ -62,9 +63,12 @@
 
 /* The call's own line about what it does — the model's description, or
    the file the call names.  A sentence, so it wraps: a long path breaks
-   rather than running past the card's edge. */
+   rather than running past the card's edge.  A size under the title and
+   the content both, the way the plan ask's summary reads under its own
+   title: a caption to what the decision is about, not the decision. */
 .pause-prompt-description {
   color: var(--text-muted);
+  font-size: 12px;
   overflow-wrap: anywhere;
 }
 
