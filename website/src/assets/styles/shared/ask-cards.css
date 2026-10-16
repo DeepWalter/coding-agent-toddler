@@ -58,10 +58,11 @@
    card surface — a filled, boxed button per row would turn the card into a
    stack of buttons.  All labels share the neutral text color (the .btn
    variant colors — white on-accent text, accent/error fills — are dropped
-   here), and a row gains a fill only while hovered or keyboard-selected
-   (roving up/down — choiceNav): neutral on hover, an accent-tinted
-   highlight when selected.  Placed after the .btn variants so these
-   scoped overrides win the cascade. */
+   here), and the fill is the *selection's* alone: where the pointer is
+   says nothing about what the card would answer, and a row that lights
+   under the mouse reads as a hover that is one of the readings this card
+   does not have.  Placed after the .btn variants so these scoped overrides
+   win the cascade. */
 .pause-prompt-actions .btn,
 .plan-ask-actions .btn {
   background: none;
@@ -69,18 +70,16 @@
   color: var(--text);
 }
 
+/* The pointer gives the rows no fill — the .btn variants' hover fills (the
+   hovered surface, the accent, the darkened error) are cancelled at their
+   own specificity, which is what these rules are for — but it does thicken
+   the label, and that weight step is the whole of the hover cue.  A weight
+   step costs no layout in a monospace face: the advance width is the same,
+   so the row does not so much as shift. */
 .pause-prompt-actions .btn:hover:not(:disabled),
 .plan-ask-actions .btn:hover:not(:disabled) {
-  background: var(--editor-surface-3);
-}
-
-/* The destructive rows (.danger) keep their warning cue on hover — an
-   error tint replaces the neutral surface, so the row about to trigger
-   reads as destructive before the click.  The keyboard selection below
-   stays accent for every row: it marks roving position, not semantics. */
-.pause-prompt-actions .btn.danger:hover:not(:disabled),
-.plan-ask-actions .btn.danger:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--error) 14%, transparent);
+  background: none;
+  font-weight: 600;
 }
 
 /* The selection reads as a highlight, not a box: an accent-tinted fill, and
@@ -88,10 +87,11 @@
    plain black border over the card.  It marks the row the card would answer
    with, which is why it is a class rather than `:focus-visible`: the mark
    stays while the focus is elsewhere (see choiceNav's onChoiceFocus), so a
-   gate never reads as unanswered because the pointer was moved.  The tint
-   keeps the selected row visible to keyboard users (hover stays neutral). */
-.pause-prompt-actions .btn.is-selected,
-.plan-ask-actions .btn.is-selected {
+   gate never reads as unanswered because the pointer was moved.  It sits at
+   the hover rule's specificity and after it, so the pointer cannot erase
+   it by landing on the row it marks. */
+.pause-prompt-actions .btn.is-selected:not(:disabled),
+.plan-ask-actions .btn.is-selected:not(:disabled) {
   background: color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
