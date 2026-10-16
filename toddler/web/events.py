@@ -329,7 +329,7 @@ def serialize_event(event: AgentEvent, root: Path) -> dict | None:  # noqa: C901
         case AgentPaused(prompt=prompt, choices=choices):
             return {
                 "type": "agent_paused",
-                "prompt": prompt,
+                "prompt": prompt.to_dict(),
                 "choices": choices,
             }
 

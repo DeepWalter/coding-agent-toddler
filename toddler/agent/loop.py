@@ -33,6 +33,8 @@ from toddler.agent.stop_conditions import StopConditionChecker
 from toddler.config.models import TurnConfig
 from toddler.llm import Message, MessageBlock, TokenUsage
 from toddler.tools.base import (
+    ALLOW_CALL_TITLE,
+    CallDisplay,
     Decision,
     Permission,
     PermissionManager,
@@ -438,13 +440,22 @@ class AgentLoop:
                 self._pending = _PendingApproval()
 
                 tool = self._registry.get(call.tool_name)
-                summary = (
-                    tool.summarize_call(**call.parameters)
+                # The tool builds the card the user answers from — its
+                # title, the call's content block and description.  The
+                # fallback is for a tool the registry has not got: the
+                # gate above allows such a call through, so reaching this
+                # pause without one takes a tool that raised while being
+                # classified, and naming it beats rendering nothing.
+                display = (
+                    tool.display_call(**call.parameters)
                     if tool
-                    else f"{call.tool_name}(...)"
+                    else CallDisplay(
+                        title=ALLOW_CALL_TITLE,
+                        description=call.tool_name,
+                    )
                 )
                 yield AgentPaused(
-                    prompt=f"Allow {summary}?",
+                    prompt=display,
                     choices=["approve", "deny"],
                 )
 

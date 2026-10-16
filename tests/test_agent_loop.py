@@ -567,7 +567,9 @@ class TestPermissionGating:
 
         paused = [e for e in events if isinstance(e, AgentPaused)]
         assert len(paused) == 1
-        assert "write_stuff" in paused[0].prompt
+        # The mock declares no description param and names no path, so the
+        # card falls back to the summary — a call still names itself.
+        assert "write_stuff" in paused[0].prompt.description
         assert paused[0].choices == ["approve", "deny"]
 
         # Tool should have executed after approval.
@@ -703,7 +705,7 @@ class TestPermissionMode:
 
         paused = [e for e in events if isinstance(e, AgentPaused)]
         assert len(paused) == 1
-        assert "dangerous_cmd" in paused[0].prompt
+        assert "dangerous_cmd" in paused[0].prompt.description
 
     async def test_write_tool_pauses_in_manual_mode(
         self, registry, executor, settings, conv_ctx, perm_mgr,
@@ -881,7 +883,9 @@ class TestFileScopeGating:
 
         paused = [e for e in events if isinstance(e, AgentPaused)]
         assert len(paused) == 1
-        assert "read_path" in paused[0].prompt
+        # A call that names a file is about that file: the card says which
+        # one, by the path the call used rather than the tool's name.
+        assert paused[0].prompt.description == "/etc/hosts"
 
         ends = [e for e in events if isinstance(e, ToolCallEnd)]
         assert ends[0].result.success  # approved, so it ran
@@ -1514,10 +1518,10 @@ class TestCallDescription:
     async def test_prompt_shows_it_and_the_call_still_runs(
         self, registry, executor, settings, conv_ctx
     ):
-        """WriteTool leaves ``summarize_call`` to the base default, which
-        renders every kwarg — so the param reaches the approval prompt with
-        no display wiring.  It also has to survive into the tool-call event
-        the transcript is built from."""
+        """``WriteTool`` declares nothing of its own, so the param the
+        model wrote is what the card shows, with no per-tool wiring.  It
+        also has to survive into the tool-call event the transcript is
+        built from."""
         llm = MockLLMProvider(
             responses=[
                 _make_llm_response(
@@ -1545,7 +1549,7 @@ class TestCallDescription:
                 loop.approve_tool_call()
 
         paused = [e for e in events if isinstance(e, AgentPaused)]
-        assert "record the deploy token" in paused[0].prompt
+        assert paused[0].prompt.description == "record the deploy token"
 
         ends = [e for e in events if isinstance(e, ToolCallEnd)]
         assert ends[0].result.success

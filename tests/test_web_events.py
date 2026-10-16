@@ -21,7 +21,7 @@ from toddler.agent.events import (
 from toddler.agent.planner import Plan, PlanStep
 from toddler.llm import TokenUsage
 from toddler.llm.messages import Message, MessageBlock
-from toddler.tools.base import ToolResult
+from toddler.tools.base import CallDisplay, ToolResult
 from toddler.tools.plan import PlanStepStatus
 from toddler.web.events import (
     serialize_event,
@@ -316,11 +316,35 @@ class TestSerializeEvent:
 
     def test_agent_paused(self):
         assert serialize_event(AgentPaused(
-            prompt="Allow write_file(x)?", choices=["approve", "deny"],
+            prompt=CallDisplay(
+                title="Allow this tool call?",
+                content="ls -la",
+                description="list the files",
+            ),
+            choices=["approve", "deny"],
         ), ROOT) == {
             "type": "agent_paused",
-            "prompt": "Allow write_file(x)?",
+            "prompt": {
+                "title": "Allow this tool call?",
+                "content": "ls -la",
+                "description": "list the files",
+            },
             "choices": ["approve", "deny"],
+        }
+
+    def test_agent_paused_keeps_a_missing_part_null(self):
+        """The three keys are always on the frame, so the client reads one
+        shape: a call with nothing to box sends ``null``, not no key."""
+        assert serialize_event(AgentPaused(
+            prompt=CallDisplay(title="Allow this tool call?"),
+        ), ROOT) == {
+            "type": "agent_paused",
+            "prompt": {
+                "title": "Allow this tool call?",
+                "content": None,
+                "description": None,
+            },
+            "choices": None,
         }
 
     def test_agent_finished(self):

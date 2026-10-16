@@ -249,7 +249,13 @@ class TestBusyRejection:
             ws.receive_json()  # hello
             ws.send_json({"cmd": "turn", "input": "write"})
             paused = _wait_for(ws, "agent_paused")
-            assert "write_file" in paused["prompt"]
+            # A file call carries no description param, so the gate names
+            # the file it is about — the card's own line about the call.
+            assert paused["prompt"] == {
+                "title": "Allow this tool call?",
+                "content": None,
+                "description": str(tmp_path / "out.txt"),
+            }
 
             ws.send_json({"cmd": "turn", "input": "second turn"})
             error = ws.receive_json()
@@ -444,7 +450,12 @@ class TestMultiTab:
                 hello2 = tab2.receive_json()
                 assert hello2["busy"] is True
                 assert hello2["paused"]["type"] == "agent_paused"
-                assert "write_file" in hello2["paused"]["prompt"]
+                assert hello2["paused"]["prompt"]["title"] == (
+                    "Allow this tool call?"
+                )
+                assert hello2["paused"]["prompt"]["description"] == (
+                    str(tmp_path / "out.txt")
+                )
 
                 tab2.send_json({
                     "cmd": "approve_tool", "tool_id": "call_write",
