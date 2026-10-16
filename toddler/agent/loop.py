@@ -34,11 +34,11 @@ from toddler.config.models import TurnConfig
 from toddler.llm import Message, MessageBlock, TokenUsage
 from toddler.tools.base import (
     ALLOW_CALL_TITLE,
-    CallPrompt,
     Decision,
     Permission,
     PermissionManager,
     ToolCall,
+    ToolCallPrompt,
     ToolResult,
     blocked_message,
 )
@@ -449,7 +449,7 @@ class AgentLoop:
                 prompt = (
                     tool.build_call_prompt(**call.parameters)
                     if tool
-                    else CallPrompt(
+                    else ToolCallPrompt(
                         title=ALLOW_CALL_TITLE,
                         description=call.tool_name,
                     )

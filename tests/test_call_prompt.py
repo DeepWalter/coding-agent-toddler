@@ -22,7 +22,7 @@ from toddler.tools.base import (
     ALLOW_CALL_TITLE,
     ONE_LINE_DETAIL_LIMIT,
     BaseTool,
-    CallPrompt,
+    ToolCallPrompt,
     ToolResult,
 )
 from toddler.tools.files import EditFile, ReadFile, WriteFile
@@ -63,12 +63,12 @@ class _TitledTool(_BareTool):
 # ---------------------------------------------------------------------------
 
 
-class TestCallPrompt:
+class TestToolCallPrompt:
     """The three fields, their wire form, and the one line the terminal
     gets out of them."""
 
     def test_the_wire_form_keeps_a_missing_part_null(self):
-        prompt = CallPrompt(title=ALLOW_CALL_TITLE, content="ls -la")
+        prompt = ToolCallPrompt(title=ALLOW_CALL_TITLE, content="ls -la")
         assert prompt.to_dict() == {
             "title": ALLOW_CALL_TITLE,
             "content": "ls -la",
@@ -76,17 +76,17 @@ class TestCallPrompt:
         }
 
     def test_it_is_frozen(self):
-        prompt = CallPrompt(title=ALLOW_CALL_TITLE)
+        prompt = ToolCallPrompt(title=ALLOW_CALL_TITLE)
         with pytest.raises(FrozenInstanceError):
             prompt.title = "other"
 
     def test_a_title_alone_is_the_whole_line(self):
-        assert CallPrompt(title=ALLOW_CALL_TITLE).one_line() == (
+        assert ToolCallPrompt(title=ALLOW_CALL_TITLE).one_line() == (
             ALLOW_CALL_TITLE
         )
 
     def test_the_content_leads(self):
-        prompt = CallPrompt(
+        prompt = ToolCallPrompt(
             title=ALLOW_CALL_TITLE,
             content="ls -la",
             description="list the files",
@@ -94,7 +94,7 @@ class TestCallPrompt:
         assert prompt.one_line() == f"{ALLOW_CALL_TITLE} — ls -la"
 
     def test_the_description_answers_where_there_is_no_content(self):
-        prompt = CallPrompt(
+        prompt = ToolCallPrompt(
             title=ALLOW_CALL_TITLE, description="list the files"
         )
         assert prompt.one_line() == f"{ALLOW_CALL_TITLE} — list the files"
@@ -103,7 +103,7 @@ class TestCallPrompt:
         """The line is printed into a Rich panel title — a second line has
         nowhere to go, and markup the console would parse is a worse fate
         than a flattened one."""
-        prompt = CallPrompt(
+        prompt = ToolCallPrompt(
             title=ALLOW_CALL_TITLE, content="set -e\nfor f in *; do\n"
         )
         assert prompt.one_line() == (
@@ -111,7 +111,7 @@ class TestCallPrompt:
         )
 
     def test_a_long_detail_is_cut(self):
-        prompt = CallPrompt(title=ALLOW_CALL_TITLE, content="x" * 500)
+        prompt = ToolCallPrompt(title=ALLOW_CALL_TITLE, content="x" * 500)
         line = prompt.one_line()
         assert len(line) <= ONE_LINE_DETAIL_LIMIT + len(ALLOW_CALL_TITLE) + 3
         assert line.endswith("…")

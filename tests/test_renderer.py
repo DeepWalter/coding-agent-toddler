@@ -24,7 +24,7 @@ from toddler.agent.events import (
 from toddler.agent.planner import Plan, PlanStep
 from toddler.cli.renderer import NonStreamingRenderer, StreamingRenderer
 from toddler.llm.responses import TokenUsage
-from toddler.tools.base import CallPrompt, ToolResult
+from toddler.tools.base import ToolCallPrompt, ToolResult
 
 
 class _FakeClock:
@@ -789,8 +789,8 @@ class TestPausePromptLine:
     the brackets survive it.
     """
 
-    def _display(self) -> CallPrompt:
-        return CallPrompt(
+    def _display(self) -> ToolCallPrompt:
+        return ToolCallPrompt(
             title="Allow this tool call?",
             content="set -e\n[ -f notes.md ] && rm notes.md[/]",
             description="drop the notes",

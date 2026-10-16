@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from toddler.agent.planner import Plan
     from toddler.llm import TokenUsage
-    from toddler.tools.base import CallPrompt, ToolResult
+    from toddler.tools.base import ToolCallPrompt, ToolResult
     from toddler.tools.plan import PlanStepStatus
 
 
@@ -123,13 +123,13 @@ class AgentPaused(AgentEvent):
     """The agent is waiting for user input (approval, confirmation, etc.).
 
     ``prompt`` is the record the gate asks with — title, optional content
-    block, description (see :class:`~toddler.tools.base.CallPrompt`) —
+    block, description (see :class:`~toddler.tools.base.ToolCallPrompt`) —
     rather than a rendered string: each front-end lays it out for its own
     surface, and the tool that built it is the only side that knows what
     the call is about.
     """
 
-    prompt: CallPrompt
+    prompt: ToolCallPrompt
     choices: list[str] | None = None
 
 

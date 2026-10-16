@@ -477,14 +477,14 @@ def execution_params(params: dict) -> dict:
 #: :meth:`BaseTool._prompt_title`.
 ALLOW_CALL_TITLE = "Allow this tool call?"
 
-#: Cap on the detail half of :meth:`CallPrompt.one_line`.  The terminal
+#: Cap on the detail half of :meth:`ToolCallPrompt.one_line`.  The terminal
 #: gets one line and no more; the browser is handed the same text whole
 #: and scrolls it, so this cut is the terminal's alone.
 ONE_LINE_DETAIL_LIMIT = 200
 
 
 @dataclass(frozen=True)
-class CallPrompt:
+class ToolCallPrompt:
     """What one call asks the user while it waits to be approved.
 
     Built by :meth:`BaseTool.build_call_prompt` — one part from each of
@@ -808,7 +808,7 @@ class BaseTool(ABC):
             # the user can answer.
             return self.name
 
-    def build_call_prompt(self, **kwargs) -> CallPrompt:
+    def build_call_prompt(self, **kwargs) -> ToolCallPrompt:
         """The prompt the gate card renders for this call.
 
         Assembled from the ``_prompt_*`` helpers, so a tool with
@@ -819,7 +819,7 @@ class BaseTool(ABC):
         is still the line :func:`blocked_message` and the checkpoint
         callback write down.
         """
-        return CallPrompt(
+        return ToolCallPrompt(
             title=self._prompt_title(**kwargs),
             content=self._prompt_content(**kwargs),
             description=self._prompt_description(**kwargs),

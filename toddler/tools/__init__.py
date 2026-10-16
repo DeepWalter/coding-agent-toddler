@@ -8,12 +8,12 @@ is imported for the same reason, even though it opts out of the default set.
 
 from toddler.tools.base import (
     BaseTool,
-    CallPrompt,
     Decision,
     FileScope,
     FileScopePolicy,
     Permission,
     ToolCall,
+    ToolCallPrompt,
     ToolResult,
 )
 from toddler.tools.executor import (
@@ -30,7 +30,7 @@ from toddler.tools.shell import Shell
 __all__ = [
     # Base
     "BaseTool",
-    "CallPrompt",
+    "ToolCallPrompt",
     "Decision",
     "FileScope",
     "FileScopePolicy",
