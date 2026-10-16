@@ -11,6 +11,7 @@ from rich.text import Text
 
 from toddler.agent.events import (
     AgentFinished,
+    AgentPaused,
     ContentDelta,
     FatalAgentError,
     PlanProposed,
@@ -23,7 +24,7 @@ from toddler.agent.events import (
 from toddler.agent.planner import Plan, PlanStep
 from toddler.cli.renderer import NonStreamingRenderer, StreamingRenderer
 from toddler.llm.responses import TokenUsage
-from toddler.tools.base import ToolResult
+from toddler.tools.base import CallDisplay, ToolResult
 
 
 class _FakeClock:
@@ -776,3 +777,44 @@ class TestOneShotHiddenToolCall:
         ))
 
         assert buf.getvalue() == ""
+
+
+class TestPausePromptLine:
+    """The gate's line: one line, whatever the call put in it.
+
+    The prompt lands in a Panel *title* — the one slot that cannot hold a
+    second line and that Rich parses for markup — and it now carries the
+    call's arguments as written, so a shell command with brackets in it
+    goes through there.  Both halves are pinned: the flattening, and that
+    the brackets survive it.
+    """
+
+    def _display(self) -> CallDisplay:
+        return CallDisplay(
+            title="Allow this tool call?",
+            content="set -e\n[ -f notes.md ] && rm notes.md[/]",
+            description="drop the notes",
+        )
+
+    def test_the_one_shot_renderer_prints_the_line(self):
+        buf = io.StringIO()
+        renderer = NonStreamingRenderer(console=Console(file=buf, width=120))
+        renderer.on_agent_paused(AgentPaused(
+            prompt=self._display(), choices=["approve", "deny"],
+        ))
+
+        out = buf.getvalue()
+        assert "Allow this tool call? — set -e [ -f notes.md ] && rm notes.md[/]" in out
+        assert "[approve/deny]" in out
+
+    def test_the_streaming_title_keeps_the_brackets(self):
+        """A title is markup: passed as a plain string, ``[ -f x ]`` reads
+        as a tag and vanishes, and ``[/]`` closes one that was never
+        opened — which raises, mid-turn, at the gate."""
+        renderer = StreamingRenderer(console=Console(file=io.StringIO()))
+        renderer._confirm_prompt = self._display().one_line()
+
+        buf = io.StringIO()
+        Console(file=buf, width=120).print(renderer._build_confirm_table())
+
+        assert "[ -f notes.md ] && rm notes.md[/]" in buf.getvalue()

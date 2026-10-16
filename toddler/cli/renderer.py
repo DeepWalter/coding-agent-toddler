@@ -364,8 +364,11 @@ class Renderer(ABC):
         self._console.print()
         self._console.print(
             Panel(
-                Text(event.prompt, style="bold white"),
-                title=f"[{choices_str}]",
+                Text(event.prompt.one_line(), style="bold white"),
+                # Both titles are Text for one reason: a title is parsed
+                # for markup, so a bracketed choice list or a command
+                # carrying brackets would be read as tags instead.
+                title=Text(f"[{choices_str}]"),
                 title_align="left",
                 border_style=_TOOL_RUNNING,
             )
@@ -1355,7 +1358,11 @@ class StreamingRenderer(Renderer):
         hint = "Tab to move · Enter to select"
         return Panel(
             Group(table, Text(hint, style="dim italic")),
-            title=self._confirm_prompt,
+            # A Text, not the string: a title is parsed for markup, and a
+            # gated call's prompt carries the arguments as written — a
+            # shell command with brackets would lose them to a tag it is
+            # not, or close one that was never opened and raise.
+            title=Text(self._confirm_prompt),
             title_align="left",
             border_style="yellow",
         )

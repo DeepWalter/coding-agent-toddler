@@ -238,7 +238,7 @@ class CLIApp:
 
                 case AgentPaused():
                     result = await self._renderer.confirm(
-                        prompt=event.prompt,
+                        prompt=event.prompt.one_line(),
                         choices=event.choices or ["approve", "deny"],
                     )
                     if result.decision == "approve":
