@@ -21,7 +21,7 @@ from toddler.agent.events import (
 from toddler.agent.planner import Plan, PlanStep
 from toddler.llm import TokenUsage
 from toddler.llm.messages import Message, MessageBlock
-from toddler.tools.base import CallDisplay, ToolResult
+from toddler.tools.base import CallPrompt, ToolResult
 from toddler.tools.plan import PlanStepStatus
 from toddler.web.events import (
     serialize_event,
@@ -316,7 +316,7 @@ class TestSerializeEvent:
 
     def test_agent_paused(self):
         assert serialize_event(AgentPaused(
-            prompt=CallDisplay(
+            prompt=CallPrompt(
                 title="Allow this tool call?",
                 content="ls -la",
                 description="list the files",
@@ -336,7 +336,7 @@ class TestSerializeEvent:
         """The three keys are always on the frame, so the client reads one
         shape: a call with nothing to box sends ``null``, not no key."""
         assert serialize_event(AgentPaused(
-            prompt=CallDisplay(title="Allow this tool call?"),
+            prompt=CallPrompt(title="Allow this tool call?"),
         ), ROOT) == {
             "type": "agent_paused",
             "prompt": {

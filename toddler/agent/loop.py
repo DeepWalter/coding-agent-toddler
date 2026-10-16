@@ -34,7 +34,7 @@ from toddler.config.models import TurnConfig
 from toddler.llm import Message, MessageBlock, TokenUsage
 from toddler.tools.base import (
     ALLOW_CALL_TITLE,
-    CallDisplay,
+    CallPrompt,
     Decision,
     Permission,
     PermissionManager,
@@ -446,16 +446,16 @@ class AgentLoop:
                 # gate above allows such a call through, so reaching this
                 # pause without one takes a tool that raised while being
                 # classified, and naming it beats rendering nothing.
-                display = (
-                    tool.display_call(**call.parameters)
+                prompt = (
+                    tool.build_call_prompt(**call.parameters)
                     if tool
-                    else CallDisplay(
+                    else CallPrompt(
                         title=ALLOW_CALL_TITLE,
                         description=call.tool_name,
                     )
                 )
                 yield AgentPaused(
-                    prompt=display,
+                    prompt=prompt,
                     choices=["approve", "deny"],
                 )
 

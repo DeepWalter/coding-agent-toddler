@@ -126,6 +126,10 @@ class ReadFile(BaseTool):
         path = kwargs.get("file_path", "?")
         return f"read_file({Path(path).name})"
 
+    def _prompt_title(self, **kwargs) -> str:  # noqa: ARG002
+        """The call is about a file, so the card asks about that."""
+        return "Allow read this file?"
+
 
 # ---------------------------------------------------------------------------
 # WriteFile
@@ -197,6 +201,10 @@ class WriteFile(BaseTool):
     def summarize_call(self, **kwargs) -> str:
         path = kwargs.get("file_path", "?")
         return f"write_file({Path(path).name})"
+
+    def _prompt_title(self, **kwargs) -> str:  # noqa: ARG002
+        """The call is about a file, so the card asks about that."""
+        return "Allow write this file?"
 
 
 # ---------------------------------------------------------------------------
@@ -353,3 +361,7 @@ class EditFile(BaseTool):
     def summarize_call(self, **kwargs) -> str:
         path = kwargs.get("file_path", "?")
         return f"edit_file({Path(path).name})"
+
+    def _prompt_title(self, **kwargs) -> str:  # noqa: ARG002
+        """The call is about a file, so the card asks about that."""
+        return "Allow edit this file?"

@@ -11,9 +11,7 @@ from itertools import islice
 from pathlib import Path
 
 from toddler.tools.base import (
-    ALLOW_CALL_TITLE,
     BaseTool,
-    CallDisplay,
     FileScope,
     FileScopePolicy,
     Permission,
@@ -578,7 +576,11 @@ class Shell(BaseTool):
         short = cmd[:60] + "..." if len(cmd) > 60 else cmd
         return f"shell({short!r})"
 
-    def display_call(self, **kwargs) -> CallDisplay:
+    def _prompt_title(self, **kwargs) -> str:  # noqa: ARG002
+        """The call is a command, and the card asks about running it."""
+        return "Allow this bash command?"
+
+    def _prompt_content(self, **kwargs) -> str | None:
         """The gate card's content block is the command itself.
 
         The classifier's whole verdict is about this string, so it is what
@@ -588,11 +590,9 @@ class Shell(BaseTool):
         single line on its own.
         """
         command = kwargs.get("command")
-        return CallDisplay(
-            title=ALLOW_CALL_TITLE,
-            content=command if isinstance(command, str) and command.strip() else None,
-            description=self.call_description(**kwargs),
-        )
+        if isinstance(command, str) and command.strip():
+            return command
+        return None
 
 
 # ---------------------------------------------------------------------------

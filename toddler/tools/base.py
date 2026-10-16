@@ -469,24 +469,26 @@ def execution_params(params: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Call display — what a call shows while it waits to be approved
+# Call prompt — what a call asks the user while it waits to be approved
 # ---------------------------------------------------------------------------
 
-#: Title every gate card leads with.  A tool varies it by overriding
-#: :meth:`BaseTool.display_call`; none does yet.
+#: Title the gate card leads with for every tool whose call is not one of
+#: the few with a title of its own — a tool varies it by overriding
+#: :meth:`BaseTool._prompt_title`.
 ALLOW_CALL_TITLE = "Allow this tool call?"
 
-#: Cap on the detail half of :meth:`CallDisplay.one_line`.  The terminal
+#: Cap on the detail half of :meth:`CallPrompt.one_line`.  The terminal
 #: gets one line and no more; the browser is handed the same text whole
 #: and scrolls it, so this cut is the terminal's alone.
 ONE_LINE_DETAIL_LIMIT = 200
 
 
 @dataclass(frozen=True)
-class CallDisplay:
-    """What one call shows the user while it waits to be approved.
+class CallPrompt:
+    """What one call asks the user while it waits to be approved.
 
-    Built by :meth:`BaseTool.display_call` and carried on
+    Built by :meth:`BaseTool.build_call_prompt` — one part from each of
+    that tool's ``_prompt_*`` methods — and carried on
     :class:`~toddler.agent.events.AgentPaused`.  The parts stay apart
     rather than being rendered into one string, because each front-end
     lays them out for its own surface: the browser boxes and scrolls the
@@ -749,7 +751,24 @@ class BaseTool(ABC):
         args = ", ".join(f"{k}={v!r}" for k, v in kwargs.items())
         return f"{self.name}({args})"
 
-    def call_description(self, **kwargs) -> str | None:
+    def _prompt_title(self, **kwargs) -> str:  # noqa: ARG002
+        """The gate card's title for this call.
+
+        Default: :data:`ALLOW_CALL_TITLE`.  A tool whose call reads better
+        named for what it is — a file to read, a command to run —
+        overrides this rather than the whole prompt.
+        """
+        return ALLOW_CALL_TITLE
+
+    def _prompt_content(self, **kwargs) -> str | None:  # noqa: ARG002
+        """The call's own body, for a card that boxes one, or ``None``.
+
+        Default: ``None``.  Only a tool whose call *is* a body — ``Shell``,
+        whose command is the thing being approved — hands one over.
+        """
+        return None
+
+    def _prompt_description(self, **kwargs) -> str | None:
         """The call's own line about what it does, or ``None``.
 
         In order:
@@ -789,16 +808,19 @@ class BaseTool(ABC):
             # the user can answer.
             return self.name
 
-    def display_call(self, **kwargs) -> CallDisplay:
-        """The record the gate card renders for this call.
+    def build_call_prompt(self, **kwargs) -> CallPrompt:
+        """The prompt the gate card renders for this call.
+
+        Assembled from the ``_prompt_*`` helpers, so a tool with
+        something to say about one part overrides that helper and leaves
+        the other two alone.
 
         A sibling of :meth:`summarize_call`, not a replacement: that one
         is still the line :func:`blocked_message` and the checkpoint
-        callback write down.  This one keeps the parts apart so a card can
-        box and scroll the content, which is why ``content`` is ``None``
-        here — only a tool whose call has a body (``Shell``) sets one.
+        callback write down.
         """
-        return CallDisplay(
-            title=ALLOW_CALL_TITLE,
-            description=self.call_description(**kwargs),
+        return CallPrompt(
+            title=self._prompt_title(**kwargs),
+            content=self._prompt_content(**kwargs),
+            description=self._prompt_description(**kwargs),
         )
