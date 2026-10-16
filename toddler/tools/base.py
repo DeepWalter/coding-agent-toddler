@@ -469,6 +469,66 @@ def execution_params(params: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Call display — what a call shows while it waits to be approved
+# ---------------------------------------------------------------------------
+
+#: Title every gate card leads with.  A tool varies it by overriding
+#: :meth:`BaseTool.display_call`; none does yet.
+ALLOW_CALL_TITLE = "Allow this tool call?"
+
+#: Cap on the detail half of :meth:`CallDisplay.one_line`.  The terminal
+#: gets one line and no more; the browser is handed the same text whole
+#: and scrolls it, so this cut is the terminal's alone.
+ONE_LINE_DETAIL_LIMIT = 200
+
+
+@dataclass(frozen=True)
+class CallDisplay:
+    """What one call shows the user while it waits to be approved.
+
+    Built by :meth:`BaseTool.display_call` and carried on
+    :class:`~toddler.agent.events.AgentPaused`.  The parts stay apart
+    rather than being rendered into one string, because each front-end
+    lays them out for its own surface: the browser boxes and scrolls the
+    content block, the terminal flattens everything to a line.
+
+    ``content`` is the call's body, for a tool whose arguments have one —
+    today only ``Shell``, whose command *is* the decision.  ``description``
+    is the call's own line about what it does: the ``description``
+    parameter, or the file the call names.  ``None`` is "nothing to show"
+    rather than an empty string, and the wire form keeps the difference.
+    """
+
+    title: str
+    content: str | None = None
+    description: str | None = None
+
+    def to_dict(self) -> dict:
+        """The wire form — three keys, always present, ``None`` as null."""
+        return {
+            "title": self.title,
+            "content": self.content,
+            "description": self.description,
+        }
+
+    def one_line(self) -> str:
+        """The terminal's rendering: one line, never two.
+
+        The content leads where there is one — a command is what is being
+        approved — and the description answers where there is not.
+        Whitespace runs collapse, newlines included: this lands in a Rich
+        panel *title*, which has no second line to give.
+        """
+        detail = self.content or self.description
+        if not detail:
+            return self.title
+        collapsed = " ".join(detail.split())
+        if len(collapsed) > ONE_LINE_DETAIL_LIMIT:
+            collapsed = collapsed[:ONE_LINE_DETAIL_LIMIT - 1].rstrip() + "…"
+        return f"{self.title} — {collapsed}"
+
+
+# ---------------------------------------------------------------------------
 # Tool call / result
 # ---------------------------------------------------------------------------
 
@@ -688,3 +748,57 @@ class BaseTool(ABC):
         """
         args = ", ".join(f"{k}={v!r}" for k, v in kwargs.items())
         return f"{self.name}({args})"
+
+    def call_description(self, **kwargs) -> str | None:
+        """The call's own line about what it does, or ``None``.
+
+        In order:
+
+        1. the ``description`` parameter the model wrote, where the tool's
+           schema carries one — the call's own words, which is what the
+           user is being asked to approve;
+        2. otherwise the display path of the first path parameter the call
+           actually set, spelled by :func:`display_path`: a call that
+           names a file is about that file, and the path is the only thing
+           that says which one;
+        3. otherwise :meth:`summarize_call`, so a call declaring neither
+           still names itself rather than drawing a card that says nothing
+           at all.
+
+        An argument of the wrong shape — the model sent a number where a
+        path belongs — falls through to the next tier rather than raising,
+        for the same reason :func:`_expand_path` refuses it: a classifier
+        runs on model-authored arguments, and a value the tool cannot use
+        must not take the turn down at the gate that offers to run it.
+        """
+        described = kwargs.get(CALL_DESCRIPTION_PARAM)
+        if described and str(described).strip():
+            return str(described).strip()
+        for name in self.path_params:
+            if not kwargs.get(name):
+                continue
+            try:
+                return str(display_path(kwargs[name]))
+            except (TypeError, RuntimeError, ValueError):
+                continue
+        try:
+            return self.summarize_call(**kwargs)
+        except (TypeError, RuntimeError, ValueError):
+            # Summary too — the tool's name is the last thing the call can
+            # be named by, and a card that says only that is still a card
+            # the user can answer.
+            return self.name
+
+    def display_call(self, **kwargs) -> CallDisplay:
+        """The record the gate card renders for this call.
+
+        A sibling of :meth:`summarize_call`, not a replacement: that one
+        is still the line :func:`blocked_message` and the checkpoint
+        callback write down.  This one keeps the parts apart so a card can
+        box and scroll the content, which is why ``content`` is ``None``
+        here — only a tool whose call has a body (``Shell``) sets one.
+        """
+        return CallDisplay(
+            title=ALLOW_CALL_TITLE,
+            description=self.call_description(**kwargs),
+        )

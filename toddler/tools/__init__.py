@@ -8,6 +8,7 @@ is imported for the same reason, even though it opts out of the default set.
 
 from toddler.tools.base import (
     BaseTool,
+    CallDisplay,
     Decision,
     FileScope,
     FileScopePolicy,
@@ -29,6 +30,7 @@ from toddler.tools.shell import Shell
 __all__ = [
     # Base
     "BaseTool",
+    "CallDisplay",
     "Decision",
     "FileScope",
     "FileScopePolicy",
