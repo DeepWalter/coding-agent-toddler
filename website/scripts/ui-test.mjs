@@ -76,6 +76,12 @@
 //            the title click lands on that same tab), while each
 //            plan_update call prints the whole step list as a todo block
 //            and the document stays frozen
+//  phase 17 — the gate's card: a title every call is asked about, the call's
+//            own content where it has any — a shell command, whole — and the
+//            model's line about the call under it.  The content is boxed and
+//            capped at six lines, drawing a one-line box for a one-line
+//            command and scrolling a script, with the dock reporting each
+//            height it grew to
 // Prints PASS/FAIL plus diagnostics; exits 1 on any failure.
 import { chromium } from 'playwright'
 import WebSocket from 'ws'
@@ -2984,3 +2990,106 @@ const planTodo = (marks) =>
   if (!okCancelledPlan) fails++
 }
 
+
+// --- Phase 17: the gate's card — a title, the call's content, its line ---
+// The dock's prompt is a record now rather than a sentence: a title every
+// call is asked about, the call's own content where it has any (a shell
+// command, whole and untruncated) and the model's line about the call under
+// it.  The content is boxed and scrolls past six lines — the one reading of
+// the card a one-line command can never show, and the reason the block is
+// capped rather than clipped.
+{
+  // Both measurements read the same two things: what the content block drew,
+  // and the height the dock reported to the console under it.
+  const measure = () => page.evaluate(() => {
+    const card = document.querySelector('.pause-prompt')
+    const content = card.querySelector('.pause-prompt-content')
+    const desc = card.querySelector('.pause-prompt-description')
+    const style = getComputedStyle(content)
+    const pane = document.querySelector('.pane-console')
+    return {
+      title: card.querySelector('.pause-prompt-title')?.textContent.trim() ?? null,
+      content: content.textContent,
+      desc: desc?.textContent.trim() ?? null,
+      lineHeight: parseFloat(style.lineHeight),
+      clientHeight: content.clientHeight,
+      scrollHeight: content.scrollHeight,
+      overflowY: style.overflowY,
+      lines: content.textContent.split('\n').length,
+      contentBeforeDesc: !!(desc &&
+        (content.compareDocumentPosition(desc) & Node.DOCUMENT_POSITION_FOLLOWING)),
+      barHeight: parseInt(getComputedStyle(pane).getPropertyValue('--bar-h'), 10),
+    }
+  })
+
+  // Phase 16 left a cancelled plan whose beats keep arriving — the mock
+  // streams them to the end, where a real server stops at the cancel — and
+  // the agent_finished that closes them would clear a gate that beat it
+  // here.  So the last of that stream is waited out before asking for one.
+  await page.waitForTimeout(1000)
+
+  await page.fill('textarea.input-bar-textarea', 'gate: list files')
+  await page.click('button:has-text("Send")')
+  await page.waitForSelector('.pause-prompt', { timeout: 15000 })
+  await page.waitForTimeout(300)
+  const short = await measure()
+
+  // One line, so the block drew one line: a max-height, not a height — the
+  // cap only ever bites on a command that overflows it.
+  const okShort =
+    short.title === 'Allow this tool call?' &&
+    short.content === 'ls -la' &&
+    short.desc === 'list the files' &&
+    short.contentBeforeDesc &&
+    short.overflowY === 'auto' &&
+    short.lines === 1 &&
+    Math.abs(short.clientHeight - (short.lineHeight + 16)) <= 1.5 &&
+    short.scrollHeight === short.clientHeight
+  console.log(`phase17 a one-line command draws one line ${JSON.stringify(short)} ${okShort ? 'PASS' : 'FAIL'}`)
+  if (!okShort) fails++
+
+  await page.click('.pause-prompt button:has-text("Approve")')
+  await page.waitForSelector('.pause-prompt', { state: 'detached', timeout: 8000 })
+
+  await page.fill('textarea.input-bar-textarea', 'script: count the lines')
+  await page.click('button:has-text("Send")')
+  await page.waitForSelector('.pause-prompt .pause-prompt-content', { timeout: 15000 })
+  await page.waitForTimeout(300)
+  const long = await measure()
+  // The cap is six lines plus the box's own padding; clientHeight measures
+  // the content box and its padding, not the border, so the two agree at
+  // 6lh + 16px.
+  const capped = Math.abs(long.clientHeight - (6 * long.lineHeight + 16)) <= 1.5
+  const overflows = long.scrollHeight > long.clientHeight + 1
+  const okLong =
+    long.lines === 12 &&
+    long.overflowY === 'auto' &&
+    capped &&
+    overflows
+  console.log(`phase17 a long command is capped and overflows ${JSON.stringify(long)} ${okLong ? 'PASS' : 'FAIL'}`)
+  if (!okLong) fails++
+
+  // The rest of the command is reachable, not hidden: the block is a
+  // scroller, so the tail is a scroll away.
+  const tail = await page.evaluate(() => {
+    const content = document.querySelector('.pause-prompt .pause-prompt-content')
+    content.scrollTop = content.scrollHeight
+    return {
+      scrollTop: content.scrollTop,
+      bottomReached: content.scrollTop + content.clientHeight >= content.scrollHeight - 1,
+    }
+  })
+  const okTail = tail.scrollTop > 0 && tail.bottomReached
+  console.log(`phase17 the tail of the command scrolls into view ${JSON.stringify(tail)} ${okTail ? 'PASS' : 'FAIL'}`)
+  if (!okTail) fails++
+
+  // The card grew, and the console heard about it: --bar-h is the dock's own
+  // ResizeObserver handshake, and a taller gate must move the pinned tail up
+  // with it or the last line of the transcript sits under the card.
+  const okBar = long.barHeight > short.barHeight
+  console.log(`phase17 the dock reports its new height ${short.barHeight} → ${long.barHeight} ${okBar ? 'PASS' : 'FAIL'}`)
+  if (!okBar) fails++
+
+  await page.click('.ask-close')
+  await page.waitForSelector('.pause-prompt', { state: 'detached', timeout: 8000 })
+}

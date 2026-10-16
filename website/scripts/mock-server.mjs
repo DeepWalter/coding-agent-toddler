@@ -120,6 +120,28 @@ function unlinked(path) {
 const OUTSIDE_PATH = `${MOCK_HOME_LINK}/.toddler/notes.md`
 const OUTSIDE_DESCRIPTION = 'read a file outside the repository'
 
+// The gate's card: the title every call is asked about, and — for a shell
+// call — the command as its own content block, long enough that a script
+// overflows the six lines the card shows before scrolling.  The other two
+// gates carry no content: their call is a file, and the card's file line is
+// the whole of what there is to read.
+const GATE_TITLE = 'Allow this tool call?'
+const SCRIPT_COMMAND = [
+  'set -e',
+  'for dir in toddler tests website; do',
+  '  echo "== $dir"',
+  '  find "$dir" -name "*.py" -type f \\',
+  '    | while read -r f; do',
+  '        echo "  $f"',
+  '      done',
+  'done',
+  "echo '---'",
+  'wc -l toddler/tools/base.py',
+  'wc -l toddler/agent/loop.py',
+  'wc -l website/src/types.ts',
+].join('\n')
+const SCRIPT_DESCRIPTION = 'count the lines of the gate and its neighbours'
+
 // The plan fixture: a `plan` turn proposes two steps and holds for the
 // decision; approving streams one plan_step_update per beat — the trail the
 // todo blocks print.  `markdown` is the server's
@@ -187,6 +209,9 @@ const FILE_GATE_ID = 't12'
 // stop the call.
 const OVERWRITE_GATE_ID = 't14'
 let pendingFileCall = null
+// The shell gate's call, kept for the same reason: approve/deny finishes
+// whichever command the turn held, the plain one or the script.
+let pendingShellCall = { description: 'list the files', command: 'ls -la' }
 // One beat per plan_update call: the prose that call carried, then the whole
 // step list as it stood afterwards.
 const PLAN_BEATS = [
@@ -542,6 +567,11 @@ wss.on('connection', (ws) => {
         // First turn gates on a Bash call; later turns stream and finish —
         // the harness needs a plain send (no ask) to test the send-pin alone.
         const gate = msg.input.startsWith('gate')
+        // A "script" turn is the same shell gate holding a call whose content
+        // block cannot fit the six lines the card shows — the cap, the
+        // scrollbar under it, and the card's height change at the console's
+        // bottom edge all need a command that overflows.
+        const script = msg.input.startsWith('script')
         // A "think" turn streams reasoning before its answer, the way a
         // thinking-mode model does.  The hold keeps the card open long
         // enough for the harness to see "Thinking…" and its live position;
@@ -884,8 +914,11 @@ wss.on('connection', (ws) => {
           })
           send({
             type: 'agent_paused',
-            tool_id: FILE_GATE_ID,
-            prompt: 'The agent wants to read a file outside the project — approve?',
+            prompt: {
+              title: GATE_TITLE,
+              content: null,
+              description: OUTSIDE_DESCRIPTION,
+            },
             choices: null,
           })
           break
@@ -963,8 +996,11 @@ wss.on('connection', (ws) => {
           })
           send({
             type: 'agent_paused',
-            tool_id: OVERWRITE_GATE_ID,
-            prompt: `The agent wants to write ${WRITE_PATH} — approve?`,
+            prompt: {
+              title: GATE_TITLE,
+              content: null,
+              description: OVERWRITE_DESCRIPTION,
+            },
             choices: null,
           })
           break
@@ -982,7 +1018,7 @@ wss.on('connection', (ws) => {
           content += chunk
           send({ type: 'content_delta', text_delta: chunk })
         }
-        if (!gate) {
+        if (!gate && !script) {
           if (think) {
             transcript.push({ role: 'assistant', content, reasoning: THINK_REASONING })
           }
@@ -990,17 +1026,27 @@ wss.on('connection', (ws) => {
           send({ type: 'state', busy: false })
           break
         }
+        // One shell gate, two commands: the plain one whose content block is
+        // a single line, and the script whose twelve lines are what the
+        // card's six-line cap and its scrollbar exist for.  Both are held by
+        // the same pending call, so either answer finishes the right one.
+        pendingShellCall = script
+          ? { description: SCRIPT_DESCRIPTION, command: SCRIPT_COMMAND }
+          : { description: 'list the files', command: 'ls -la' }
         useStart('t1', 'shell')
         send({
           type: 'tool_call_start',
           tool_id: 't1',
           tool_name: 'shell',
-          input: { description: 'list the files', command: 'ls -la' },
+          input: pendingShellCall,
         })
         send({
           type: 'agent_paused',
-          tool_id: 't1',
-          prompt: 'The agent wants to run Bash: ls -la — approve?',
+          prompt: {
+            title: GATE_TITLE,
+            content: pendingShellCall.command,
+            description: pendingShellCall.description,
+          },
           choices: null,
         })
         break
@@ -1038,7 +1084,7 @@ wss.on('connection', (ws) => {
           type: 'tool_call_end',
           tool_id: 't1',
           tool_name: 'shell',
-          input: { description: 'list the files', command: 'ls -la' },
+          input: pendingShellCall,
           result: { success: true, output: 'ok\n', error: null, checkpoint_id: null, metadata: null },
         })
         send({ type: 'content_delta', text_delta: 'done.\n' })

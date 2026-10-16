@@ -40,7 +40,7 @@ nextTick(focusChoice)
   <div class="pause-prompt" @keydown="onChoiceKeydown">
     <div class="pause-prompt-head">
       <span class="pause-prompt-icon" aria-hidden="true">⚠</span>
-      <span class="pause-prompt-title">{{ paused.prompt }}</span>
+      <span class="pause-prompt-title">{{ paused.prompt.title }}</span>
       <button
         v-if="busy"
         type="button"
@@ -63,6 +63,13 @@ nextTick(focusChoice)
         </svg>
       </button>
     </div>
+    <pre
+      v-if="paused.prompt.content"
+      class="pause-prompt-content"
+    >{{ paused.prompt.content }}</pre>
+    <span v-if="paused.prompt.description" class="pause-prompt-description">
+      {{ paused.prompt.description }}
+    </span>
     <span v-if="!paused.tool_id" class="pause-prompt-hint">
       (tool call not in view — reload or cancel)
     </span>

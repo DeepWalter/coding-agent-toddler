@@ -95,10 +95,21 @@ export interface ReplayMessage {
   result?: ToolResult | null
 }
 
+/** What a gated call shows the user — the server's `CallDisplay`
+ *  (toddler/tools/base.py), built by the tool that was asked to run.
+ *  `content` is the call's body where it has one (a shell command, whole and
+ *  untruncated) and `description` the call's own line about what it does:
+ *  the model's description parameter, or the file the call names. */
+export interface CallDisplay {
+  title: string
+  content: string | null
+  description: string | null
+}
+
 /** The agent_paused frame as replayed by hello.paused. */
 export interface PausedFrame {
   type: 'agent_paused'
-  prompt: string
+  prompt: CallDisplay
   choices: string[] | null
 }
 
@@ -228,7 +239,7 @@ export type Frame =
     }
   | { type: 'plan_proposed'; plan: Plan }
   | { type: 'plan_step_update'; steps: PlanStepRow[] }
-  | { type: 'agent_paused'; prompt: string; choices: string[] | null }
+  | { type: 'agent_paused'; prompt: CallDisplay; choices: string[] | null }
   | { type: 'agent_finished'; reason: string; usage: TokenUsage | null }
   | { type: 'recoverable_error'; message: string }
   | { type: 'notice'; message: string }
@@ -335,7 +346,7 @@ export type Block =
 
 /** A pending approval. tool_id is inferred from the open tool block. */
 export interface Paused {
-  prompt: string
+  prompt: CallDisplay
   choices: string[] | null
   tool_id: string | null
 }

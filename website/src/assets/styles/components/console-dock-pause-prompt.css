@@ -38,6 +38,36 @@
   font-weight: 600;
 }
 
+/* The call's content, where it has any — a shell command, whole and
+   untruncated: that string is what the decision is about, and the call's
+   description reads as the caption under it.  Boxed like the input bar's
+   textarea, because it is the same thing: text read before answering. */
+.pause-prompt-content {
+  margin: 0; /* a <pre> brings margins of its own */
+  padding: 8px 10px;
+  border: 1px solid var(--editor-border);
+  border-radius: 6px;
+  background: var(--editor-bg);
+  color: var(--text);
+  white-space: pre-wrap; /* the command's own breaks */
+  overflow-wrap: anywhere; /* a long token breaks rather than side-scrolls */
+  /* Six lines, then it scrolls in place — 6 × 13px/1.55 mono line-height
+     ≈ 121px, plus 16px vertical padding and 2px border; the second
+     declaration is the same via the modern lh unit.  A max-height, not a
+     height: a one-line command draws a one-line box. */
+  max-height: 138px;
+  max-height: calc(6lh + 18px);
+  overflow-y: auto;
+}
+
+/* The call's own line about what it does — the model's description, or
+   the file the call names.  A sentence, so it wraps: a long path breaks
+   rather than running past the card's edge. */
+.pause-prompt-description {
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
 .pause-prompt-hint {
   color: var(--text-muted);
 }
