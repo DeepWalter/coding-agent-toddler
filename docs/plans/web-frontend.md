@@ -219,7 +219,7 @@ server restart still loses the plan (and the turn) — the stranded-approval
 guard treats a plan wait like a tool pause, so a single tab dropping out
 mid-approval auto-cancels the turn rather than hanging it.
 
-agent_paused       {prompt, choices}
+agent_paused       {prompt: {title, content, description}, choices}
 agent_finished     {reason, usage: {input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens}}
 recoverable_error  {message}
 fatal_error        {message}
@@ -340,7 +340,10 @@ plans survive a client reconnect but not a server restart.
   `tool_call_start/end` render collapsible cards (red border on error; the
   running/settled reading moved to the transcript's status gutter — see
   [console-stream-gutter.md](console-stream-gutter.md));
-  `agent_paused` → approve/deny buttons; `plan_proposed` → a title-only line
+  `agent_paused` → the gate card: the prompt's title, the call's content
+  where it has any (a shell command, boxed and scrollable past six lines)
+  and its description, over the approve/deny buttons; `plan_proposed` → a
+  title-only line
   ("Plan" beside the plan's title) and the plan document opening in the
   editor by itself, the line's title the way back to that tab — the
   decision itself lives in the dock's ask
