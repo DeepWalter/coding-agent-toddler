@@ -97,6 +97,11 @@
   gap: 8px;
 }
 
+/* The box keeps one border in every state: whether the keys are the bar's
+   is the dock's edge to say (console-dock.css), and inside the bar the
+   caret says it for the field — it blinks exactly while this textarea holds
+   the focus, which is what a caret is for.  So no accent border on focus,
+   no dimming off it. */
 .input-bar-textarea {
   width: 100%;
   resize: none;
@@ -112,10 +117,6 @@
   padding: 8px 10px;
   font: inherit;
   outline: none;
-}
-
-.input-bar-textarea:focus {
-  border-color: var(--accent-hover);
 }
 
 .input-bar-textarea:disabled {

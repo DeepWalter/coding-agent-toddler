@@ -3,20 +3,10 @@
    IMPORTED AFTER shared/buttons.css — these rules tie `.btn` at equal
    specificity and win on source order alone.  See index.css. */
 
-/* The dock's edge says which surface the next keypress lands on: the card
-   wears the accent while the focus is in it, and the dock's own border —
-   the dim one — the moment the focus leaves, which is exactly when the
-   arrows stop being the card's (see choiceNav).  The selection it keeps is
-   another reading; this is the one that says whether ↑/↓ would move it. */
-.console-dock:has(.pause-prompt):focus-within,
-.console-dock:has(.plan-ask):focus-within {
-  border-color: var(--accent-hover);
-}
-
 /* The card's own body is focusable — a click on it lands there, and Enter
    answers from there — but the ring the browser draws around a cardful of
-   text is not the reading meant: the edge above is.  The rows keep their
-   own focus treatment. */
+   text is not the reading meant: the dock's edge is (see console-dock.css),
+   and the rows keep their own focus treatment. */
 .pause-prompt:focus,
 .plan-ask:focus {
   outline: none;

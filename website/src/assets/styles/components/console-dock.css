@@ -27,3 +27,14 @@
   background: var(--editor-surface-2);
   box-shadow: 0 6px 18px rgb(0 0 0 / 0.25);
 }
+
+/* The edge says which surface the next keypress lands on: the accent while
+   anything in the dock holds the keyboard — a gate card, a plan ask, the
+   input bar with its pickers — and this border, the dim one, the moment the
+   focus leaves.  That is the whole of what the dock says about focus; what
+   the keys then do is the focused thing's own business (see choiceNav for
+   the ask cards), and the input bar answers with its caret and nothing
+   else (see console-dock-input-bar.css). */
+.console-dock:focus-within {
+  border-color: var(--accent-hover);
+}

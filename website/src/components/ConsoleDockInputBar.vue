@@ -208,12 +208,11 @@ watch(draft, async () => {
 
 onMounted(() => {
   autosizeTextarea()
-  // Returning from a confirmation with a non-empty draft (a real cache
-  // restore) — take focus back so typing can continue.  A plain remount
-  // (page load, busy Cancel) leaves focus where it is.
-  if (draft.value.trim()) {
-    nextTick(() => textareaEl.value?.focus())
-  }
+  // The bar takes the caret whenever it appears — after a card is answered,
+  // after a cancel, on load.  The next thing said is typed here, and a
+  // dismissal that left the keyboard nowhere (the card that had it is gone)
+  // would make the user click back in first.
+  nextTick(() => textareaEl.value?.focus())
 })
 </script>
 
