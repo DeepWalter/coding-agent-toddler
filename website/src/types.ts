@@ -460,6 +460,26 @@ export interface GitDiffPayload {
   hunks: DiffHunk[]
 }
 
+/** The text a tool card asks the editor to reveal, and — when the call
+ *  recorded it — the exact 1-based line and 0-based column where it starts.
+ *  The position is what disambiguates a replacement that also occurs
+ *  elsewhere in the file; without it the editor searches for the text and
+ *  takes the first match. */
+export interface EditSelection {
+  needle: string
+  line: number | null
+  column: number | null
+}
+
+/** A one-shot request to select a string in the file the editor is opening.
+ *  `nonce` makes a repeat click on the same card a new request even though
+ *  the path and needle are unchanged.  It is never part of a tab's identity
+ *  — the same file stays one tab however many ranges are revealed in it. */
+export interface RevealRequest extends EditSelection {
+  path: string
+  nonce: number
+}
+
 /** One entry in the editor tab strip: a regular file tab, a read-only diff
  * tab (side-by-side view of one file), a read-only text tab — content the
  * app holds rather than the disk, such as a tool call's command or output —

@@ -1,9 +1,11 @@
-/* The tool card — ConsolePaneToolCard.vue with its ConsolePaneToolCardRow.vue.
-   Every tool call reads the same way: the call's own line about what it does,
-   then a box holding what the call was given and what came back.  A shell call
-   was given a command (IN) and a search a pattern (PAT); both end in OUT, the
-   result.  A row is clipped to three lines and openable in full in the editor
-   pane.
+/* The tool card — ConsolePaneToolCard.vue with its ConsolePaneToolCardRow.vue
+   and ConsolePaneToolCardDiff.vue.  Every tool call reads the same way: the
+   call's own line about what it does, then a box holding what the call was
+   given and what came back.  A shell call was given a command (IN) and a
+   search a pattern (PAT); both end in OUT, the result.  An edit's body is
+   the change itself — a compact unified diff — and a read or a write is its
+   title alone.  A row is clipped to three lines and openable in full in the
+   editor pane.
 
    The heading (the call's own line about what it does) sits outside the box,
    as ordinary output, in the shared `.tool-call-heading` vocabulary; only the
@@ -130,4 +132,81 @@
 
 .tool-card-text.error {
   color: var(--error);
+}
+
+/* ------------------------------------------------------------------ */
+/* The edit card's diff                                                */
+/* ------------------------------------------------------------------ */
+
+/* The change itself, printed in place of a result row: a compact unified
+   diff whose line kinds carry the tint.  No syntax highlighting here — the
+   card's other rows are plain text, and the full diff opens in the editor,
+   where the diff grammar does that job. */
+.tool-card-diff {
+  padding: 6px 0;
+  font: 12px/1.55 var(--mono);
+}
+
+/* The marker column is the rows' label column, so a diff line starts at the
+   same edge as IN/PAT/OUT's text. */
+.tool-card-diff-row {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 4px;
+  align-items: start;
+  padding: 0 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tool-card-diff-marker {
+  color: var(--text-subtle);
+  user-select: none;
+}
+
+.tool-card-diff-row.del .tool-card-diff-marker {
+  color: var(--error);
+}
+
+.tool-card-diff-row.add .tool-card-diff-marker {
+  color: var(--success);
+}
+
+.tool-card-diff-text {
+  min-width: 0;
+  color: var(--text);
+}
+
+/* The editor diff's own tint recipe, so one change reads the same in both
+   places. */
+.tool-card-diff-row.del .tool-card-diff-text {
+  background: color-mix(in srgb, var(--error) 12%, transparent);
+}
+
+.tool-card-diff-row.add .tool-card-diff-text {
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+}
+
+/* An elided run: the ellipsis sits in the marker column, with nothing after
+   it. */
+.tool-card-diff-row.gap {
+  color: var(--text-subtle);
+}
+
+/* Only a clipped diff is a control — what fits stays plain text, matching
+   the rows. */
+.tool-card-diff[data-clamped] {
+  cursor: pointer;
+}
+
+.tool-card-diff[data-clamped]:hover {
+  background: var(--editor-surface-3);
+}
+
+/* The footer is indented past the marker column, so it reads as a line of
+   the body rather than a new one. */
+.tool-card-diff-more {
+  padding: 2px 10px 0 34px;
+  color: var(--text-subtle);
+  font-size: 11px;
 }

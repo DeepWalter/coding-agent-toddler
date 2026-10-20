@@ -9,9 +9,9 @@ import SessionList from './components/SessionList.vue'
 import SourceControl from './components/SourceControl.vue'
 import StatusBar from './components/StatusBar.vue'
 import { useConsole } from './composables/useConsole'
-import { useGitStatus } from './composables/useGitStatus'
+import { useGitStatus, WRITE_TOOLS } from './composables/useGitStatus'
 import { useWebSocket } from './composables/useWebSocket'
-import type { Block, Mode, TabEntry } from './types'
+import type { Block, EditSelection, Mode, RevealRequest, TabEntry } from './types'
 import { planDocTab, tabKey } from './utils'
 
 // Transport → state: every websocket frame goes through the console
@@ -40,6 +40,23 @@ const git = useGitStatus()
 onFrame((frame) => {
   applyFrame(frame)
   git.onFrame(frame)
+  // Keep open editor buffers on the disk the agent left.  The file a write
+  // tool changed is known exactly; every other tool (shell, formatter, git)
+  // only says the turn is over, so the sweep re-reads what is open.
+  if (
+    frame.type === 'tool_call_end' &&
+    WRITE_TOOLS.has(frame.tool_name) &&
+    frame.result?.success
+  ) {
+    const path = frame.path ?? frame.path_abs
+    if (path) writtenFile.value = { path, nonce: ++writeNonce }
+  } else if (
+    frame.type === 'agent_finished' ||
+    frame.type === 'fatal_error' ||
+    frame.type === 'turn_cancelled'
+  ) {
+    fileSweep.value++
+  }
   // A plan arriving opens its document: the decision bar is up, and the
   // plan itself is the thing to read while it waits — behind a title click
   // it would only be found by a reader who already knew it was there.
@@ -301,6 +318,21 @@ const activeFilePath = computed(() =>
   activeTab.value?.kind === 'file' ? activeTab.value.path : null,
 )
 
+// A tool card's file title can name the text it is about (an edit's
+// old_string or new_string).  The request rides beside the tab list rather
+// than in it: a file stays one tab however many ranges are revealed in it,
+// and the nonce makes a repeat click on the same card a fresh request.
+const reveal = ref<RevealRequest | null>(null)
+let revealNonce = 0
+
+// The disk can move under an open tab.  A write tool's end frame names the
+// file it changed; a turn end is the catch-all for every other writer (shell,
+// formatter, git move).  FileEditor re-reads with its own guards — unsaved
+// edits always win.
+const writtenFile = ref<{ path: string; nonce: number } | null>(null)
+const fileSweep = ref(0)
+let writeNonce = 0
+
 // Tabs belong to a repo.  If the session's cwd differs from the root the
 // tabs were restored for (server restarted elsewhere, session switched),
 // drop them — stale buffers for the wrong tree must never be edited back.
@@ -325,14 +357,32 @@ function persistTabs() {
   })
 }
 
-/** Open a file in the editor: focus the existing tab, or add a new one. */
-function openFile(path: string) {
+/** Open a file in the editor: focus the existing tab, or add a new one.
+ *  *selection* is the text a tool card asked to reveal (an edit's old or new
+ *  string, with the position the call recorded when it has one); its request
+ *  is raised only when the file is actually the active tab — at the tab cap
+ *  nothing opened, and a request must not point at a tab that is not
+ *  showing. */
+function openFile(path: string, selection?: EditSelection) {
   const existing = openTabs.value.find((t) => t.kind === 'file' && t.path === path)
   if (existing) {
     activeTab.value = existing // already open → focus the existing tab
   } else if (openTabs.value.length < MAX_OPEN_TABS) {
     activeTab.value = { kind: 'file', path }
     openTabs.value.push(activeTab.value)
+  }
+  if (
+    selection &&
+    activeTab.value?.kind === 'file' &&
+    activeTab.value.path === path
+  ) {
+    reveal.value = {
+      path,
+      needle: selection.needle,
+      line: selection.line,
+      column: selection.column,
+      nonce: ++revealNonce,
+    }
   }
   // At the tab cap the file simply doesn't open (existing tabs keep working).
   persistTabs()
@@ -560,6 +610,9 @@ function onDividerUp(event: PointerEvent) {
           :files="openTabs"
           :active="activeTab"
           :git="git.state"
+          :reveal="reveal"
+          :written-file="writtenFile"
+          :refresh-all="fileSweep"
           @activate-tab="(t) => (activeTab = t)"
           @close-tab="closeTab"
           @open-file="openFile"

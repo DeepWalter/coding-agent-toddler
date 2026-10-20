@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import type { Block, TabEntry } from '../types'
+import type { Block, EditSelection, TabEntry } from '../types'
 import { renderMarkdown } from '../markdown'
 import { blockStatus } from '../blockStatus'
 import ConsolePaneTopFloat from './ConsolePaneTopFloat.vue'
@@ -18,7 +18,7 @@ const props = defineProps<{
   askVisible: boolean
 }>()
 const emit = defineEmits<{
-  'open-file': [path: string]
+  'open-file': [path: string, selection?: EditSelection]
   'open-text': [tab: Extract<TabEntry, { kind: 'text' }>]
   'open-doc': [tab: Extract<TabEntry, { kind: 'markdown' }>]
 }>()
@@ -348,7 +348,7 @@ function rowStatus(block: Block) {
         v-else-if="block.kind === 'tool'"
         :block="block"
         @open-text="(tab) => emit('open-text', tab)"
-        @open-file="(path) => emit('open-file', path)"
+        @open-file="(path, select) => emit('open-file', path, select)"
       />
       <!-- A proposed plan is one line — its title opens the plan document
            in the editor.  The decision lives in the dock's ask; the step

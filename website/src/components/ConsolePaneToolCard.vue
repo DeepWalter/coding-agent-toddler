@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { Block, TabEntry } from '../types'
+import type { Block, EditSelection, TabEntry } from '../types'
 import { blockStatus } from '../blockStatus'
-import { toolCard, toolTab, type ToolCardRow } from '../toolCard'
+import { editSelection, toolCard, toolDiffTab, toolTab, type ToolCardRow } from '../toolCard'
+import ConsolePaneToolCardDiff from './ConsolePaneToolCardDiff.vue'
 import ConsolePaneToolCardRow from './ConsolePaneToolCardRow.vue'
 import ExternalTag from './ExternalTag.vue'
 import SymlinkTag from './SymlinkTag.vue'
@@ -10,7 +11,7 @@ import SymlinkTag from './SymlinkTag.vue'
 const props = defineProps<{ block: Extract<Block, { kind: 'tool' }> }>()
 const emit = defineEmits<{
   'open-text': [tab: Extract<TabEntry, { kind: 'text' }>]
-  'open-file': [path: string]
+  'open-file': [path: string, selection?: EditSelection]
 }>()
 
 const card = computed(() => toolCard(props.block))
@@ -27,6 +28,13 @@ function open(row: ToolCardRow) {
   emit('open-text', toolTab(props.block, card.value, row))
 }
 
+/** The clipped diff's click: the change whole, in the editor, colored by its
+ *  own diff grammar.  A card with no diff has no such tab to open. */
+function openDiff() {
+  const tab = toolDiffTab(props.block, card.value)
+  if (tab) emit('open-text', tab)
+}
+
 /** A title naming a file opens it — the editor is where a path is read, and
  *  a call that names one has nothing else to offer.  What it hands over is
  *  the root-relative path, the one every pane opens a file by — or the
@@ -36,7 +44,7 @@ function open(row: ToolCardRow) {
  *  here: the server said so, and the title reads as plain text. */
 function openPath() {
   const target = path.value.target
-  if (target) emit('open-file', target)
+  if (target) emit('open-file', target, editSelection(props.block) ?? undefined)
 }
 </script>
 
@@ -76,10 +84,17 @@ function openPath() {
       <SymlinkTag v-if="path.symlink" :resolved="path.resolved" />
       <ExternalTag v-if="path.external" />
     </div>
-    <!-- A call can be its title alone, and a file call is: the file opens in
-         the editor, so a row of its content here would be a worse copy of
-         the pane beside it.  The box appears only when there are rows. -->
-    <div v-if="card.rows.length" class="tool-card" :class="state">
+    <!-- A read or a write can be its title alone: the file opens in the
+         editor, so a row of its content here would be a worse copy of the
+         pane beside it.  An edit is the exception — its change is the body,
+         drawn above the failure row when it has one.  The box appears only
+         when there is something to put in it. -->
+    <div v-if="card.diff || card.rows.length" class="tool-card" :class="state">
+      <ConsolePaneToolCardDiff
+        v-if="card.diff"
+        :rows="card.diff"
+        @open="openDiff"
+      />
       <ConsolePaneToolCardRow
         v-for="row in card.rows"
         :key="row.side"

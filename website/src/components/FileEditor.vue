@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, markRaw, onMounted, onUnmounted, ref, watch } from 'vue'
-import { EditorState, type Extension } from '@codemirror/state'
+import { EditorSelection, EditorState, type Extension } from '@codemirror/state'
 import { EditorView, drawSelection, keymap, lineNumbers } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { forceParsing } from '@codemirror/language'
@@ -9,7 +9,7 @@ import { api } from '../api'
 import { languageForName, languageForPath } from '../editor/languages'
 import { editorTheme, highlightExt } from '../editor/theme'
 import { gitBadgeClass } from '../gitStatus'
-import type { GitStatusState, TabEntry } from '../types'
+import type { GitStatusState, RevealRequest, TabEntry } from '../types'
 import { basename, isExternal, tabKey } from '../utils'
 import ExternalTag from './ExternalTag.vue'
 import FileEditorDiffView from './FileEditorDiffView.vue'
@@ -31,12 +31,23 @@ import FileEditorDocView from './FileEditorDocView.vue'
  * `GET /api/file`, save with Ctrl/Cmd+S via `PUT /api/file` — the same
  * path-safe endpoint the agent's WriteFile tool backs onto.  Syntax
  * highlighting comes from the CodeMirror legacy grammars
- * (`editor/languages.ts`).  A tab refetches
- * from disk on activation (unless it has unsaved edits), so the agent's
- * writes show up.
+ * (`editor/languages.ts`).  Tabs refetch from disk on activation, on the
+ * end frame of a write tool that names their file, and once more when a
+ * turn ends (the catch-all for shell/formatter changes) — unless they have
+ * unsaved edits, which always win.
  */
 
-const props = defineProps<{ files: TabEntry[]; active: TabEntry | null; git: GitStatusState }>()
+const props = defineProps<{
+  files: TabEntry[]
+  active: TabEntry | null
+  git: GitStatusState
+  /** A tool card's request to select a string once the file is on screen. */
+  reveal?: RevealRequest | null
+  /** A completed write tool call: refresh that file's open tab. */
+  writtenFile?: { path: string; nonce: number } | null
+  /** A turn ended: re-read every open file tab (shell-side writes too). */
+  refreshAll?: number
+}>()
 const emit = defineEmits<{
   'activate-tab': [tab: TabEntry]
   'close-tab': [tab: TabEntry]
@@ -130,6 +141,90 @@ function beginFetch(path: string): number {
 
 function isStale(path: string, seq: number): boolean {
   return fetchTokens.get(path) !== seq
+}
+
+// A tool card's reveal is one-shot: it names a string to select in the file
+// the tab is opening.  It waits for the tab's fetch or refresh to land — the
+// document it searches must be the fresh one — and is then consumed.
+let pendingReveal: RevealRequest | null = null
+
+// In-flight disk refreshes per path.  A reveal waits for one instead of
+// selecting in the state the refresh is about to replace.
+const refreshCounts = new Map<string, number>()
+
+function beginRefresh(path: string) {
+  refreshCounts.set(path, (refreshCounts.get(path) ?? 0) + 1)
+}
+
+function endRefresh(path: string) {
+  const count = (refreshCounts.get(path) ?? 0) - 1
+  if (count > 0) refreshCounts.set(path, count)
+  else refreshCounts.delete(path)
+}
+
+/** Select the pending reveal in the file on screen, if it is ready.  The
+ *  document is searched for the exact text rather than mapped to lines: the
+ *  request already is the old_string or new_string the edit was about. */
+function applyPendingReveal() {
+  const request = pendingReveal
+  if (!request || !view) return
+  if (props.active?.kind !== 'file' || props.active.path !== request.path) return
+  if (currentKey !== request.path) return
+  const tab = tabs.value[request.path]
+  if (!tab?.state || tab.loading || refreshCounts.has(request.path)) return
+
+  const text = view.state.doc.toString()
+  let needle = request.needle
+  let at = -1
+  // A recorded start wins over a text search: the replacement may also
+  // occur earlier in the file, and only the position names the occurrence
+  // the edit made.  It is checked against the text, so a file changed since
+  // the edit falls through to the search instead of selecting a wrong span.
+  if (
+    request.line !== null &&
+    request.column !== null &&
+    request.line >= 1 &&
+    request.line <= view.state.doc.lines
+  ) {
+    const line = view.state.doc.line(request.line)
+    if (request.column <= line.length) {
+      const from = line.from + request.column
+      if (text.startsWith(needle, from)) {
+        at = from
+      } else if (needle.includes('\n') && text.includes('\r\n')) {
+        const crlf = needle.replace(/\n/g, '\r\n')
+        if (text.startsWith(crlf, from)) {
+          needle = crlf
+          at = from
+        }
+      }
+    }
+  }
+  // The edit tool reads and writes with universal newlines, so its strings
+  // are LF; the file API serves the file's bytes, which may be CRLF.
+  if (at < 0) {
+    at = text.indexOf(needle)
+    if (at < 0 && needle.includes('\n') && text.includes('\r\n')) {
+      needle = needle.replace(/\n/g, '\r\n')
+      at = text.indexOf(needle)
+    }
+  }
+  if (at >= 0) {
+    const range = EditorSelection.range(at, at + needle.length)
+    view.dispatch({
+      selection: range,
+      effects: EditorView.scrollIntoView(range, { y: 'center' }),
+      userEvent: 'select',
+    })
+  } else {
+    // Nothing to select — the saved offset is better than wherever the
+    // state swap left the scroll.
+    restoreScroll(request.path, tab.scrollTop)
+  }
+  // A file whose text has moved on still opens focused — the click was
+  // about reading it, selection or not.
+  view.focus()
+  pendingReveal = null
 }
 
 /** The record key a tab's buffer lives under, or null for a kind that owns
@@ -322,6 +417,7 @@ function switchToTab(path: string) {
   if (tab?.state) {
     showTab(tab, path, true)
     if (!tab.dirty) void refreshTab(path) // disk may have moved under us
+    else applyPendingReveal() // no refresh will run to apply it
   } else {
     // Target tab still loading — never leave an interactive view showing
     // another file's doc.  The overlay covers clicks; blur covers stray
@@ -357,11 +453,13 @@ function showTab(tab: EditorTab, key: string, focus: boolean) {
   view.setState(tab.state)
   currentKey = key
   if (focus) view.focus()
-  // setState keeps the DOM's current scroll, and the new content height only
-  // lands during the post-setState measure — writing scrollTop synchronously
-  // would clamp it against the previous tab's stale scrollHeight.  restoreScroll
-  // defers past that measure and then converges on the exact position.
-  restoreScroll(key, tab.scrollTop)
+  // A pending reveal owns the scroll — the click asked for a new position,
+  // not the remembered one.  Otherwise setState keeps the DOM's current
+  // scroll, and the new content height only lands during the post-setState
+  // measure — writing scrollTop synchronously would clamp it against the
+  // previous tab's stale scrollHeight.  restoreScroll defers past that
+  // measure and then converges on the exact position.
+  if (pendingReveal?.path !== key) restoreScroll(key, tab.scrollTop)
 }
 
 async function loadTab(path: string, focusOnLoad = false) {
@@ -391,6 +489,7 @@ async function loadTab(path: string, focusOnLoad = false) {
         forceParsing(view, tab.state.doc.length, 500)
       }
     }
+    applyPendingReveal()
   } catch (err) {
     if (isStale(path, seq) || !tabs.value[path]) return
     tab.loadError = (err as Error).message
@@ -406,6 +505,7 @@ async function loadTab(path: string, focusOnLoad = false) {
 async function refreshTab(path: string) {
   const tab = ensureTab(path, 'file')
   if (tab.loading || tab.dirty) return
+  beginRefresh(path)
   const seq = beginFetch(path)
   const startText = tab.state ? tab.state.doc.toString() : null
   try {
@@ -430,16 +530,20 @@ async function refreshTab(path: string) {
     tab.state = markRaw(buildState(tab, res.content, language, tab.readOnly))
     tab.dirty = false
     if (currentKey === path && view) {
-      // Live swap while the user looks at the tab — keep their scroll.
+      // Live swap while the user looks at the tab — keep their scroll,
+      // unless a reveal owns it (its selection scrolls itself into view).
       const savedTop = view.scrollDOM.scrollTop
       view.setState(tab.state)
-      restoreScroll(path, savedTop)
+      if (pendingReveal?.path !== path) restoreScroll(path, savedTop)
       if (language) forceParsing(view, tab.state.doc.length, 500)
     }
   } catch (err) {
     if (isStale(path, seq) || tabs.value[path] !== tab) return
     if (tab.dirty) return
     tab.loadError = (err as Error).message
+  } finally {
+    endRefresh(path)
+    applyPendingReveal()
   }
 }
 
@@ -552,7 +656,68 @@ onUnmounted(() => {
   }
 })
 
+// A write tool's end frame names the file it changed: refresh that tab now.
+// A tab that has never loaded is skipped — its first load fetches the fresh
+// bytes anyway — and a closed tab has nothing to refresh.
+watch(() => props.writtenFile, (change) => {
+  if (!change) return
+  if (!props.files.some((tab) => tab.kind === 'file' && tab.path === change.path)) {
+    return
+  }
+  if (!tabs.value[change.path]?.state) return
+  void refreshTab(change.path)
+})
+
+// A turn ended — the catch-all for writers that never name a file (a shell
+// command, a formatter, a git move).  Every open file tab is re-read;
+// refreshTab skips dirty/loading tabs and leaves an unchanged buffer alone.
+watch(() => props.refreshAll, (token, previous) => {
+  if (token === previous) return
+  for (const tab of props.files) {
+    if (tab.kind === 'file' && tabs.value[tab.path]?.state) {
+      void refreshTab(tab.path)
+    }
+  }
+})
+
+// A card's reveal arrives with (or just before) the active-tab change that
+// opens its file.  This watcher is created first so it can mark the request
+// before switchToTab runs: showTab then knows not to restore the old scroll.
+watch(
+  () => props.reveal,
+  (request) => {
+    if (!request) return
+    pendingReveal = { ...request }
+    // The editor may already be showing this file (a repeat click): no
+    // active-tab change will fire, so fetch the fresh doc here.  Otherwise
+    // switchToTab/loadTab drives the fetch and applies the reveal when it
+    // settles.
+    if (
+      currentKey === request.path &&
+      props.active?.kind === 'file' &&
+      props.active.path === request.path
+    ) {
+      const tab = tabs.value[request.path]
+      if (tab?.state && !tab.dirty && !refreshCounts.has(request.path)) {
+        void refreshTab(request.path)
+      } else {
+        applyPendingReveal()
+      }
+    }
+  },
+  { immediate: true },
+)
+
 watch(() => props.active, (tab) => {
+  // A reveal the old tab never consumed does not follow the reader to
+  // another file.  (The reveal and its opening tab change in one flush; the
+  // reveal watcher above runs first, so this only drops a stale request.)
+  if (
+    pendingReveal &&
+    (tab?.kind !== 'file' || tab.path !== pendingReveal.path)
+  ) {
+    pendingReveal = null
+  }
   if (!tab) {
     if (view) {
       // Flush the closing tab's live state before dropping the doc — the

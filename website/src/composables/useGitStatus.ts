@@ -9,8 +9,9 @@ import type { Frame, GitStatusState } from '../types'
  * plain fetch + sequence guard instead of a reducer.
  */
 
-/** Tool names that write files — their tool_call_end frames invalidate. */
-const WRITE_TOOLS = new Set(['write_file', 'edit_file'])
+/** Tool names that write files — their tool_call_end frames invalidate the
+ *  git snapshot and refresh the editor's open buffers. */
+export const WRITE_TOOLS = new Set(['write_file', 'edit_file'])
 const REFRESH_DEBOUNCE_MS = 400
 
 export function useGitStatus() {

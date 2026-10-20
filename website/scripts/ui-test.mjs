@@ -58,18 +58,23 @@
 //  phase 14 — the git card: a git call reads as its result alone — the title
 //            and one OUT row, no row for what it was passed — openable in
 //            the editor under the card's own name
-//  phase 15 — the file card: a read, an edit and a write read as their titles
-//            alone, naming the file rather than describing the call, and that
-//            name is a control exactly where there is a file behind it — a
-//            write that failed and a read of a path with nothing there both
-//            read as plain text, hovering the path instead.  Which is also
-//            why a write over a file that is already there opens it while its
-//            gate still holds the call.  A file outside the served root opens
-//            too — under its absolute path, read-only, wearing the external
-//            marker — and its card says all of that before the gate on the
-//            call has been answered: the start frame resolves the file, not
-//            the result.  The titles name the basename and the hover the
-//            whole path the server resolved, and both survive a reload
+//  phase 15 — the file card: a read and a write read as their titles alone,
+//            naming the file rather than describing the call, and that name is
+//            a control exactly where there is a file behind it — a write that
+//            failed and a read of a path with nothing there both read as plain
+//            text, hovering the path instead.  Which is also why a write over
+//            a file that is already there opens it while its gate still holds
+//            the call.  An edit is the exception: under its title it prints the
+//            change as a compact diff — deleted and added lines tinted, enough
+//            context to place them — and a diff past the row cap says how much
+//            is left and opens whole in the editor with the diff grammar.  A
+//            file outside the served root opens too — under its absolute path,
+//            read-only, wearing the external marker — and its card says all of
+//            that before the gate on the call has been answered: the start
+//            frame resolves the file, not the result.  The titles name the
+//            basename and the hover the whole path the server resolved, and
+//            both survive a reload.  A file left open and active takes the
+//            agent's write in place, without a tab switch
 //  phase 16 — the plan: a proposed plan reads as one title-only line and
 //            opens its display markdown as a rendered, read-only document
 //            in the editor by itself (one tab per plan, never persisted;
@@ -86,6 +91,14 @@
 //            mark where it was and gives ↑/↓ to what was clicked, and a
 //            click on the card takes them back — with the dock's edge
 //            saying which of the two owns them
+//  phase 18 — an edit's title: a click opens the file on the text the call is
+//            about — old_string while the call is still at its gate, then
+//            new_string once approval has let it land — with the editor
+//            focused both times
+//  phase 19 — open editor tabs follow the disk: a write tool's end frame
+//            refreshes the file it names (a tab left open and active updates
+//            where it stands), and a turn end re-reads every open tab, which
+//            is how a shell-side change reaches the buffer
 // Prints PASS/FAIL plus diagnostics; exits 1 on any failure.
 import { chromium } from 'playwright'
 import WebSocket from 'ws'
@@ -2383,6 +2396,8 @@ const READ_PATH = 'mock-a.md'
 const READ_PATH_ABS = '/tmp/mock-a.md'
 const WRITE_PATH = 'mock-b.md'
 const WRITE_PATH_ABS = '/tmp/mock-b.md'
+// The gated edit fixture's file, used by phase 18.
+const EDIT_D_PATH = 'mock-d.md'
 // A path with no file behind it at all, for the call the mock answers with a
 // failure: its title is text, whatever tool named it.
 const GONE_PATH_ABS = '/tmp/mock-gone.md'
@@ -2462,6 +2477,18 @@ const readFileCards = () =>
         paths: el.querySelectorAll('.tool-call-path').length,
         boxes: el.querySelectorAll('.tool-card').length,
         rows: el.querySelectorAll('.tool-card-row').length,
+        // An edit's body is its change, printed as its own rows rather than
+        // as an IN/OUT pair.  The fixture is past the cap, so the visible
+        // count is the cap itself and the footer carries the rest.
+        diff: el.querySelectorAll('.tool-card-diff-row').length,
+        dels: el.querySelectorAll('.tool-card-diff-row.del').length,
+        adds: el.querySelectorAll('.tool-card-diff-row.add').length,
+        ctx: el.querySelectorAll('.tool-card-diff-row.ctx').length,
+        diffText: [...el.querySelectorAll('.tool-card-diff-text')]
+          .map((text) => text.textContent)
+          .join('\n'),
+        diffClamped: !!el.querySelector('.tool-card-diff[data-clamped]'),
+        diffMore: el.querySelector('.tool-card-diff-more')?.textContent.trim() ?? null,
       }
     }),
   )
@@ -2512,18 +2539,89 @@ function checkFileCards(cards) {
     edit.external === null && edit.symlink === null && edit.markers.length === 0 &&
     write.external === null && write.symlink === null && write.markers.length === 0 &&
     failed.external === null && failed.symlink === null && failed.markers.length === 0 &&
-    // No box and no rows on any of them, no description either, and exactly
-    // one path slot per title.
-    cards.every((c) => c.boxes === 0 && c.rows === 0 && c.desc === null && c.paths === 1)
+    // An edit is the one card with a body: the eight replaced lines and the
+    // new ones, cut at the twelve-row cap after the two context lines and
+    // the whole deletion run.  The closing context line and the remaining
+    // additions are behind the footer, which counts them.
+    edit.boxes === 1 &&
+    edit.rows === 0 &&
+    edit.diff === 12 &&
+    edit.dels === 8 &&
+    edit.adds === 2 &&
+    edit.ctx === 2 &&
+    edit.diffText.includes('alpha one') &&
+    edit.diffText.includes('beta one') &&
+    edit.diffClamped === true &&
+    edit.diffMore === '⋯ 7 more lines — open full diff' &&
+    // A read and a write are still their title alone — no box, no rows, no
+    // diff; no description on any card, and exactly one path slot per title.
+    read.boxes === 0 && read.rows === 0 && read.diff === 0 &&
+    write.boxes === 0 && write.rows === 0 && write.diff === 0 &&
+    failed.boxes === 0 && failed.rows === 0 && failed.diff === 0 &&
+    outside.boxes === 0 && outside.rows === 0 && outside.diff === 0 &&
+    cards.every((c) => c.desc === null && c.paths === 1)
   )
 }
 
 {
   // Still gated — the read has not run, and all five cards already read as
-  // they will after it does.
+  // they will after it does.  The edit's diff is there already too: its
+  // input arrived in the start frame, before any gate.
   const cards = await readFileCards()
   const ok = checkFileCards(cards)
-  console.log(`phase15 a file call is its title alone ${JSON.stringify(cards)} ${ok ? 'PASS' : 'FAIL'}`)
+  console.log(`phase15 a file call is its title, and an edit adds its diff ${JSON.stringify(cards)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+
+// P15a2: a diff past the card's cap is a control — the whole change opens in
+// the editor as a read-only tab, colored by the diff grammar.
+{
+  await page.locator('.stream-row[data-tool="edit_file"] .tool-card-diff[data-clamped]').click()
+  await page.waitForTimeout(400)
+  const opened = await page.evaluate(() => ({
+    active: [...document.querySelectorAll('.editor-tab')]
+      .find((el) => el.classList.contains('active'))
+      ?.querySelector('.editor-tab-name')?.textContent.trim() ?? null,
+    header: document.querySelector('.editor-path')?.textContent.trim() ?? null,
+    doc: document.querySelector('.editor-cm .cm-content')?.textContent ?? '',
+    status: document.querySelector('.editor-status')?.textContent.trim() ?? null,
+  }))
+  const ok =
+    opened.active === 'Edit diff — mock-a.md' &&
+    opened.header === 'Edit diff — mock-a.md' &&
+    opened.doc.includes('-alpha one') &&
+    opened.doc.includes('+beta one') &&
+    opened.doc.includes('first seeded file') &&
+    opened.status === 'read-only · 19 lines'
+  console.log(`phase15 a clipped diff opens whole in the editor ${JSON.stringify(opened)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+
+// P15a3: the title is a way into the change, not just the file.  The edit has
+// landed, so the click opens the file on the text it wrote — selected whole,
+// with the editor focused.  The heading itself is unchanged.
+{
+  await page.locator('.stream-row[data-tool="edit_file"] .tool-call-path:not(.static)').click()
+  await page.waitForFunction(
+    () => document.querySelector('.editor-cm .cm-content')?.textContent.includes('beta one'),
+    { timeout: 8000 },
+  )
+  await page.waitForTimeout(300)
+  const st = await page.evaluate(() => ({
+    path: document.querySelector('.editor-path')?.textContent.trim() ?? null,
+    label: [...document.querySelectorAll('.stream-row[data-tool="edit_file"] .tool-call-path')]
+      .at(-1)?.textContent.trim() ?? null,
+    focused: document.activeElement?.classList.contains('cm-content') ?? false,
+    selection: window.getSelection()?.toString() ?? '',
+  }))
+  const ok =
+    st.path === READ_PATH &&
+    st.label === 'mock-a.md' &&
+    st.focused &&
+    st.selection.includes('beta one') &&
+    st.selection.includes('first seeded file') &&
+    !st.selection.includes('alpha one')
+  console.log(`phase15 an edit's title selects the text it wrote ${JSON.stringify(st)} ${ok ? 'PASS' : 'FAIL'}`)
   if (!ok) fails++
 }
 
@@ -2728,6 +2826,28 @@ function checkFileCards(cards) {
   const okLanded = landed.tag === 'BUTTON' && !landed.running
   console.log(`phase15 the title opens the file it wrote, once it has written it ${JSON.stringify(landed)} ${okLanded ? 'PASS' : 'FAIL'}`)
   if (!okLanded) fails++
+
+  // The tab was open and active before the write; the end frame refreshes it
+  // in place, so the reader sees the agent's bytes without touching a tab.
+  await page.waitForFunction(
+    () => document.querySelector('.editor-cm .cm-content')?.textContent
+      .includes('second seeded file, rewritten'),
+    { timeout: 8000 },
+  )
+  const refreshed = await page.evaluate(() => ({
+    tabs: document.querySelectorAll('.editor-tab').length,
+    active: document.querySelector('.editor-tab.active .editor-tab-name')?.textContent.trim() ?? null,
+    header: document.querySelector('.editor-path')?.textContent.trim() ?? null,
+    dirty: !!document.querySelector('.editor-tab.active .editor-tab-dirty'),
+    doc: document.querySelector('.editor-cm .cm-content')?.textContent ?? '',
+  }))
+  const okRefreshed =
+    refreshed.active === WRITE_PATH &&
+    refreshed.header === WRITE_PATH &&
+    refreshed.dirty === false &&
+    refreshed.doc.includes('second seeded file, rewritten')
+  console.log(`phase15 an open file follows the agent's write ${JSON.stringify(refreshed)} ${okRefreshed ? 'PASS' : 'FAIL'}`)
+  if (!okRefreshed) fails++
 }
 
 // --- Phase 16: the plan line, its document and the todo trail ---
@@ -3226,4 +3346,120 @@ const planTodo = (marks) =>
 
   await page.click('.ask-close')
   await page.waitForSelector('.pause-prompt', { state: 'detached', timeout: 8000 })
+}
+
+// --- Phase 18: an edit's title follows the call's two halves ---
+
+// Before approval the file is still the old one, so the title selects
+// old_string; after approval the mock's served file holds the replacement,
+// so the same click selects new_string.  The first click drives loadTab, the
+// second a refresh of the tab already on screen.
+{
+  await page.fill('textarea.input-bar-textarea', 'editwait: edit the gated file')
+  await page.click('button:has-text("Send")')
+  await page.waitForSelector('.pause-prompt', { timeout: 8000 })
+  await page.waitForTimeout(300)
+
+  const clickTitle = async () => {
+    await page
+      .locator('.stream-row[data-tool="edit_file"] .tool-call-path:not(.static)')
+      .last()
+      .click()
+    await page.waitForFunction(
+      (path) => document.querySelector('.editor-path')?.textContent.trim() === path,
+      EDIT_D_PATH,
+      { timeout: 8000 },
+    )
+    await page.waitForTimeout(500)
+    return page.evaluate(() => {
+      const selection = window.getSelection()
+      const range = selection?.rangeCount ? selection.getRangeAt(0) : null
+      const first = document.querySelector('.editor-cm .cm-line')
+      return {
+        focused: document.activeElement?.classList.contains('cm-content') ?? false,
+        selection: selection?.toString() ?? '',
+        // The selected span's distance from the first line, in pixels: the
+        // fixture's replacement also occurs near the top, so this is what
+        // tells the edited occurrence (line 5) from the decoy (line 2).
+        top: range && first
+          ? range.getBoundingClientRect().top - first.getBoundingClientRect().top
+          : null,
+      }
+    })
+  }
+
+  const before = await clickTitle()
+  const okBefore =
+    before.focused &&
+    before.selection.includes('alpha one') &&
+    before.selection.includes('alpha two') &&
+    before.top !== null && before.top > 40
+  console.log(`phase18 an unrun edit's title selects its old text ${JSON.stringify(before)} ${okBefore ? 'PASS' : 'FAIL'}`)
+  if (!okBefore) fails++
+
+  await page.click('.pause-prompt button:has-text("Approve")')
+  await page.waitForSelector('.pause-prompt', { state: 'detached', timeout: 8000 })
+  await page.waitForTimeout(300)
+
+  const after = await clickTitle()
+  const okAfter =
+    after.focused &&
+    after.selection.includes('omega one') &&
+    after.selection.includes('omega two') &&
+    after.top !== null && after.top > 40
+  console.log(`phase18 a landed edit's title selects its new text ${JSON.stringify(after)} ${okAfter ? 'PASS' : 'FAIL'}`)
+  if (!okAfter) fails++
+
+  // The recorded position is result metadata, which replay used to drop.
+  // It must survive the reload: the decoy near the top still loses to the
+  // line the stored result names.
+  await page.reload()
+  await page.waitForFunction(
+    () => [...document.querySelectorAll('.stream-row[data-tool="edit_file"]')].length >= 2,
+    { timeout: 8000 },
+  )
+  await page.waitForTimeout(400)
+  const replayed = await clickTitle()
+  const okReplayed =
+    replayed.focused &&
+    replayed.selection.includes('omega one') &&
+    replayed.top !== null && replayed.top > 40
+  console.log(`phase18 the recorded position survives a reload ${JSON.stringify(replayed)} ${okReplayed ? 'PASS' : 'FAIL'}`)
+  if (!okReplayed) fails++
+}
+
+// --- Phase 19: open tabs follow the disk at turn end ---
+
+// A shell command can change a file without any write-tool frame.  The turn
+// end re-reads every open tab, so the active buffer picks that up too.
+{
+  // Focus the file the earlier write landed in — the last write card.
+  await page.locator('.stream-row[data-tool="write_file"] .tool-call-path').last().click()
+  await page.waitForFunction(
+    (path) => document.querySelector('.editor-path')?.textContent.trim() === path,
+    WRITE_PATH,
+    { timeout: 8000 },
+  )
+  await page.waitForFunction(
+    () => document.querySelector('.editor-cm .cm-content')?.textContent.includes('rewritten'),
+    { timeout: 8000 },
+  )
+
+  await page.fill('textarea.input-bar-textarea', 'sedit: rewrite it')
+  await page.click('button:has-text("Send")')
+  await page.waitForFunction(
+    () => document.querySelector('.editor-cm .cm-content')?.textContent.includes('sed-edited'),
+    { timeout: 8000 },
+  )
+  const st = await page.evaluate(() => ({
+    active: document.querySelector('.editor-tab.active .editor-tab-name')?.textContent.trim() ?? null,
+    header: document.querySelector('.editor-path')?.textContent.trim() ?? null,
+    doc: document.querySelector('.editor-cm .cm-content')?.textContent ?? '',
+  }))
+  const ok =
+    st.active === WRITE_PATH &&
+    st.header === WRITE_PATH &&
+    st.doc.includes('second seeded file, sed-edited')
+  console.log(`phase19 open tabs follow a shell-side change at turn end ${JSON.stringify(st)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
 }

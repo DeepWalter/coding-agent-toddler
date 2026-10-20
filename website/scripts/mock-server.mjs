@@ -80,21 +80,64 @@ const GIT_LOG_OUTPUT = [
   '3aa5c7c fix(tools): cap grep results',
 ].join('\n')
 
-// The file cards' fixture: a file call is its title alone — the path, which
-// opens that file in the editor — so the run covers all three names, two
-// paths that are there to open (the seeded files the editor phase already
-// serves), and one write that failed, whose path therefore has nothing
-// behind it.  The paths are absolute because the tools' schema asks for
-// absolute ones.
+// The file cards' fixture: a read or a write is its title alone — the path,
+// which opens that file in the editor — while an edit adds the diff of what
+// it changed.  The run covers all three names, two paths that are there to
+// open (the seeded files the editor phase already serves), and one write that
+// failed, whose path therefore has nothing behind it.  The paths are absolute
+// because the tools' schema asks for absolute ones.
 const READ_PATH = '/tmp/mock-a.md'
 const READ_DESCRIPTION = 'read the seeded file'
-const READ_OUTPUT = ['1\t# mock A', '2\t', '3\tfirst seeded file'].join('\n')
-const EDIT_DESCRIPTION = 'tweak the heading'
+// The edit card's fixture: a block rewritten line for line, inside the
+// heading and the closing line that give the diff its context.  Nineteen
+// rows in all — past the card's cap — so the clipped footer and the
+// open-the-whole-diff path are both exercised.
+const MOCK_A_LINES = [
+  '# mock A',
+  '',
+  'alpha one',
+  'alpha two',
+  'alpha three',
+  'alpha four',
+  'alpha five',
+  'alpha six',
+  'alpha seven',
+  'alpha eight',
+  'first seeded file',
+]
+const READ_OUTPUT = MOCK_A_LINES.map((line, i) => `${i + 1}\t${line}`).join('\n')
+const EDIT_DESCRIPTION = 'rewrite the seeded block'
+const EDIT_OLD = MOCK_A_LINES.join('\n')
+const EDIT_NEW = MOCK_A_LINES.map((line) => line.replace('alpha', 'beta')).join('\n')
+// The gated edit's file: small, and edited in place, so the card's title
+// can be clicked before approval (old text selected) and after (new text).
+// The replacement already occurs near the top of the file: a text search
+// would select that decoy, so the call's recorded line_start (5) is what
+// proves the card reveals the occurrence the edit actually made.
+const EDIT_D_PATH = '/tmp/mock-d.md'
+const EDIT_D_DESCRIPTION = 'edit the gated file'
+const EDIT_D_OLD = 'alpha one\nalpha two'
+const EDIT_D_NEW = 'omega one\nomega two'
+const MOCK_D_LINE_START = 5
+const MOCK_D_LINES = [
+  '# mock D',
+  'omega one',
+  'omega two',
+  'one',
+  'alpha one',
+  'alpha two',
+  'tail',
+]
+const MOCK_D_POST = MOCK_D_LINES.join('\n').replace(EDIT_D_OLD, EDIT_D_NEW) + '\n'
 const WRITE_PATH = '/tmp/mock-b.md'
 const WRITE_DESCRIPTION = 'write the second seeded file'
 const FAILED_WRITE_PATH = '/tmp/read-only/mock-c.md'
 const FAILED_WRITE_DESCRIPTION = 'write a file that cannot be written'
 const OVERWRITE_DESCRIPTION = 'rewrite the second seeded file'
+const OVERWRITE_CONTENT = '# mock B\n\nsecond seeded file, rewritten\n'
+// A change made by a shell command rather than a file tool: the editor has
+// no per-write signal for it, only the turn-end sweep.
+const SEDITED_CONTENT = '# mock B\n\nsecond seeded file, sed-edited\n'
 // A path no file stands at, for the call whose title has nothing to open —
 // the rule read from the side that is not a write.
 const MISSING_PATH = '/tmp/mock-gone.md'
@@ -212,6 +255,10 @@ const FILE_GATE_ID = 't12'
 // is already there, and the only way to see it before the call has run is to
 // stop the call.
 const OVERWRITE_GATE_ID = 't14'
+// The gated edit turn's call.  It lets the harness click a title while the
+// edit has not run — old_string selected — then approve and click again for
+// new_string.
+const EDIT_GATE_ID = 't15'
 let pendingFileCall = null
 // The shell gate's call, kept for the same reason: approve/deny finishes
 // whichever command the turn held, the plain one or the script.
@@ -258,8 +305,9 @@ const API = {
 // toddler/web/files.read_file.  The tree stays empty: the phase restores its
 // tabs from localStorage, so the explorer needs no entries to drive them.
 const FILES = new Map([
-  ['mock-a.md', '# mock A\n\nfirst seeded file\n'],
+  ['mock-a.md', `${MOCK_A_LINES.join('\n')}\n`],
   ['mock-b.md', '# mock B\n\nsecond seeded file\n'],
+  ['mock-d.md', `${MOCK_D_LINES.join('\n')}\n`],
   // The external fixture: keyed by its resolved absolute path, which is what
   // the editor asks for once a card falls back to `path_abs`.
   ['/home/mock/.toddler/notes.md', '# notes\noutside the repo\n'],
@@ -615,6 +663,13 @@ wss.on('connection', (ws) => {
         // title can be seen opening it before the call has run, and a read
         // of a path with nothing behind it, which is plain text.
         const overwrite = msg.input.startsWith('overwrite')
+        // An "editwait" turn holds an edit at a gate, so the card's title
+        // can be clicked before the call runs (old_string selected) and
+        // again after approval (new_string selected).
+        const editwait = msg.input.startsWith('editwait')
+        // A "sedit" turn changes mock-b through a shell call instead of a
+        // file tool, so only the editor's turn-end sweep can refresh it.
+        const sedit = msg.input.startsWith('sedit')
         // A "plan" turn proposes a two-step plan and holds for the
         // decision, the way a tool gate does — the approve_plan command
         // below streams the execution beats.
@@ -846,22 +901,32 @@ wss.on('connection', (ws) => {
               output: READ_OUTPUT,
               error: null,
               checkpoint_id: null,
-              metadata: { path: READ_PATH, total_lines: 3 },
+              metadata: { path: READ_PATH, total_lines: MOCK_A_LINES.length },
             })
           call('t9', 'edit_file',
             {
               description: EDIT_DESCRIPTION,
               file_path: READ_PATH,
-              old_string: 'first seeded file',
-              new_string: 'first seeded file, edited',
+              old_string: EDIT_OLD,
+              new_string: EDIT_NEW,
             },
             {
               success: true,
               output: `Replaced 1 occurrence(s) in ${READ_PATH}.`,
               error: null,
               checkpoint_id: null,
-              metadata: { path: READ_PATH, occurrences_replaced: 1, replace_all: false },
+              metadata: {
+                path: READ_PATH,
+                occurrences_replaced: 1,
+                replace_all: false,
+                line_start: 1,
+                column_start: 0,
+              },
             })
+          // The mock holds no edit engine; make the served file reflect the
+          // call it just claimed to have run, so a click on the card's title
+          // finds new_string in the editor.
+          FILES.set('mock-a.md', `${EDIT_NEW}\n`)
           call('t10', 'write_file',
             {
               description: WRITE_DESCRIPTION,
@@ -979,7 +1044,7 @@ wss.on('connection', (ws) => {
             input: {
               description: OVERWRITE_DESCRIPTION,
               file_path: WRITE_PATH,
-              content: '# mock B\n\nsecond seeded file, rewritten\n',
+              content: OVERWRITE_CONTENT,
             },
             paths: cardPaths(WRITE_PATH),
             result: {
@@ -989,6 +1054,9 @@ wss.on('connection', (ws) => {
               checkpoint_id: null,
               metadata: { path: WRITE_PATH, bytes: 41 },
             },
+            // Approving is the write: the served file now holds what the
+            // card said it wrote, so an open editor tab must refresh.
+            apply: () => FILES.set('mock-b.md', OVERWRITE_CONTENT),
           }
           useStart(OVERWRITE_GATE_ID, 'write_file')
           send({
@@ -1007,6 +1075,106 @@ wss.on('connection', (ws) => {
             },
             choices: null,
           })
+          break
+        }
+        if (editwait) {
+          send({ type: 'content_delta', text_delta: 'editing the gated file\n' })
+          transcript.push({ role: 'assistant', content: 'editing the gated file' })
+          const input = {
+            description: EDIT_D_DESCRIPTION,
+            file_path: EDIT_D_PATH,
+            old_string: EDIT_D_OLD,
+            new_string: EDIT_D_NEW,
+          }
+          const paths = cardPaths(EDIT_D_PATH)
+          useStart(EDIT_GATE_ID, 'edit_file')
+          send({
+            type: 'tool_call_start',
+            tool_id: EDIT_GATE_ID,
+            tool_name: 'edit_file',
+            input,
+            ...paths,
+          })
+          pendingFileCall = {
+            tool_id: EDIT_GATE_ID,
+            tool_name: 'edit_file',
+            input,
+            paths,
+            result: {
+              success: true,
+              output: `Replaced 1 occurrence(s) in ${EDIT_D_PATH}.`,
+              error: null,
+              checkpoint_id: null,
+              metadata: {
+                path: EDIT_D_PATH,
+                occurrences_replaced: 1,
+                replace_all: false,
+                line_start: MOCK_D_LINE_START,
+                column_start: 0,
+              },
+            },
+            // Approval is the "edit": the file the editor reads on the next
+            // click now holds the replacement.
+            apply: () => FILES.set('mock-d.md', MOCK_D_POST),
+          }
+          send({
+            type: 'agent_paused',
+            prompt: {
+              title: 'Allow edit this file?',
+              content: null,
+              description: EDIT_D_PATH,
+            },
+            choices: null,
+          })
+          break
+        }
+        if (sedit) {
+          send({ type: 'content_delta', text_delta: 'editing with sed\n' })
+          transcript.push({ role: 'assistant', content: 'editing with sed' })
+          const input = {
+            description: 'rewrite the seeded file in place',
+            command: `sed -i 's/rewritten/sed-edited/' ${WRITE_PATH}`,
+          }
+          useStart('t16', 'shell')
+          send({
+            type: 'tool_call_start',
+            tool_id: 't16',
+            tool_name: 'shell',
+            input,
+          })
+          const result = {
+            success: true,
+            output: '',
+            error: null,
+            checkpoint_id: null,
+            metadata: null,
+          }
+          send({
+            type: 'tool_call_end',
+            tool_id: 't16',
+            tool_name: 'shell',
+            input,
+            result,
+          })
+          transcript.push({
+            role: 'tool',
+            tool_id: 't16',
+            tool_name: 'shell',
+            input,
+            // A shell call names no file — the same empty path slots the
+            // real transcript serializer fills.
+            path: null,
+            path_abs: null,
+            path_named: null,
+            path_symlink: false,
+            path_is_file: false,
+            result,
+          })
+          // The shell command's effect, applied before the turn ends: no
+          // write tool named this file, so only the sweep will see it.
+          FILES.set('mock-b.md', SEDITED_CONTENT)
+          send({ type: 'agent_finished', reason: 'completed', usage: null })
+          send({ type: 'state', busy: false })
           break
         }
         if (think) {
@@ -1059,9 +1227,12 @@ wss.on('connection', (ws) => {
       case 'deny_tool':
         send({ type: 'ack', cmd: msg.cmd, accepted: true })
         if (pendingFileCall && msg.tool_id === pendingFileCall.tool_id) {
-          // A gated file call — the outside read, or the write over a file
-          // that is already there: either answer settles it and ends its
-          // turn, a deny with the result a refusal produces.
+          // A gated file call — the outside read, the write over a file
+          // that is already there, or the gated edit: either answer settles
+          // it and ends its turn, a deny with the result a refusal produces.
+          // An approval first applies whatever the call's effect on the
+          // served files is (the gated edit rewrites its fixture).
+          if (msg.cmd !== 'deny_tool') pendingFileCall.apply?.()
           const result = msg.cmd === 'deny_tool'
             ? {
                 success: false,
