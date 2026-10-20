@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import type { Block, EditSelection, TabEntry } from '../types'
 import { blockStatus } from '../blockStatus'
-import { editSelection, toolCard, toolDiffTab, toolTab, type ToolCardRow } from '../toolCard'
+import { editSelection, toolBodyTab, toolCard, toolTab, type ToolCardRow } from '../toolCard'
 import ConsolePaneToolCardDiff from './ConsolePaneToolCardDiff.vue'
 import ConsolePaneToolCardRow from './ConsolePaneToolCardRow.vue'
 import ExternalTag from './ExternalTag.vue'
@@ -28,10 +28,10 @@ function open(row: ToolCardRow) {
   emit('open-text', toolTab(props.block, card.value, row))
 }
 
-/** The clipped diff's click: the change whole, in the editor, colored by its
- *  own diff grammar.  A card with no diff has no such tab to open. */
-function openDiff() {
-  const tab = toolDiffTab(props.block, card.value)
+/** The clipped body's click: the change or content whole, in the editor,
+ *  colored by its own diff grammar.  A card with no body has no such tab. */
+function openBody() {
+  const tab = toolBodyTab(props.block, card.value)
   if (tab) emit('open-text', tab)
 }
 
@@ -84,16 +84,17 @@ function openPath() {
       <SymlinkTag v-if="path.symlink" :resolved="path.resolved" />
       <ExternalTag v-if="path.external" />
     </div>
-    <!-- A read or a write can be its title alone: the file opens in the
-         editor, so a row of its content here would be a worse copy of the
-         pane beside it.  An edit is the exception — its change is the body,
-         drawn above the failure row when it has one.  The box appears only
-         when there is something to put in it. -->
-    <div v-if="card.diff || card.rows.length" class="tool-card" :class="state">
+    <!-- A read can be its title alone: the file opens in the editor, so a
+         row of its content here would be a worse copy of the pane beside it.
+         A write and an edit are the exception — the content it wrote, or the
+         change it made, is the body, drawn above the failure row when it has
+         one.  The box appears only when there is something to put in it. -->
+    <div v-if="card.body || card.rows.length" class="tool-card" :class="state">
       <ConsolePaneToolCardDiff
-        v-if="card.diff"
-        :rows="card.diff"
-        @open="openDiff"
+        v-if="card.body"
+        :rows="card.body"
+        :full-label="card.bodyKind === 'content' ? 'content' : 'diff'"
+        @open="openBody"
       />
       <ConsolePaneToolCardRow
         v-for="row in card.rows"

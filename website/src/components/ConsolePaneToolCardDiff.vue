@@ -2,7 +2,11 @@
 import { computed } from 'vue'
 import { MAX_DIFF_ROWS, type EditDiffRow } from '../diff'
 
-const props = defineProps<{ rows: EditDiffRow[] }>()
+const props = defineProps<{
+  rows: EditDiffRow[]
+  /** What the clipped body is: a change (`diff`) or a write's content. */
+  fullLabel?: string
+}>()
 const emit = defineEmits<{ open: [] }>()
 
 // The card is a glance; the editor is where a long change is read.  The
@@ -41,7 +45,7 @@ function open() {
       <span class="tool-card-diff-text">{{ row.text }}</span>
     </div>
     <div v-if="clipped" class="tool-card-diff-more">
-      ⋯ {{ hidden }} more {{ hidden === 1 ? 'line' : 'lines' }} — open full diff
+      ⋯ {{ hidden }} more {{ hidden === 1 ? 'line' : 'lines' }} — open full {{ fullLabel ?? 'diff' }}
     </div>
   </div>
 </template>

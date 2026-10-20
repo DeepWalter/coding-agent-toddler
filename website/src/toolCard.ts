@@ -15,8 +15,8 @@ interface CardSpec {
    *  is special-cased here. */
   path?: { param: string }
   /** No box at all: a call that has said everything it has to say in its
-   *  title.  A file call is one — its result is the file, which the title
-   *  already opens. */
+   *  title.  A read is one — its result is the file, which the title already
+   *  opens. */
   titleOnly?: boolean
   /** What this call was told to do, and how its row reads it: the parameter
    *  holding it, the label over it, the language its editor tab opens in,
@@ -36,6 +36,12 @@ interface CardSpec {
   diff?: {
     oldParam: string
     newParam: string
+  }
+  /** The call's body is the content it writes: every line drawn as an
+   *  addition, in place of a result row.  A failed call keeps the content it
+   *  tried and adds its reason as the one OUT row a reader gets. */
+  content?: {
+    param: string
   }
 }
 
@@ -72,14 +78,18 @@ const CARDS = new Map<string, CardSpec>([
   ['git_log', { name: 'Git log' }],
   ['git_commit', { name: 'Git commit' }],
   ['git_branch', { name: 'Git branch' }],
-  // A read or a write is its title and nothing else: the path is what
-  // identifies it, and the file itself opens in the editor on a click, so a
-  // row of content here would only be a worse copy of the pane next door.
-  // An edit is the exception: its two strings are the change itself, so the
-  // card draws them as a diff rather than sending the reader to the file to
-  // work out what moved.
+  // A read is its title and nothing else: the path identifies it, and the
+  // file itself opens in the editor on a click, so a row of content here
+  // would only be a worse copy of the pane next door.  A write and an edit
+  // show the call's own half of the story instead — the content it wrote,
+  // or the change it made — rather than sending the reader to the file to
+  // reconstruct it.
   ['read_file', { name: 'Read', titleOnly: true, path: { param: 'file_path' } }],
-  ['write_file', { name: 'Write', titleOnly: true, path: { param: 'file_path' } }],
+  ['write_file', {
+    name: 'Write',
+    path: { param: 'file_path' },
+    content: { param: 'content' },
+  }],
   ['edit_file', {
     name: 'Edit',
     path: { param: 'file_path' },
@@ -137,9 +147,11 @@ export interface ToolCard {
   /** Top to bottom: what ran, then what came back — the OUT row joining
    *  the box only once it has. */
   rows: ToolCardRow[]
-  /** The change an edit makes, drawn above the rows; null for every other
-   *  tool and for an edit with nothing to change. */
-  diff: EditDiffRow[] | null
+  /** The call's body, drawn above the rows: an edit's change or a write's
+   *  content, as diff-shaped rows.  Null when there is nothing to draw. */
+  body: EditDiffRow[] | null
+  /** What the body is, so the footer and the opened tab can name it. */
+  bodyKind: 'diff' | 'content' | null
 }
 
 /** Read a parameter the model wrote.  Parameters are `unknown` because they
@@ -178,24 +190,33 @@ export function toolCard(block: ToolBlock): ToolCard {
       copy: spec.input.copy,
     })
   }
-  // An edit's body is its change: the two strings diffed, drawn even while
-  // the call is still waiting at the gate — the input arrives complete in
-  // the start frame, and the diff is what the reader is being asked to
-  // approve.  A failed call keeps it too, with the reason below.
-  let diff: EditDiffRow[] | null = null
+  // A write's body is the content it writes; an edit's is the change it
+  // makes.  Both are drawn even while the call waits at the gate — the
+  // input arrives complete in the start frame, and the body is what the
+  // reader is being asked to approve.  A failed call keeps it too, with the
+  // reason below.
+  let body: EditDiffRow[] | null = null
+  let bodyKind: ToolCard['bodyKind'] = null
   if (spec?.diff) {
     const oldText = param(block, spec.diff.oldParam)
     const newText = param(block, spec.diff.newParam)
-    if (oldText || newText) diff = editDiff(oldText, newText)
+    if (oldText || newText) body = editDiff(oldText, newText)
+    if (body) bodyKind = 'diff'
+  } else if (spec?.content) {
+    const text = param(block, spec.content.param)
+    // An empty old side makes every line of the content an addition.
+    if (text) body = editDiff('', text)
+    if (body) bodyKind = 'content'
   }
   // The result row is the result, so it appears with one: a call still
   // running holds what it was told to do and nothing else — the gutter's
   // spinner is what says it is live — and a call the turn abandoned never
   // produced a result for a row to hold.  Its ✗ and the fold line above
-  // already say how that ended.  A diff tool's success is already the diff,
+  // already say how that ended.  A body tool's success is already the body,
   // so its OUT row is the failure reason alone.
   const result = block.result
-  if (spec?.diff) {
+  const hasBody = !!(spec?.diff || spec?.content)
+  if (hasBody) {
     if (result && !result.success) {
       rows.push({
         side: 'out',
@@ -256,7 +277,8 @@ export function toolCard(block: ToolBlock): ToolCard {
         }
       : null,
     rows,
-    diff,
+    body,
+    bodyKind,
   }
 }
 
@@ -321,21 +343,21 @@ export function toolTab(
   }
 }
 
-/** The editor tab a clipped edit diff opens: the whole change, read by the
- *  editor's diff grammar (`-`/`+` at the line head), which is what colors it.
- *  Keyed by the block's id and a side no row uses, so it never collides with
- *  the failure row's tab. */
-export function toolDiffTab(
+/** The editor tab a clipped body opens: the whole change an edit made, or the
+ *  whole content a write wrote, read by the editor's diff grammar (`-`/`+` at
+ *  the line head), which is what colors it.  Keyed by the block's id and a
+ *  side no row uses, so it never collides with the failure row's tab. */
+export function toolBodyTab(
   block: ToolBlock,
   card: ToolCard,
 ): Extract<TabEntry, { kind: 'text' }> | null {
-  if (!card.diff) return null
-  const name = 'Edit diff'
+  if (!card.body || !card.bodyKind) return null
+  const name = card.bodyKind === 'content' ? `${card.name} content` : 'Edit diff'
   return {
     kind: 'text',
-    id: `tool:${block.id}:diff`,
+    id: `tool:${block.id}:body`,
     title: card.path ? `${name} — ${card.path.label}` : name,
     language: 'diff',
-    content: editDiffText(card.diff),
+    content: editDiffText(card.body),
   }
 }

@@ -2,10 +2,10 @@
    and ConsolePaneToolCardDiff.vue.  Every tool call reads the same way: the
    call's own line about what it does, then a box holding what the call was
    given and what came back.  A shell call was given a command (IN) and a
-   search a pattern (PAT); both end in OUT, the result.  An edit's body is
-   the change itself — a compact unified diff — and a read or a write is its
-   title alone.  A row is clipped to three lines and openable in full in the
-   editor pane.
+   search a pattern (PAT); both end in OUT, the result.  A write's body is
+   the content it wrote and an edit's is the change it made — both compact
+   unified views — while a read is its title alone.  A row is clipped to
+   three lines and openable in full in the editor pane.
 
    The heading (the call's own line about what it does) sits outside the box,
    as ordinary output, in the shared `.tool-call-heading` vocabulary; only the
@@ -135,13 +135,13 @@
 }
 
 /* ------------------------------------------------------------------ */
-/* The edit card's diff                                                */
+/* The edit/write body                                                 */
 /* ------------------------------------------------------------------ */
 
-/* The change itself, printed in place of a result row: a compact unified
-   diff whose line kinds carry the tint.  No syntax highlighting here — the
-   card's other rows are plain text, and the full diff opens in the editor,
-   where the diff grammar does that job. */
+/* The change an edit made or the content a write wrote, printed in place of
+   a result row: a compact unified view whose line kinds carry the tint.  No
+   syntax highlighting here — the card's other rows are plain text, and the
+   full body opens in the editor, where the diff grammar does that job. */
 .tool-card-diff {
   padding: 6px 0;
   font: 12px/1.55 var(--mono);

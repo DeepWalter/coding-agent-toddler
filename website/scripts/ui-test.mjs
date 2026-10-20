@@ -58,20 +58,21 @@
 //  phase 14 — the git card: a git call reads as its result alone — the title
 //            and one OUT row, no row for what it was passed — openable in
 //            the editor under the card's own name
-//  phase 15 — the file card: a read and a write read as their titles alone,
-//            naming the file rather than describing the call, and that name is
-//            a control exactly where there is a file behind it — a write that
-//            failed and a read of a path with nothing there both read as plain
-//            text, hovering the path instead.  Which is also why a write over
-//            a file that is already there opens it while its gate still holds
-//            the call.  An edit is the exception: under its title it prints the
-//            change as a compact diff — deleted and added lines tinted, enough
-//            context to place them — and a diff past the row cap says how much
-//            is left and opens whole in the editor with the diff grammar.  A
-//            file outside the served root opens too — under its absolute path,
-//            read-only, wearing the external marker — and its card says all of
-//            that before the gate on the call has been answered: the start
-//            frame resolves the file, not the result.  The titles name the
+//  phase 15 — the file card: a read is its title alone, naming the file rather
+//            than describing the call, and that name is a control exactly where
+//            there is a file behind it — a write that failed and a read of a
+//            path with nothing there both read as plain text, hovering the path
+//            instead.  Which is also why a write over a file that is already
+//            there opens it while its gate still holds the call.  A write and
+//            an edit print their own half under the title: the content written
+//            as additions, or the change as a compact diff — kinds tinted,
+//            enough context to place them — and a body past the row cap says
+//            how much is left and opens whole in the editor with the diff
+//            grammar.  A file outside the served root opens too — under its
+//            absolute path, read-only, wearing the external marker — and its
+//            card says all of that before the gate on the call has been
+//            answered: the start frame resolves the file, not the result.
+//            The titles name the
 //            basename and the hover the whole path the server resolved, and
 //            both survive a reload.  A file left open and active takes the
 //            agent's write in place, without a tab switch
@@ -2553,11 +2554,25 @@ function checkFileCards(cards) {
     edit.diffText.includes('beta one') &&
     edit.diffClamped === true &&
     edit.diffMore === '⋯ 7 more lines — open full diff' &&
-    // A read and a write are still their title alone — no box, no rows, no
-    // diff; no description on any card, and exactly one path slot per title.
+    // A write is the content it wrote, drawn as additions — three lines,
+    // under the cap, so no footer.  The one that failed keeps its content
+    // and adds the error row.
+    write.boxes === 1 &&
+    write.rows === 0 &&
+    write.diff === 3 &&
+    write.dels === 0 &&
+    write.adds === 3 &&
+    write.ctx === 0 &&
+    write.diffText.includes('second seeded file') &&
+    write.diffClamped === false &&
+    write.diffMore === null &&
+    failed.boxes === 1 &&
+    failed.rows === 1 &&
+    failed.diff === 1 &&
+    failed.adds === 1 &&
+    failed.diffText.includes('# mock C') &&
+    // A read is still its title alone — no box, no rows, no body.
     read.boxes === 0 && read.rows === 0 && read.diff === 0 &&
-    write.boxes === 0 && write.rows === 0 && write.diff === 0 &&
-    failed.boxes === 0 && failed.rows === 0 && failed.diff === 0 &&
     outside.boxes === 0 && outside.rows === 0 && outside.diff === 0 &&
     cards.every((c) => c.desc === null && c.paths === 1)
   )
@@ -2569,7 +2584,7 @@ function checkFileCards(cards) {
   // input arrived in the start frame, before any gate.
   const cards = await readFileCards()
   const ok = checkFileCards(cards)
-  console.log(`phase15 a file call is its title, and an edit adds its diff ${JSON.stringify(cards)} ${ok ? 'PASS' : 'FAIL'}`)
+  console.log(`phase15 a read is its title, and a write or an edit adds its body ${JSON.stringify(cards)} ${ok ? 'PASS' : 'FAIL'}`)
   if (!ok) fails++
 }
 
