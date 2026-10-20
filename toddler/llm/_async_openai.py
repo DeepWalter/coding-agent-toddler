@@ -152,6 +152,9 @@ if _TEST == "cli":
                     * ``"write"`` — emit a ``write_file`` tool call that
                       writes this file's content to
                       ``~/.toddler/test_write.py``.
+                    * ``"edit"`` — emit an ``edit_file`` tool call that
+                      replaces the README path constant with
+                      ``/tmp/README.md`` in ``~/.toddler/test_write.py``.
                     * the plan proposal prompt — answer with the canned
                       two-step plan JSON.
                     * the approved-plan execution prompt — open the plan
@@ -241,6 +244,8 @@ if _TEST == "cli":
                 return self._chunks_for_shell()
             elif content == "write":
                 return self._chunks_for_write()
+            elif content == "edit":
+                return self._chunks_for_edit()
             else:
                 return self._chunks_for_unknown(content)
 
@@ -425,6 +430,88 @@ if _TEST == "cli":
                     "~/.toddler/test_write.py.\n\n",
                 ),
                 ("tool_name", "write_file"),
+                ("tool_args", args),
+                ("finish", "tool_calls"),
+            ]
+            return _DummyStream._materialize(blocks)
+
+        @staticmethod
+        def _chunks_for_edit():
+            """Emit a text intro, then an ``edit_file`` tool call that
+            rewrites the README path in ``~/.toddler/test_write.py``.
+
+            The target only exists after the ``"write"`` response has run,
+            so that turn is this one's setup.
+            """
+            # Spelled in two pieces on purpose: the "write" response
+            # copies this file, so a verbatim literal here would make the
+            # old string appear twice in the copy and ``edit_file`` would
+            # reject the call as ambiguous.
+            old_string = '{' + '''
+    "title": "Dummy plan — two canned steps",
+    "summary": (
+        "A canned two-step plan the dummy proposes so the plan workflow "
+        "can be exercised end to end: approval, step updates, summary."
+    ),
+    "steps": [
+        {
+            "description": "Run dummy step 1 and report its output",
+            "tool_calls_expected": ["plan_update"],
+            "files_affected": [],
+        },
+        {
+            "description": "Run dummy step 2 and report its output",
+            "tool_calls_expected": ["plan_update"],
+            "files_affected": [],
+        },
+    ],
+    "rationale": (
+        "Two steps are enough to show a step starting, completing and "
+        "the closing summary that follows the last one."
+    ),
+    "risks": ["None — every call this plan makes is canned."],
+    "estimated_files_touched": 0,
+}'''  # noqa: E501
+            new_string = '''{
+    "title": "Example plan — two canned steps",
+    "summary": (
+        "A canned two-step plan the example proposes so the plan workflow "
+        "can be exercised end to end: approval, step updates, summary."
+    ),
+    "steps": [
+        {
+            "description": "Run example step 1 and report its output",
+            "tool_calls_expected": ["plan_update"],
+            "files_affected": [],
+        },
+        {
+            "description": "Run example step 2 and report its output",
+            "tool_calls_expected": ["plan_update"],
+            "files_affected": [],
+        },
+    ],
+    "rationale": (
+        "Two steps are enough to show a step starting, completing and "
+        "the closing summary that follows the last one."
+    ),
+    "risks": ["None — every call this plan makes is canned."],
+    "estimated_files_touched": 0,
+}'''  # noqa: E501
+            args = json.dumps(
+                {
+                    "file_path": "~/.toddler/test_write.py",
+                    "old_string": old_string,
+                    "new_string": new_string,
+                },
+                ensure_ascii=False,
+            )
+            blocks: list[tuple[str, str | None]] = [
+                (
+                    "text",
+                    "I'll replace dummy with example in _PLAN_PROPOSAL in "
+                    "~/.toddler/test_write.py.\n\n",
+                ),
+                ("tool_name", "edit_file"),
                 ("tool_args", args),
                 ("finish", "tool_calls"),
             ]
