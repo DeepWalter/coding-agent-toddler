@@ -481,6 +481,7 @@ class AgentLoop:
                     call.tool_id,
                     output_text,
                     is_error=not result.success,
+                    metadata=result.metadata,
                 )
             )
 

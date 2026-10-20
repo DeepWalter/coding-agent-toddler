@@ -400,6 +400,7 @@ class TestSerializeTranscript:
         tool_input: dict | None = None,
         result: str | None = "content",
         is_error: bool = False,
+        metadata: dict | None = None,
     ) -> list[Message]:
         """The stored shape of a tool call: an assistant tool_use message
         followed by a tool message with its result."""
@@ -411,7 +412,7 @@ class TestSerializeTranscript:
             ]),
             Message.tool([
                 MessageBlock.tool_result_block(
-                    tool_id, result or "", is_error=is_error,
+                    tool_id, result or "", is_error=is_error, metadata=metadata,
                 ),
             ]),
         ]
@@ -470,6 +471,20 @@ class TestSerializeTranscript:
             "error": "denied",
             "checkpoint_id": None,
             "metadata": None,
+        }
+
+    def test_tool_result_metadata_replays(self):
+        """A stored result's structured data reaches the replayed card — the
+        edit card's recorded position is what selects the exact occurrence
+        of a replacement that also appears elsewhere in the file."""
+        messages = self._tool_pair(
+            "t1", name="edit_file",
+            metadata={"line_start": 3, "column_start": 4},
+        )
+        entry = serialize_transcript(messages, ROOT)[0]
+        assert entry["result"]["metadata"] == {
+            "line_start": 3,
+            "column_start": 4,
         }
 
     def test_use_without_result_replays_as_cancelled(self):

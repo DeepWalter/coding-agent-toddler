@@ -106,7 +106,9 @@ def _tool_results(messages: list[Message]) -> dict[str, dict]:
                 "output": None if is_error else block.tool_result_content,
                 "error": block.tool_result_content if is_error else None,
                 "checkpoint_id": None,
-                "metadata": None,
+                # Persisted with the block (a row written before the field
+                # existed reads back as None, as it always did).
+                "metadata": block.tool_result_metadata,
             }
     return results
 

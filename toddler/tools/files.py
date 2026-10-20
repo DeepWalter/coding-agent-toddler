@@ -333,6 +333,13 @@ class EditFile(BaseTool):
             )
 
         modified = original.replace(old_string, new_string)
+        # Where the replacement starts, in the file as this call read it.
+        # The web card uses it to reveal the exact occurrence after the edit:
+        # new_string may already occur elsewhere, and a text search would
+        # land on the wrong one.  Line is 1-based, column 0-based.
+        offset = original.find(old_string)
+        line_start = original.count("\n", 0, offset) + 1
+        column_start = offset - (original.rfind("\n", 0, offset) + 1)
 
         try:
             path.write_text(modified, encoding="utf-8")
@@ -355,6 +362,8 @@ class EditFile(BaseTool):
                 "path": str(path),
                 "occurrences_replaced": replaced,
                 "replace_all": replace_all,
+                "line_start": line_start,
+                "column_start": column_start,
             },
         )
 

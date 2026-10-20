@@ -23,7 +23,8 @@ from toddler.session.storage import (
 
 
 def _all_kinds() -> list[MessageBlock]:
-    """One block per kind, including both error states of ``tool_result``."""
+    """One block per kind, including both error states of ``tool_result``
+    and a result carrying structured metadata."""
     return [
         MessageBlock.reasoning_block("step 1: think\nstep 2: verify"),
         MessageBlock.content_block("the answer"),
@@ -32,6 +33,10 @@ def _all_kinds() -> list[MessageBlock]:
         ),
         MessageBlock.tool_result_block("call_1", "file body"),
         MessageBlock.tool_result_block("call_2", "boom", is_error=True),
+        MessageBlock.tool_result_block(
+            "call_3", "edited",
+            metadata={"line_start": 3, "column_start": 4},
+        ),
     ]
 
 

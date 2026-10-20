@@ -480,6 +480,8 @@ def _serialize_content(blocks: list[MessageBlock]) -> str:
             d["tool_result_content"] = b.tool_result_content
         if b.is_error is not None:
             d["is_error"] = b.is_error
+        if b.tool_result_metadata is not None:
+            d["tool_result_metadata"] = b.tool_result_metadata
         return d
 
     return json.dumps(
@@ -506,6 +508,7 @@ def _deserialize_content(json_str: str) -> list[MessageBlock]:
             tool_input=d.get("tool_input"),
             tool_result_content=d.get("tool_result_content"),
             is_error=d.get("is_error"),
+            tool_result_metadata=d.get("tool_result_metadata"),
         )
 
     raw = json.loads(json_str)

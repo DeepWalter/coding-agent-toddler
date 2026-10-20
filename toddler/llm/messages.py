@@ -25,7 +25,8 @@ class MessageBlock:
     - ``reasoning`` → ``text`` — the ``content`` and ``reasoning`` kinds
       share the ``text`` payload slot
     - ``tool_use`` → ``tool_id``, ``tool_name``, ``tool_input``
-    - ``tool_result`` → ``tool_id``, ``tool_result_content``, ``is_error``
+    - ``tool_result`` → ``tool_id``, ``tool_result_content``, ``is_error``,
+      ``tool_result_metadata``
     """
 
     type: Literal["content", "reasoning", "tool_use", "tool_result"]
@@ -43,6 +44,9 @@ class MessageBlock:
     # tool_result payload
     tool_result_content: str | None = None
     is_error: bool | None = None
+    # The tool's own structured result data — carried for replay (the web
+    # card's edit position, occurrence counts), never sent to the model.
+    tool_result_metadata: dict | None = None
 
     # ------------------------------------------------------------------
     # Factory helpers
@@ -69,13 +73,19 @@ class MessageBlock:
 
     @classmethod
     def tool_result_block(
-        cls, tool_id: str, content: str, *, is_error: bool = False
+        cls,
+        tool_id: str,
+        content: str,
+        *,
+        is_error: bool = False,
+        metadata: dict | None = None,
     ) -> Self:
         return cls(
             type="tool_result",
             tool_id=tool_id,
             tool_result_content=content,
             is_error=is_error,
+            tool_result_metadata=metadata,
         )
 
 
