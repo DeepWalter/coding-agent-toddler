@@ -3478,3 +3478,8 @@ const planTodo = (marks) =>
   console.log(`phase19 open tabs follow a shell-side change at turn end ${JSON.stringify(st)} ${ok ? 'PASS' : 'FAIL'}`)
   if (!ok) fails++
 }
+
+// The browser connection is an open handle: without closing it the process
+// outlives the last check and a run never returns.
+await browser.close()
+process.exit(fails ? 1 : 0)
