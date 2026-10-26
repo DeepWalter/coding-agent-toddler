@@ -9,7 +9,7 @@
 /* Shared, not theme-specific: the monospace stack and text used on solid
    accent fills (primary/danger buttons, selected rows). */
 :root {
-  --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+  --mono: 'Fira Code', ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
   --on-accent: #fff;
 }
 
