@@ -1,4 +1,4 @@
-/* ConsolePaneThinkingBlock.vue — the Thought toggle and its quoted reasoning.
+/* ConsolePaneThinkingBlock.vue — the Thought toggle and its reasoning body.
    The flex guard it shares with the tool card is commented in
    console-pane-tool-card.css. */
 
@@ -44,36 +44,13 @@
   color: var(--text-subtle);
 }
 
-/* The quote block: indented under the toggle, a muted rule down the left.
-   Deliberately quieter than the accent-barred blockquote markdown renders
-   inside replies.  No max-height — expanding is an explicit click, so the
-   reasoning flows and the pane's own scrollbar handles its length. */
-.thinking-quote {
-  margin: 6px 0 0;
-  padding: 2px 0 2px 10px;
-  border-left: 2px solid var(--editor-border);
+/* The reasoning body: markdown like a reply, distinguished by colour alone —
+   the shared markdown rules live in shared/markdown.css.  No max-height —
+   expanding is an explicit click, so the reasoning flows and the pane's own
+   scrollbar handles its length. */
+.thinking-content {
+  margin-top: 6px;
   color: var(--text-muted);
-  font: inherit;
-  white-space: pre-wrap;
   word-wrap: break-word;
-}
-
-/* Code in a thought: a surface to sit on and full-contrast tokens, since
-   the quote around it is muted and unstyled tokens would inherit that.
-   Block-level inside the quote's <pre>, which keeps the wrapping. */
-.thinking-code {
-  display: block;
-  margin: 4px 0;
-  padding: 6px 8px;
-  background: var(--editor-surface-2);
-  border-radius: 4px;
-  color: var(--text);
-}
-
-/* An identifier reads the same in a thought as in an answer. */
-.thinking-inline {
-  background: var(--editor-surface-2);
-  border: 1px solid var(--editor-border);
-  border-radius: 4px;
-  padding: 1px 4px;
+  overflow-wrap: break-word;
 }

@@ -1,10 +1,31 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import type { Block } from '../types'
-import { renderReasoning } from '../reasoning'
+import { renderMarkdown } from '../markdown'
 import { estimateTokens, formatTokens } from '../utils'
 
 const props = defineProps<{ block: Extract<Block, { kind: 'thinking' }> }>()
+
+const emit = defineEmits<{
+  'open-file': [path: string]
+}>()
+
+// Delegated click handler: repo-relative links (tagged `data-file` by the
+// markdown renderer) open the file in the editor pane instead of a tab.
+function onClick(event: MouseEvent) {
+  const link = (event.target as HTMLElement | null)?.closest?.('a[data-file]') as
+    | HTMLAnchorElement
+    | null
+  if (!link) return
+  event.preventDefault()
+  let path = link.getAttribute('data-file') ?? ''
+  try {
+    path = decodeURIComponent(path)
+  } catch {
+    // Not valid percent-encoding — pass the href through as-is.
+  }
+  emit('open-file', path)
+}
 
 // Expanded/collapsed is display state, not transcript state — it lives
 // here, never in the block, so reducer passes stay purely data.  A live
@@ -43,9 +64,10 @@ const detail = computed(() => {
   return `${formatTokens(n)} ${n === 1 ? 'token' : 'tokens'}`
 })
 
-/** The reasoning, rendered once per delta and cached upstream: the prose
- *  stays literal, only its code is lifted out. */
-const rendered = computed(() => renderReasoning(props.block.reasoning))
+/** The reasoning goes through the answer renderer — cached upstream like
+ *  every markdown render — so a thought's code and structure read exactly
+ *  as a reply's. */
+const rendered = computed(() => renderMarkdown(props.block.reasoning))
 
 /** Sub-second thoughts would round to a nonsensical "0 seconds", and a
  *  long one reads better in minutes than as "125 seconds". */
@@ -74,14 +96,14 @@ function formatSpan(ms: number): string {
       <span v-if="detail" class="thinking-detail">· {{ detail }}</span>
       <span class="thinking-chevron" aria-hidden="true">{{ expanded ? '▾' : '▸' }}</span>
     </button>
-    <!-- Never markdown: chain-of-thought is freeform prose that markdown
-         would mangle, so the text is escaped verbatim and only its code —
-         fenced blocks and `inline` spans — is lifted out and highlighted.
+    <!-- Rendered like a reply, but in the muted tier: a thought is
+         subordinate to the answer, and the colour is the only cue it needs.
          The full text renders: it is bounded upstream by max_tokens. -->
-    <pre
+    <div
       v-if="expanded"
-      class="thinking-quote"
+      class="thinking-content markdown"
+      @click="onClick"
       v-html="rendered"
-    ></pre>
+    ></div>
   </div>
 </template>

@@ -13,8 +13,9 @@
 //            (two-line hover copy) whose click lands the server's hello
 //            replay + notice
 //  phase 5 — thought blocks: the seeded reasoning replays collapsed and
-//            expands to its quoted body — prose verbatim, its fenced and
-//            inline code lifted out and highlighted; a live `think:` turn
+//            expands to a markdown body in the muted tier — no quote rule,
+//            its fenced and inline code rendered and highlighted; a live
+//            `think:` turn
 //            adds a second block above its bubble, counting tokens while it
 //            streams and reading "Thought for …" once agent_finished lands
 //            — and a reload replays the same block, body byte-identical
@@ -462,7 +463,7 @@ const thoughtAboveBubble = () =>
     return { thoughts: thoughts.length, bubbles: bubbles.length, ok }
   })
 
-// P5a: the replayed block starts collapsed — "Thought" + ▸, no quote, and no
+// P5a: the replayed block starts collapsed — "Thought" + ▸, no body, and no
 // count: a block that never streamed in this page has no reading to show.
 {
   const block = page.locator('.thinking').first()
@@ -470,43 +471,57 @@ const thoughtAboveBubble = () =>
   const info = {
     label: (await block.locator('.thinking-label').textContent()).trim(),
     chevron: (await block.locator('.thinking-chevron').textContent()).trim(),
-    quotes: await block.locator('.thinking-quote').count(),
+    bodies: await block.locator('.thinking-content').count(),
     details: await block.locator('.thinking-detail').count(),
   }
   const ok =
-    info.label === 'Thought' && info.chevron === '▸' && info.quotes === 0 && info.details === 0
+    info.label === 'Thought' && info.chevron === '▸' && info.bodies === 0 && info.details === 0
   console.log(`phase5 seeded block collapsed ${JSON.stringify(info)} ${ok ? 'PASS' : 'FAIL'}`)
   if (!ok) fails++
 }
 
-// P5b: click expands to the reasoning inside a quoted block (a rule down its
-// left edge, not the old bordered card): the prose verbatim, the code it
-// carries lifted out and highlighted.  A second click collapses it.
+// P5b: click expands to the reasoning as markdown in the muted tier — no
+// quote rule — with the prose rendered and the code it carries highlighted.
+// A second click collapses it.
 {
   const block = page.locator('.thinking').first()
   await block.locator('.thinking-toggle').click()
-  const revealed = await block.locator('.thinking-quote').evaluate((el) => ({
-    text: el.textContent ?? '',
-    bar: getComputedStyle(el).borderLeftWidth,
-    code: el.querySelector('code.thinking-code')?.textContent ?? null,
-    chip: el.querySelector('code.thinking-inline')?.textContent ?? null,
-    tokens: el.querySelectorAll('code.thinking-code span').length,
-  }))
+  const revealed = await block.locator('.thinking-content').evaluate((el) => {
+    // Resolve the theme's muted token to the rgb() a computed style reports.
+    const probe = document.createElement('span')
+    probe.style.color = getComputedStyle(document.documentElement)
+      .getPropertyValue('--text-muted')
+      .trim()
+    document.body.appendChild(probe)
+    const muted = getComputedStyle(probe).color
+    probe.remove()
+    return {
+      text: el.textContent ?? '',
+      muted: getComputedStyle(el).color === muted,
+      border: getComputedStyle(el).borderLeftWidth,
+      code: el.querySelector('pre code')?.textContent ?? null,
+      chip: el.querySelector('p code')?.textContent ?? null,
+      tokens: el.querySelectorAll('pre code span').length,
+    }
+  })
   const ok =
-    revealed.bar === '2px' &&
+    revealed.muted &&
+    revealed.border === '0px' &&
     SEED_PROSE.every((line) => revealed.text.includes(line)) &&
     // The syntax the block renders away must not leak into the text.
     !revealed.text.includes('`') &&
-    revealed.code === SEED_CODE &&
+    // markdown-it hands fenced content to the highlighter with its closing
+    // line ending still attached, so the rendered block ends with it too.
+    revealed.code === `${SEED_CODE}\n` &&
     revealed.chip === SEED_CHIP &&
     // Coloured, not just boxed: the grammar produced token spans.
     revealed.tokens > 0
   console.log(
-    `phase5 expand shows prose verbatim and code lifted out ${ok ? 'PASS' : `FAIL (${JSON.stringify(revealed)})`}`,
+    `phase5 expand shows muted markdown with its code highlighted ${ok ? 'PASS' : `FAIL (${JSON.stringify(revealed)})`}`,
   )
   if (!ok) fails++
   await block.locator('.thinking-toggle').click()
-  const collapsed = (await block.locator('.thinking-quote').count()) === 0
+  const collapsed = (await block.locator('.thinking-content').count()) === 0
   console.log(`phase5 second click collapses ${collapsed ? 'PASS' : 'FAIL'}`)
   if (!collapsed) fails++
 }
@@ -536,7 +551,7 @@ const thoughtsBefore = await thoughtCount()
         return (
           blocks.length === want &&
           new RegExp(pattern).test(label) &&
-          last?.querySelector('.thinking-quote') === null
+          last?.querySelector('.thinking-content') === null
         )
       },
       [thoughtsBefore + 1, THINKING_LIVE.source],
@@ -586,7 +601,7 @@ const thoughtsBefore = await thoughtCount()
 {
   const live = page.locator('.thinking').last()
   await live.locator('.thinking-toggle').click()
-  const liveBody = await live.locator('.thinking-quote').textContent()
+  const liveBody = await live.locator('.thinking-content').textContent()
   const okLive = liveBody.startsWith('live thought:')
   console.log(`phase5 live block body is the streamed reasoning ${okLive ? 'PASS' : `FAIL (${JSON.stringify(liveBody)})`}`)
   if (!okLive) fails++
@@ -604,7 +619,7 @@ const thoughtsBefore = await thoughtCount()
     const block = page.locator('.thinking').last()
     replayedLabel = (await block.locator('.thinking-label').textContent()).trim()
     await block.locator('.thinking-toggle').click()
-    replayed = await block.locator('.thinking-quote').textContent()
+    replayed = await block.locator('.thinking-content').textContent()
   } catch {
     // replayed stays null — the mismatch below reports it
   }

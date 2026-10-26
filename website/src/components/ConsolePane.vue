@@ -340,7 +340,11 @@ function rowStatus(block: Block) {
         :text="block.content"
         @open-file="(path) => emit('open-file', path)"
       />
-      <ConsolePaneThinkingBlock v-else-if="block.kind === 'thinking'" :block="block" />
+      <ConsolePaneThinkingBlock
+        v-else-if="block.kind === 'thinking'"
+        :block="block"
+        @open-file="(path) => emit('open-file', path)"
+      />
       <!-- Every tool call reads as its own card: what it ran and what came
            back are the whole story, and a file call is no more than its
            title — which opens the file in the editor. -->

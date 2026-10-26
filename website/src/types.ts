@@ -285,8 +285,8 @@ export type Block =
   | {
       id: number
       kind: 'thinking'
-      /** The reasoning, verbatim — rendered as plain text, never markdown
-       *  (freeform prose that markdown would mangle). */
+      /** The reasoning, verbatim — rendered as markdown through the answer
+       *  renderer, in the muted tier. */
       reasoning: string
       /** Still streaming; `open` has tool-block semantics (the turn's
        *  terminal frame closes it, user clicks never do).  Expanded or
