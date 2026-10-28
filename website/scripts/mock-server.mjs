@@ -628,7 +628,10 @@ wss.on('connection', (ws) => {
         // thinking-mode model does.  The hold keeps the card open long
         // enough for the harness to see "Thinking…" and its live position;
         // the finished entry is logged so a reload replays the same card.
+        // "think slow:" holds longer, for the phase-20 copy check that has to
+        // expand the card while it is still open.
         const think = msg.input.startsWith('think')
+        const thinkHold = msg.input.startsWith('think slow') ? 2000 : THINK_HOLD_MS
         // A "fail" turn is the one producer of the gutter's ✗: a tool call
         // that ends with success:false.  The seed only ever succeeds, and
         // the gate path is always approved and always returns a result.
@@ -639,6 +642,10 @@ wss.on('connection', (ws) => {
         // 26 lines end just short of it, at the tail where the harness has to
         // see the difference.
         const long = msg.input.startsWith('long')
+        // A "slow" turn spaces the generic answer's chunks, so the harness can
+        // observe the assistant block while it is still streaming (the normal
+        // burst lands in one synchronous loop with no window to inspect).
+        const slow = msg.input.startsWith('slow')
         // A "shell" turn runs one long shell call — the card's three-line
         // clip, its copy button and its open-in-editor path all need a call
         // that overflows the clip on both sides.
@@ -1181,7 +1188,7 @@ wss.on('connection', (ws) => {
           for (const fragment of THINK_FRAGMENTS) {
             send({ type: 'reasoning_delta', text_delta: fragment })
           }
-          await new Promise((resolve) => setTimeout(resolve, THINK_HOLD_MS))
+          await new Promise((resolve) => setTimeout(resolve, thinkHold))
         }
         let content = ''
         const chunks = long ? 60 : 26
@@ -1189,6 +1196,7 @@ wss.on('connection', (ws) => {
           const chunk = `more streaming output chunk ${i}\n`
           content += chunk
           send({ type: 'content_delta', text_delta: chunk })
+          if (slow) await new Promise((resolve) => setTimeout(resolve, 40))
         }
         if (!gate && !script) {
           if (think) {

@@ -21,6 +21,7 @@
 
 @import './shared/pane-headers.css';
 @import './shared/buttons.css';
+@import './shared/copy-button.css';
 @import './shared/menus.css';
 @import './shared/ask-cards.css';
 @import './shared/markdown.css';

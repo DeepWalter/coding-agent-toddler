@@ -105,29 +105,12 @@
   padding-right: 24px;
 }
 
+/* Placement only: the shared CopyButton paints itself
+   (shared/copy-button.css). */
 .tool-card-copy {
   position: absolute;
   top: 5px;
   right: 8px;
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: none;
-  border-radius: 6px;
-  background: none;
-  color: var(--text-muted);
-  cursor: pointer;
-}
-
-.tool-card-copy:hover {
-  background: var(--editor-surface-3);
-  color: var(--text);
-}
-
-.tool-card-copy.copied {
-  color: var(--success);
 }
 
 .tool-card-text.error {

@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import type { Block } from '../types'
 import { renderMarkdown } from '../markdown'
 import { estimateTokens, formatTokens } from '../utils'
+import CopyButton from './CopyButton.vue'
 
 const props = defineProps<{ block: Extract<Block, { kind: 'thinking' }> }>()
 
@@ -99,11 +100,23 @@ function formatSpan(ms: number): string {
     <!-- Rendered like a reply, but in the muted tier: a thought is
          subordinate to the answer, and the colour is the only cue it needs.
          The full text renders: it is bounded upstream by max_tokens. -->
-    <div
-      v-if="expanded"
-      class="thinking-content markdown"
-      @click="onClick"
-      v-html="rendered"
-    ></div>
+    <template v-if="expanded">
+      <div
+        class="thinking-content markdown"
+        @click="onClick"
+        v-html="rendered"
+      ></div>
+      <!-- The copy action follows the body as a sibling, never inside the
+           v-html host.  It exists only once the thought has settled — a
+           collapsed block has no body and so offers nothing to copy. -->
+      <div v-if="!block.open && block.reasoning" class="thinking-actions">
+        <CopyButton
+          class="thinking-copy"
+          :text="block.reasoning"
+          label="Copy reasoning"
+          copied-label="Reasoning copied"
+        />
+      </div>
+    </template>
   </div>
 </template>

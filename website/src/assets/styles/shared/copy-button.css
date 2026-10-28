@@ -1,0 +1,25 @@
+/* CopyButton.vue — the icon button shared by a tool card's IN row and the
+   console's message/reasoning actions.  Callers place it; this file paints
+   it.  Visibility (hover/focus reveal) belongs to each caller. */
+
+.copy-button {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.copy-button:hover {
+  background: var(--editor-surface-3);
+  color: var(--text);
+}
+
+.copy-button.copied {
+  color: var(--success);
+}

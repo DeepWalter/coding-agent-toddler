@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { renderMarkdown } from '../markdown'
 import { useOverflow } from '../composables/useOverflow'
+import CopyButton from './CopyButton.vue'
 
 const props = defineProps<{
   role: 'user' | 'assistant'
@@ -10,6 +11,9 @@ const props = defineProps<{
    *  keyed on the block, because the transcript's row and the console's top
    *  float are one message read twice: opening either has to open both. */
   expanded?: boolean
+  /** The answer's settle flag (assistant only).  The copy action is offered
+   *  once the stream is over, never while the text is still arriving. */
+  closed?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -53,12 +57,21 @@ function onClick(event: MouseEvent) {
 
 <template>
   <div class="message" :class="role">
-    <div
-      v-if="role === 'assistant'"
-      class="message-content markdown"
-      @click="onClick"
-      v-html="rendered"
-    ></div>
+    <template v-if="role === 'assistant'">
+      <div
+        class="message-content markdown"
+        @click="onClick"
+        v-html="rendered"
+      ></div>
+      <div v-if="closed && text" class="message-actions">
+        <CopyButton
+          class="message-copy"
+          :text="text"
+          label="Copy message"
+          copied-label="Message copied"
+        />
+      </div>
+    </template>
     <template v-else>
       <!-- User content is the only boxed text in the console — the border
            is what marks it as something the human typed.  `collapsed` is the

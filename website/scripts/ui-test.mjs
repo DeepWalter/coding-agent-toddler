@@ -101,6 +101,10 @@
 //            refreshes the file it names (a tab left open and active updates
 //            where it stands), and a turn end re-reads every open tab, which
 //            is how a shell-side change reaches the buffer
+//  phase 20 — copy buttons: a settled reply or thought offers its raw source
+//            under the text, left-aligned with the text rather than the
+//            status gutter, invisible until hovered or focused, and absent
+//            until the stream settles (phase 5 pins the raw-markdown case)
 // Prints PASS/FAIL plus diagnostics; exits 1 on any failure.
 import { chromium } from 'playwright'
 import WebSocket from 'ws'
@@ -438,6 +442,13 @@ const SEED_PROSE = [
 const SEED_CODE = 'def fits(pane):\n    return pane.scrollHeight > pane.clientHeight'
 const SEED_CHIP = 'scrollable'
 
+// The live thought's raw source — mirrors mock-server.mjs THINK_FRAGMENTS.
+// Phase 20's copy assertion compares the clipboard to it byte for byte.
+const THINK_REASONING =
+  'live thought: stream the reasoning ' +
+  'before the answer — accumulated ' +
+  'fragment by fragment, kept verbatim'
+
 // Label shapes — the counts are the point, so these match a pattern rather
 // than pinning the mock's fragment count and stream duration (which lands in
 // the sub-second branch on a fast run, "1 second" on a slow one).
@@ -520,10 +531,40 @@ const thoughtAboveBubble = () =>
     `phase5 expand shows muted markdown with its code highlighted ${ok ? 'PASS' : `FAIL (${JSON.stringify(revealed)})`}`,
   )
   if (!ok) fails++
+
+  // The copy action belongs to the expanded body and writes the raw source,
+  // not the rendered reading: the fences the renderer consumed are back in
+  // the clipboard, so a copy of the DOM text would fail this equality.
+  await page.evaluate(() => {
+    window.__copied = null
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: (text) => {
+          window.__copied = text
+          return Promise.resolve()
+        },
+      },
+    })
+  })
+  await block.locator('.thinking-content').hover()
+  await block.locator('.thinking-copy').click()
+  await page.waitForTimeout(150)
+  const copiedReasoning = await page.evaluate(() => window.__copied)
+  const rawCopied = copiedReasoning === SEED_REASONING
+  console.log(
+    `phase5 the thought's copy writes the raw reasoning ${JSON.stringify({ chars: copiedReasoning?.length, raw: rawCopied })} ${rawCopied ? 'PASS' : 'FAIL'}`,
+  )
+  if (!rawCopied) fails++
+
   await block.locator('.thinking-toggle').click()
   const collapsed = (await block.locator('.thinking-content').count()) === 0
-  console.log(`phase5 second click collapses ${collapsed ? 'PASS' : 'FAIL'}`)
-  if (!collapsed) fails++
+  const actionGone = (await block.locator('.thinking-copy').count()) === 0
+  const okCollapsed = collapsed && actionGone
+  console.log(
+    `phase5 second click collapses and takes the copy action with it ${okCollapsed ? 'PASS' : 'FAIL'}`,
+  )
+  if (!okCollapsed) fails++
 }
 
 // P5c: a live think turn adds one more block, counting tokens while the
@@ -3279,8 +3320,8 @@ const planTodo = (marks) =>
       .map((row) => row.textContent.trim()),
   }))
   const okQuiet =
-    beforeFrame.focus.startsWith('tool-card-copy') &&
-    afterFrame.focus === beforeFrame.focus &&
+    beforeFrame.focus.includes('tool-card-copy') &&
+    afterFrame.focus.includes('tool-card-copy') &&
     afterFrame.marked.join() === beforeFrame.marked.join() &&
     afterFrame.marked.length === 1
   console.log(`phase17 a frame does not take the keyboard back ${JSON.stringify({ beforeFrame, afterFrame })} ${okQuiet ? 'PASS' : 'FAIL'}`)
@@ -3492,6 +3533,217 @@ const planTodo = (marks) =>
     st.doc.includes('second seeded file, sed-edited')
   console.log(`phase19 open tabs follow a shell-side change at turn end ${JSON.stringify(st)} ${ok ? 'PASS' : 'FAIL'}`)
   if (!ok) fails++
+}
+
+// --- Phase 20: copy buttons on settled assistant content and reasoning ---
+
+// The action row is in flow below the text, so its left edge is the text's
+// edge inside the gutter — not the status mark's.  It exists only for a
+// settled block, hides until the block is hovered (or its button focused),
+// and writes the raw source behind the rendered reading.
+{
+  // A known replay state, plus a clipboard stub earlier reloads wiped.  Park
+  // the pointer and drop focus first: either would reveal the row through
+  // :hover / :focus-within and make the "hidden" reading meaningless.
+  await page.reload()
+  await page.waitForFunction(
+    () => document.querySelectorAll('.message.assistant').length > 0,
+    { timeout: 15000 },
+  )
+  await page.evaluate(() => {
+    window.__copied = null
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: (text) => {
+          window.__copied = text
+          return Promise.resolve()
+        },
+      },
+    })
+    document.activeElement?.blur?.()
+  })
+  await page.mouse.move(0, 0)
+  await page.waitForTimeout(100)
+
+  // The persisted post-/clear transcript is only the prefixed turns; the
+  // last reply is the sedit turn's one line.  Its DOM text carries a trailing
+  // newline the raw source does not, so exact equality with the source is
+  // what proves the button read `block.content`, not the rendered reading.
+  const REPLAY_SOURCE = 'editing with sed'
+  const bubble = page
+    .locator('.message.assistant')
+    .filter({ hasText: REPLAY_SOURCE })
+    .last()
+
+  const actionOpacity = () =>
+    bubble.locator('.message-actions').evaluate((el) => getComputedStyle(el).opacity)
+
+  const hidden = await actionOpacity()
+  await bubble.locator('.message-content').hover()
+  const hovered = await actionOpacity()
+  await page.mouse.move(0, 0)
+  const unhovered = await actionOpacity()
+  await bubble.locator('.message-copy').focus()
+  const focused = await actionOpacity()
+  await page.evaluate(() => document.activeElement?.blur?.())
+  const okReveal =
+    hidden === '0' && hovered === '1' && unhovered === '0' && focused === '1'
+  console.log(
+    `phase20 the copy action hides until hovered or focused ${JSON.stringify({ hidden, hovered, unhovered, focused })} ${okReveal ? 'PASS' : 'FAIL'}`,
+  )
+  if (!okReveal) fails++
+
+  // Edges are compared, never a hard-coded 22: the gutter is read from the
+  // row and the button must sit exactly that far right of the status mark.
+  const geometry = await bubble.evaluate((el) => {
+    const content = el.querySelector('.message-content')
+    const action = el.querySelector('.message-copy')
+    const row = el.closest('.stream-row')
+    const mark = row?.querySelector('.status-mark')
+    const c = content.getBoundingClientRect()
+    const a = action.getBoundingClientRect()
+    const m = mark?.getBoundingClientRect()
+    return {
+      contentLeft: c.left,
+      actionLeft: a.left,
+      markLeft: m?.left ?? null,
+      gutter: row ? parseFloat(getComputedStyle(row).paddingLeft) : 0,
+      contentBottom: c.bottom,
+      actionTop: a.top,
+    }
+  })
+  const okPlace =
+    Math.abs(geometry.actionLeft - geometry.contentLeft) <= 1 &&
+    geometry.markLeft !== null &&
+    Math.abs((geometry.actionLeft - geometry.markLeft) - geometry.gutter) <= 1 &&
+    geometry.actionTop >= geometry.contentBottom - 0.5
+  console.log(
+    `phase20 the copy action aligns with the text, not the status mark ${JSON.stringify(geometry)} ${okPlace ? 'PASS' : 'FAIL'}`,
+  )
+  if (!okPlace) fails++
+
+  const tabsBefore = await page.locator('.editor-tab').count()
+  await bubble.locator('.message-content').hover()
+  await bubble.locator('.message-copy').click()
+  await page.waitForTimeout(150)
+  const copiedMessage = await page.evaluate(() => window.__copied)
+  const checkShown = await bubble
+    .locator('.message-copy')
+    .evaluate((el) => el.classList.contains('copied'))
+  const tabsAfter = await page.locator('.editor-tab').count()
+  const okCopy =
+    copiedMessage === REPLAY_SOURCE && checkShown && tabsAfter === tabsBefore
+  console.log(
+    `phase20 the message copy writes the raw source ${JSON.stringify({ chars: copiedMessage?.length, raw: copiedMessage === REPLAY_SOURCE, check: checkShown, tabsBefore, tabsAfter })} ${okCopy ? 'PASS' : 'FAIL'}`,
+  )
+  if (!okCopy) fails++
+
+  // Live assistant text: the mock's `slow:` turn spaces its chunks so the
+  // running block is observable.  No action row while it streams; one once
+  // agent_finished closes it.
+  await page.fill('textarea.input-bar-textarea', 'slow: a slow answer')
+  await page.click('button:has-text("Send")')
+  let streamingActions = null
+  try {
+    await page.waitForFunction(
+      () => {
+        const rows = [...document.querySelectorAll('.stream-row[data-kind="assistant"]')]
+        return !!rows[rows.length - 1]?.querySelector('.status-mark.running')
+      },
+      { timeout: 8000 },
+    )
+    streamingActions = await page.evaluate(() => {
+      const rows = [...document.querySelectorAll('.stream-row[data-kind="assistant"]')]
+      const row = rows[rows.length - 1]
+      return {
+        text: row.querySelector('.message-content')?.textContent?.slice(0, 32) ?? '',
+        actions: row.querySelectorAll('.message-actions').length,
+      }
+    })
+  } catch {
+    // streamingActions stays null — the assertion below reports it
+  }
+  await page.waitForFunction(
+    () => {
+      const rows = [...document.querySelectorAll('.stream-row[data-kind="assistant"]')]
+      const row = rows[rows.length - 1]
+      return !!row && !row.querySelector('.status-mark.running')
+        && !!row.querySelector('.message-actions')
+    },
+    { timeout: 15000 },
+  )
+  const settledActions = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('.stream-row[data-kind="assistant"]')]
+    return rows[rows.length - 1].querySelectorAll('.message-actions').length
+  })
+  const okStreaming =
+    streamingActions !== null &&
+    streamingActions.actions === 0 &&
+    streamingActions.text.startsWith('more streaming output chunk') &&
+    settledActions === 1
+  console.log(
+    `phase20 a streaming answer has no copy action until it settles ${JSON.stringify({ streaming: streamingActions, settled: settledActions })} ${okStreaming ? 'PASS' : 'FAIL'}`,
+  )
+  if (!okStreaming) fails++
+
+  // The live answer's source keeps every newline the rendered reading
+  // collapses, so exact equality is the proof here.
+  const GENERIC_ANSWER = Array.from(
+    { length: 26 },
+    (_, i) => `more streaming output chunk ${i}\n`,
+  ).join('')
+  const liveRow = page.locator('.stream-row[data-kind="assistant"]').last()
+  await page.evaluate(() => {
+    window.__copied = null
+  })
+  await liveRow.locator('.message-content').hover()
+  await liveRow.locator('.message-copy').click()
+  await page.waitForTimeout(150)
+  const copiedLive = await page.evaluate(() => window.__copied)
+  const okLiveCopy = copiedLive === GENERIC_ANSWER
+  console.log(
+    `phase20 the live answer's copy keeps the source's newlines ${JSON.stringify({ chars: copiedLive?.length, raw: okLiveCopy })} ${okLiveCopy ? 'PASS' : 'FAIL'}`,
+  )
+  if (!okLiveCopy) fails++
+
+  // Live reasoning: "think slow:" holds the thought open long enough to
+  // expand it and inspect it.  There is no copy action while open; once the
+  // answer starts the thought settles and the action appears with the raw
+  // reasoning behind it.
+  await page.fill('textarea.input-bar-textarea', 'think slow: about it')
+  await page.click('button:has-text("Send")')
+  await page.waitForFunction(
+    () => {
+      const blocks = [...document.querySelectorAll('.thinking')]
+      return !!blocks[blocks.length - 1]?.querySelector('.thinking-detail')
+    },
+    { timeout: 8000 },
+  )
+  const liveThought = page.locator('.thinking').last()
+  await liveThought.locator('.thinking-toggle').click()
+  const openActions = await liveThought.locator('.thinking-copy').count()
+  await page.waitForFunction(
+    () => {
+      const blocks = [...document.querySelectorAll('.thinking')]
+      const last = blocks[blocks.length - 1]
+      return !!last && !last.querySelector('.thinking-detail')
+        && !!last.querySelector('.thinking-copy')
+    },
+    { timeout: 15000 },
+  )
+  await page.evaluate(() => {
+    window.__copied = null
+  })
+  await liveThought.locator('.thinking-content').hover()
+  await liveThought.locator('.thinking-copy').click()
+  await page.waitForTimeout(150)
+  const copiedThink = await page.evaluate(() => window.__copied)
+  const okThink = openActions === 0 && copiedThink === THINK_REASONING
+  console.log(
+    `phase20 a streaming thought has no copy action, and the settled one copies the raw reasoning ${JSON.stringify({ openActions, chars: copiedThink?.length, raw: copiedThink === THINK_REASONING })} ${okThink ? 'PASS' : 'FAIL'}`,
+  )
+  if (!okThink) fails++
 }
 
 // The browser connection is an open handle: without closing it the process

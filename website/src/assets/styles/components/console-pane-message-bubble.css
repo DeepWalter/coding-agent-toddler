@@ -17,6 +17,23 @@
   overflow-wrap: break-word;
 }
 
+/* The copy action under a settled answer: in flow, so its left edge is the
+   text's own left edge inside the row's gutter — never the status mark's.
+   It is invisible until the message is hovered or the button itself is
+   focused, and it exists only once the block is closed, so the space it
+   reserves appears once, at settle time, rather than reflowing on hover.
+   The message's flex gap is the separation; a margin would make a dead
+   strip in the hover target. */
+.message-actions {
+  display: flex;
+  opacity: 0;
+}
+
+.message:hover .message-actions,
+.message-actions:focus-within {
+  opacity: 1;
+}
+
 /* User input — bordered box.  The accent border is what marks it as
    something the human typed; the fill matches the input bar's field (both
    are --editor-bg), so console messages and the compose box read as the

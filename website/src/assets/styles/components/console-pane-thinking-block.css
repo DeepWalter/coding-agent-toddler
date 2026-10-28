@@ -54,3 +54,20 @@
   word-wrap: break-word;
   overflow-wrap: break-word;
 }
+
+/* The reasoning's copy action, directly under the body and sharing its left
+   edge.  It stays out of sight until the body (or the button) is hovered or
+   the button is focused.  padding, not margin, so the body and the action
+   are one contiguous hover target — a gap would make the row flicker as the
+   pointer crosses it. */
+.thinking-actions {
+  display: flex;
+  padding-top: 2px;
+  opacity: 0;
+}
+
+.thinking-content:hover ~ .thinking-actions,
+.thinking-actions:hover,
+.thinking-actions:focus-within {
+  opacity: 1;
+}

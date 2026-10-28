@@ -338,6 +338,7 @@ function rowStatus(block: Block) {
         v-else-if="block.kind === 'assistant'"
         :role="'assistant'"
         :text="block.content"
+        :closed="block.closed"
         @open-file="(path) => emit('open-file', path)"
       />
       <ConsolePaneThinkingBlock
