@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 from fastapi import APIRouter, WebSocket
 
 from toddler.config.defaults import MODEL_SLOTS, REASONING_EFFORT_TIERS
+from toddler.session.lock import SessionInUseError
 from toddler.tools.base import PermissionMode
 from toddler.web.events import serialize_transcript
 from toddler.web.runners import (
@@ -488,6 +489,9 @@ async def _cmd_switch_session(
         session_id = str(raw.get("session_id", ""))
         try:
             await state.session_mgr.switch_session(session_id)
+        except SessionInUseError as exc:
+            await _send_error(websocket, "in_use", str(exc))
+            return
         except ValueError as exc:
             await _send_error(websocket, "not_found", str(exc))
             return

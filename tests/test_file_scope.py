@@ -319,10 +319,12 @@ class TestSessionWiring:
     """
 
     @pytest.fixture
-    def settings(self):
+    def settings(self, tmp_path):
         from toddler.config.settings import Settings
 
-        return Settings(restricted_paths=(".env",))
+        return Settings(
+            session_dir=tmp_path, restricted_paths=(".env",),
+        )
 
     @pytest.fixture
     def storage(self, tmp_path):

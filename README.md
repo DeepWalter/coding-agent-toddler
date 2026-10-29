@@ -56,13 +56,27 @@ tod --list-sessions     # List saved sessions
 tod serve               # Browser-based web UI (see Web UI below)
 ```
 
+Sessions are bound to the directory `tod` starts in.  With no `--session`,
+the most recently used session that directory has (CLI or web) is resumed;
+a fresh one is created only when there is none.  `--new-session` forces a
+fresh session, and `--session <id>` resumes a specific one whatever
+directory it came from.
+
+A session is held by one live process at a time: a claim file under
+`~/.toddler/sessions/` (an OS file lock) stops a second `tod` or
+`tod serve` in the same project from appending to the same transcript —
+it gets a fresh session instead.  `--session <id>` naming a session
+another process holds exits with an error rather than silently opening a
+different one.  The claim file is removed on exit and swept up on the
+next start if a process was killed before it could release.
+
 ### CLI Options
 
 | Flag | Purpose |
 | --- | --- |
 | `--plan` | Force plan mode — agent researches before making changes |
 | `--session <id>` | Resume a previous session by ID |
-| `--new-session` | Start fresh (don't reuse the last session) |
+| `--new-session` | Start fresh instead of resuming this directory's last session |
 | `--list-sessions` | List saved sessions and exit |
 | `--model <name>` | Override the LLM model |
 | `--base-url <url>` | Override the API base URL |
@@ -82,9 +96,10 @@ tod serve --port 9000        # custom port
 tod serve --no-open          # don't auto-open the browser
 ```
 
-It accepts the shared LLM flags (`--model`, `--base-url`, `--api-key`,
-`--no-stream`, `--max-iterations`); `--dev` enables CORS for the Vite dev
-server.
+It accepts the shared flags (`--model`, `--base-url`, `--api-key`,
+`--no-stream`, `--max-iterations`, `--new-session`); `--dev` enables CORS
+for the Vite dev server.  Like the CLI, the server resumes the last session
+used in the directory it was started from.
 
 Slash commands work in the input bar too (`/help`, `/mode`, `/clear`,
 `/session`, …) — they dispatch server-side and never reach the LLM.
@@ -140,7 +155,9 @@ toddler/
 - **Context window** — Automatic token counting with LLM-powered compaction to
   handle long sessions.
 - **Session persistence** — SQLite-backed history at `~/.toddler/sessions.db`
-  with multi-conversation support and resumption.
+  with multi-conversation support.  Sessions are bound to the directory they
+  were started in and that project's last one resumes automatically — one
+  live process per session, claimed with a file lock.
 - **Streaming** — Real-time token output via Rich with animated tool-call status.
 
 ## Roadmap

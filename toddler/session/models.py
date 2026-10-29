@@ -55,8 +55,14 @@ class Session:
         Cumulative output tokens across all LLM calls in this session.
     mode:
         Current agent mode — ``"execute"``, ``"plan"``, or ``"plan_execute"``.
+    project_path:
+        Absolute, symlink-resolved working directory the session belongs to.
+        Sessions are resumed by this key when no explicit ID is given, so
+        only a session started in the same directory can be found.  *None*
+        for rows written before the column existed (and for hand-built
+        rows); those are resumable by ID only.
     metadata:
-        Arbitrary key-value pairs (project path, git branch, etc.).
+        Arbitrary key-value pairs (git branch, etc.).
     """
 
     id: str
@@ -67,6 +73,7 @@ class Session:
     total_input_tokens: int = 0
     total_output_tokens: int = 0
     mode: str = "execute"
+    project_path: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @property

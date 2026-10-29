@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 # Current schema version (integer — increments on every schema change)
 # ---------------------------------------------------------------------------
 
-CURRENT_SCHEMA_VERSION = 5
+CURRENT_SCHEMA_VERSION = 6
 
 # ---------------------------------------------------------------------------
 # SQL
@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     total_input_tokens INTEGER NOT NULL DEFAULT 0,
     total_output_tokens INTEGER NOT NULL DEFAULT 0,
     mode TEXT NOT NULL DEFAULT 'execute',
+    project_path TEXT,
     metadata_json TEXT NOT NULL DEFAULT '{}'
 );
 """
@@ -110,6 +111,23 @@ _CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_checkpoints_session "
     "ON checkpoints(session_id, sequence_num);",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Project path normalization
+# ---------------------------------------------------------------------------
+
+
+def normalize_project_path(path: str | Path) -> str:
+    """Return the key a session is bound to for *path*.
+
+    Absolute and symlink-resolved, so the same directory spelled two ways
+    — a symlinked home, a trailing slash, a relative ``.`` — still finds
+    the sessions started in it.  Every write and every lookup goes through
+    this, or the two sides would silently stop matching.
+    """
+    return str(Path(path).expanduser().resolve())
+
 
 # ======================================================================
 # SQLiteDatabase
@@ -174,8 +192,8 @@ class SQLiteDatabase:
                 """INSERT INTO sessions
                    (id, title, created_at, updated_at, message_count,
                     total_input_tokens, total_output_tokens, mode,
-                    metadata_json)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    project_path, metadata_json)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     session.id,
                     session.title,
@@ -185,6 +203,7 @@ class SQLiteDatabase:
                     session.total_input_tokens,
                     session.total_output_tokens,
                     session.mode,
+                    session.project_path,
                     _json_dumps(session.metadata),
                 ),
             )
@@ -226,6 +245,29 @@ class SQLiteDatabase:
 
         return [self._row_to_summary(r) for r in rows]
 
+    def get_latest_session_for_project(
+        self, project_path: str,
+    ) -> Session | None:
+        """Return the most recently updated session bound to *project_path*.
+
+        Empty sessions are skipped: one with no messages is startup
+        residue — a crash, or a process that quit before its first turn —
+        and resuming it would shadow the last session actually used.
+        """
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                """SELECT * FROM sessions
+                   WHERE project_path = ? AND message_count > 0
+                   ORDER BY updated_at DESC
+                   LIMIT 1""",
+                (project_path,),
+            ).fetchone()
+        finally:
+            conn.close()
+
+        return self._row_to_session(row) if row else None
+
     def update_session(self, session: Session) -> bool:
         """Persist changes to *session*.  Returns ``True`` if a row was updated."""  # noqa: E501
         conn = self._connect()
@@ -234,7 +276,7 @@ class SQLiteDatabase:
                 """UPDATE sessions
                    SET title = ?, updated_at = ?, message_count = ?,
                        total_input_tokens = ?, total_output_tokens = ?,
-                       mode = ?, metadata_json = ?
+                       mode = ?, project_path = ?, metadata_json = ?
                    WHERE id = ?""",
                 (
                     session.title,
@@ -243,6 +285,7 @@ class SQLiteDatabase:
                     session.total_input_tokens,
                     session.total_output_tokens,
                     session.mode,
+                    session.project_path,
                     _json_dumps(session.metadata),
                     session.id,
                 ),
@@ -821,6 +864,28 @@ class SQLiteDatabase:
             conn.commit()
             current = 5
 
+        if current < 6:
+            logger.info(
+                "Migrating to schema v6 — binding sessions to a project."
+            )
+            # Before v6 the working directory lived only inside the
+            # metadata blob; the backfill moves it into an indexed column
+            # so startup can find a project's last session cheaply.
+            _add_column_if_missing(
+                conn, "sessions", "project_path",
+                "TEXT",
+            )
+            _backfill_project_paths(conn)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sessions_project "
+                "ON sessions(project_path, updated_at);"
+            )
+            conn.execute(
+                "UPDATE _schema_version SET version = 6"
+            )
+            conn.commit()
+            current = 6
+
         if current != CURRENT_SCHEMA_VERSION:
             logger.warning(
                 f"Database schema is at v{current}, but code expects "
@@ -842,6 +907,7 @@ class SQLiteDatabase:
             total_input_tokens=row["total_input_tokens"],
             total_output_tokens=row["total_output_tokens"],
             mode=row["mode"],
+            project_path=row["project_path"],
             metadata=_json_loads(row["metadata_json"]),
         )
 
@@ -938,6 +1004,30 @@ def _add_column_if_missing(
     if column not in existing:
         conn.execute(
             f"ALTER TABLE {table} ADD COLUMN {column} {col_def}"
+        )
+
+
+def _backfill_project_paths(conn: sqlite3.Connection) -> None:
+    """Fill ``sessions.project_path`` from the pre-v6 ``metadata["cwd"]``.
+
+    Rows without a recorded cwd stay *NULL* — guessing the directory from
+    wherever the migration happens to run would bind a session to a
+    project it was never started in.
+    """
+    rows = conn.execute(
+        "SELECT id, metadata_json FROM sessions WHERE project_path IS NULL"
+    ).fetchall()
+    for row in rows:
+        try:
+            metadata = _json_loads(row["metadata_json"])
+        except (TypeError, ValueError):
+            continue
+        cwd = metadata.get("cwd") if isinstance(metadata, dict) else None
+        if not isinstance(cwd, str) or not cwd:
+            continue
+        conn.execute(
+            "UPDATE sessions SET project_path = ? WHERE id = ?",
+            (normalize_project_path(cwd), row["id"]),
         )
 
 

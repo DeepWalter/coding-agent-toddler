@@ -239,6 +239,30 @@ class TestV2ToV3Migration:
         )
         conn.execute("INSERT INTO _schema_version (version) VALUES (2)")
 
+        # v2 sessions table — WITHOUT project_path; the working directory
+        # lives only inside the metadata blob.
+        conn.execute(
+            """CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                title TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                message_count INTEGER NOT NULL DEFAULT 0,
+                total_input_tokens INTEGER NOT NULL DEFAULT 0,
+                total_output_tokens INTEGER NOT NULL DEFAULT 0,
+                mode TEXT NOT NULL DEFAULT 'execute',
+                metadata_json TEXT NOT NULL DEFAULT '{}'
+            )"""
+        )
+        conn.execute(
+            """INSERT INTO sessions
+               (id, title, created_at, updated_at, message_count,
+                metadata_json)
+               VALUES ('s1', 'old', '2024-01-01T00:00:00',
+                       '2024-01-01T00:00:00', 3,
+                       '{"cwd": "/tmp/old-project"}')"""
+        )
+
         # v2 conversations table — WITHOUT total_tokens / model.
         conn.execute(
             """CREATE TABLE conversations (
@@ -269,20 +293,43 @@ class TestV2ToV3Migration:
         db.open()
 
         conn = sqlite3.connect(str(v2_db_path))
-        cols = {
+        conv_cols = {
             row[1]
             for row in conn.execute("PRAGMA table_info(conversations)")
         }
+        session_cols = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(sessions)")
+        }
         conn.close()
 
-        assert "total_tokens" in cols
-        assert "model" in cols
-        assert "reasoning_effort" in cols
-        assert "model_slot" in cols
+        assert "total_tokens" in conv_cols
+        assert "model" in conv_cols
+        assert "reasoning_effort" in conv_cols
+        assert "model_slot" in conv_cols
         # Old columns stay (not dropped — SQLite table-recreate would be
         # overkill for harmless dead columns).
-        assert "total_input_tokens" in cols
-        assert "total_output_tokens" in cols
+        assert "total_input_tokens" in conv_cols
+        assert "total_output_tokens" in conv_cols
+        assert "project_path" in session_cols
+
+    def test_migration_backfills_project_path_from_metadata_cwd(
+        self, v2_db_path,
+    ):
+        """A pre-v6 session is still recoverable by the directory it ran in."""
+        from toddler.session.database import (
+            SQLiteDatabase,
+            normalize_project_path,
+        )
+
+        db = SQLiteDatabase(v2_db_path)
+        db.open()
+
+        session = db.get_session("s1")
+        assert session is not None
+        assert session.project_path == normalize_project_path(
+            "/tmp/old-project"
+        )
 
     def test_migration_sets_the_current_schema_version(self, v2_db_path):
         """After migrating, the ladder ends at what the code expects."""
@@ -296,4 +343,4 @@ class TestV2ToV3Migration:
             "SELECT version FROM _schema_version"
         ).fetchone()[0]
         conn.close()
-        assert version == CURRENT_SCHEMA_VERSION == 5
+        assert version == CURRENT_SCHEMA_VERSION == 6

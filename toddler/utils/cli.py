@@ -57,6 +57,11 @@ def _add_common_args(p: argparse.ArgumentParser) -> None:
         ),
     )
     p.add_argument(
+        "--new-session",
+        action="store_true",
+        help="Start a fresh session instead of resuming this directory's last one.",
+    )
+    p.add_argument(
         "--verbose", "-v",
         action="store_true",
         help="Enable debug logging.",
@@ -85,11 +90,6 @@ def build_argparser() -> argparse.ArgumentParser:
         metavar="ID",
         default=None,
         help="Resume a previous session by its ID.",
-    )
-    p.add_argument(
-        "--new-session",
-        action="store_true",
-        help="Start a new session (don't reuse the last one).",
     )
     p.add_argument(
         "--list-sessions",

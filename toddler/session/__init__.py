@@ -1,6 +1,7 @@
 """Session persistence — models, SQLite database, storage, and session manager."""
 
 from toddler.session.database import SQLiteDatabase
+from toddler.session.lock import SessionInUseError
 from toddler.session.manager import SessionManager
 from toddler.session.models import (
     Conversation,
@@ -15,6 +16,7 @@ __all__ = [
     "Conversation",
     "ConversationSummary",
     "Session",
+    "SessionInUseError",
     "SessionManager",
     "StorageManager",
     "SessionSummary",

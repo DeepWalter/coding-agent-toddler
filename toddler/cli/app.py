@@ -90,73 +90,87 @@ class CLIApp:
     # Entry points
     # ==================================================================
 
-    async def _resolve_session(self, session_id: str | None) -> None:
+    async def _resolve_session(
+        self,
+        session_id: str | None,
+        *,
+        new_session: bool = False,
+    ) -> None:
         """Resolve the session, then apply an explicit CLI selection.
 
         A conversation's own model normally wins on resume — but a flag the
         user typed is intent, so it is applied *after* the row has been
         restored rather than being swallowed by it.
         """
-        await self._session_mgr.resolve(session_id)
+        await self._session_mgr.resolve(session_id, new_session=new_session)
         if self._model_slot is not None:
             self._session_mgr.set_model(self._model_slot)
         if self._effort is not None:
             self._session_mgr.set_effort(self._effort)
 
-    async def run_repl(self, *, session_id: str | None = None) -> None:
+    async def run_repl(
+        self,
+        *,
+        session_id: str | None = None,
+        new_session: bool = False,
+    ) -> None:
         """Start the interactive REPL loop.
 
         Parameters
         ----------
         session_id:
-            When set, resume the session with this ID.  When *None*,
-            a fresh session is created.
+            When set, resume the session with this ID.
+        new_session:
+            Start a fresh session instead of resuming this directory's
+            last one.
         """
-        await self._resolve_session(session_id)
-        self._renderer.info(
-            f"Session: {self._session_mgr.session.id[:12]}..."
-        )
-
-        self._renderer.banner()
-        self._renderer.info(
-            f"Model: {self._session_mgr.model} │ "
-            f"Streaming: {'on' if self._settings.streaming_enabled else 'off'}"
-        )
-        self._renderer.info('Type /help for commands, /quit to exit.')
-
-        while True:
-            self._renderer.prompt_header(
-                mode_label=self._session_mgr.mode_label,
-                model=self._session_mgr.model,
-                context_usage_pct=self._session_mgr.context_usage_pct,
+        try:
+            await self._resolve_session(session_id, new_session=new_session)
+            self._renderer.info(
+                f"Session: {self._session_mgr.session.id[:12]}..."
             )
-            try:
-                user_input = await self._input.prompt()
-            except KeyboardInterrupt:
-                self._renderer.info("Interrupted.  Type /quit to exit.")
-                continue
 
-            if user_input is None:
-                # Ctrl+D on empty line → exit
-                self._renderer.info("Goodbye.")
-                break
+            self._renderer.banner()
+            self._renderer.info(
+                f"Model: {self._session_mgr.model} │ "
+                f"Streaming: {'on' if self._settings.streaming_enabled else 'off'}"
+            )
+            self._renderer.info('Type /help for commands, /quit to exit.')
 
-            user_input = user_input.strip()
-            if not user_input:
-                continue
+            while True:
+                self._renderer.prompt_header(
+                    mode_label=self._session_mgr.mode_label,
+                    model=self._session_mgr.model,
+                    context_usage_pct=self._session_mgr.context_usage_pct,
+                )
+                try:
+                    user_input = await self._input.prompt()
+                except KeyboardInterrupt:
+                    self._renderer.info("Interrupted.  Type /quit to exit.")
+                    continue
 
-            # --- Slash commands ---
-            if user_input.startswith("/"):
-                handled = await self._handle_slash_command(user_input)
-                if not handled:
-                    break  # /quit or /exit
-                continue
+                if user_input is None:
+                    # Ctrl+D on empty line → exit
+                    self._renderer.info("Goodbye.")
+                    break
 
-            # --- Run the agent ---
-            await self._run_agent_turn(user_input)
+                user_input = user_input.strip()
+                if not user_input:
+                    continue
 
-        # --- Clean up empty session on exit ---
-        await self._session_mgr.prune_if_empty()
+                # --- Slash commands ---
+                if user_input.startswith("/"):
+                    handled = await self._handle_slash_command(user_input)
+                    if not handled:
+                        break  # /quit or /exit
+                    continue
+
+                # --- Run the agent ---
+                await self._run_agent_turn(user_input)
+        finally:
+            # Release the session for other processes (and prune it when
+            # nothing ever happened in it) on every exit path.
+            await self._session_mgr.close()
 
     async def run_one_shot(
         self,
@@ -164,18 +178,20 @@ class CLIApp:
         *,
         force_plan: bool = False,
         session_id: str | None = None,
+        new_session: bool = False,
     ) -> None:
         """Run a single agent invocation and exit.
 
         When a session manager is available, the turn is persisted so the
         interaction can be resumed later via ``--session``.
         """
-        await self._resolve_session(session_id)
-
-        await self._run_agent_turn(query, force_plan=force_plan)
-
-        # Persist after one-shot turn.
-        await self._session_mgr.save()
+        try:
+            await self._resolve_session(session_id, new_session=new_session)
+            await self._run_agent_turn(query, force_plan=force_plan)
+            # Persist after one-shot turn.
+            await self._session_mgr.save()
+        finally:
+            await self._session_mgr.close()
 
     # ==================================================================
     # Agent turn

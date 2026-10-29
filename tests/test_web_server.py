@@ -4,11 +4,28 @@ static mount with its dist-missing fallback.
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi.testclient import TestClient
 
+from tests.mocks import MockLLMProvider
 from toddler.config.settings import Settings
-from toddler.session import SQLiteDatabase
+from toddler.llm import Message
+from toddler.session import SessionManager, SQLiteDatabase, StorageManager
 from toddler.web.app import create_app
+
+
+def _seed_session(tmp_path):
+    """Write a used session for *tmp_path* straight into the shared DB."""
+    db = SQLiteDatabase(tmp_path / "sessions.db")
+    db.open()
+    storage = StorageManager(db)
+    session = storage.create(cwd=str(tmp_path))
+    conversation = storage.create_conversation(session.id)
+    storage.append_message(
+        session.id, Message.user("hi"), conversation_id=conversation.id,
+    )
+    return session
 
 
 class TestCreateApp:
@@ -47,6 +64,54 @@ class TestCreateApp:
         db = SQLiteDatabase(tmp_path / "sessions.db")
         db.open()
         assert db.list_sessions() == []
+
+    def test_startup_resumes_the_last_session_for_the_repo(self, tmp_path):
+        """``tod serve`` in a project with history reopens that session
+        instead of starting a new one every time."""
+        prior = _seed_session(tmp_path)
+        settings = Settings(session_dir=tmp_path)
+        app = create_app(settings, repo_root=tmp_path)
+        with TestClient(app) as client:
+            state = client.app.state.web
+            assert state.session_mgr.session.id == prior.id
+        # A resumed session holds messages, so shutdown does not prune it.
+        db = SQLiteDatabase(tmp_path / "sessions.db")
+        db.open()
+        assert db.get_session(prior.id) is not None
+
+    def test_startup_opens_a_new_session_when_the_last_is_held(self, tmp_path):
+        """Another live process owns the project's last session — the
+        server must not append to the same transcript."""
+        prior = _seed_session(tmp_path)
+        settings = Settings(session_dir=tmp_path)
+        db = SQLiteDatabase(tmp_path / "sessions.db")
+        db.open()
+        holder = SessionManager(
+            settings,
+            StorageManager(db),
+            MockLLMProvider(),
+            repo_root=tmp_path,
+        )
+        asyncio.run(holder.resolve())
+        assert holder.session.id == prior.id
+
+        try:
+            app = create_app(settings, repo_root=tmp_path)
+            with TestClient(app) as client:
+                state = client.app.state.web
+                assert state.session_mgr.session.id != prior.id
+        finally:
+            asyncio.run(holder.close())
+
+    def test_new_session_starts_fresh(self, tmp_path):
+        prior = _seed_session(tmp_path)
+        settings = Settings(session_dir=tmp_path)
+        app = create_app(
+            settings, repo_root=tmp_path, new_session=True,
+        )
+        with TestClient(app) as client:
+            state = client.app.state.web
+            assert state.session_mgr.session.id != prior.id
 
     def test_missing_dist_returns_build_hint(self, tmp_path):
         settings = Settings(session_dir=tmp_path)

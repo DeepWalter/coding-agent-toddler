@@ -157,10 +157,10 @@ class TestCompactContextPersistence:
     """End-to-end: manual compaction persists and survives a reload."""
 
     @pytest.fixture
-    def settings(self):
+    def settings(self, tmp_path):
         from toddler.config.settings import Settings
 
-        return Settings(streaming_enabled=False)
+        return Settings(session_dir=tmp_path, streaming_enabled=False)
 
     @pytest.fixture
     def storage_mgr(self, tmp_path):
@@ -197,7 +197,7 @@ class TestCompactContextPersistence:
             await mgr.save()
 
     @pytest.mark.asyncio
-    async def test_compact_context_persists_and_reloads(self, mgr):
+    async def test_compact_context_persists_and_reloads(self, mgr, tmp_path):
         await self._run_turns(mgr, 7)  # 1 system + 14 body messages
         assert len(mgr.context.messages) == 15
         assert mgr.conversation.message_count == 15
@@ -221,8 +221,9 @@ class TestCompactContextPersistence:
         from toddler.config.settings import Settings
         from toddler.session.manager import SessionManager
 
+        await mgr.close()  # A restart: the first process is gone.
         mgr2 = SessionManager(
-            settings=Settings(streaming_enabled=False),
+            settings=Settings(session_dir=tmp_path, streaming_enabled=False),
             storage_manager=mgr.storage_manager,
             llm=_StubLLM(),
         )

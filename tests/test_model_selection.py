@@ -334,6 +334,7 @@ class TestSelection:
         mgr.set_effort("low")
         session_id = mgr.session.id
 
+        await mgr.close()  # A restart: the first process is gone.
         reloaded = SessionManager(
             settings, storage_mgr, MockLLMProvider(), repo_root=tmp_path,
         )
@@ -391,6 +392,7 @@ class TestModelSlotProvenance:
         assert mgr.conversation.model_slot == "pro"
         session_id = mgr.session.id
 
+        await mgr.close()  # A restart: the first process is gone.
         reloaded = SessionManager(
             settings, storage_mgr, MockLLMProvider(), repo_root=tmp_path,
         )

@@ -22,6 +22,7 @@ from toddler.config.models import wire_model
 from toddler.config.settings import Settings
 from toddler.llm import OpenAICompatibleProvider
 from toddler.session import (
+    SessionInUseError,
     SessionManager,
     SQLiteDatabase,
     StorageManager,
@@ -124,6 +125,7 @@ def main() -> None:
             port=args.port,
             open_browser=not args.no_open,
             dev=args.dev,
+            new_session=args.new_session,
         )
         return
 
@@ -166,18 +168,30 @@ def main() -> None:
     # --- Dispatch mode ---
     query = " ".join(args.query).strip() if args.query else ""
 
-    if query:
-        # One-shot mode
-        asyncio.run(
-            app.run_one_shot(
-                query,
-                force_plan=args.plan,
-                session_id=session_id,
+    try:
+        if query:
+            # One-shot mode
+            asyncio.run(
+                app.run_one_shot(
+                    query,
+                    force_plan=args.plan,
+                    session_id=session_id,
+                    new_session=args.new_session,
+                )
             )
-        )
-    else:
-        # REPL mode
-        asyncio.run(app.run_repl(session_id=session_id))
+        else:
+            # REPL mode
+            asyncio.run(
+                app.run_repl(
+                    session_id=session_id,
+                    new_session=args.new_session,
+                )
+            )
+    except SessionInUseError as exc:
+        # An explicit --session is an instruction, not a preference: it
+        # is refused loudly rather than replaced with a different session.
+        logger.error("%s", exc)
+        raise SystemExit(1) from exc
 
 
 if __name__ == "__main__":

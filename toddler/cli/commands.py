@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from toddler.config import defaults
+from toddler.session.lock import SessionInUseError
 from toddler.tools.base import PermissionMode
 
 if TYPE_CHECKING:
@@ -744,7 +745,7 @@ class SlashCommandDispatcher:
                     f"({s.message_count} messages)"
                 ),
             )
-        except ValueError as exc:
+        except (SessionInUseError, ValueError) as exc:
             return CommandResult(
                 continue_repl=True,
                 message=str(exc),

@@ -825,9 +825,10 @@ class MockPlanLLMProvider(BaseLLMProvider):
 class TestSessionManagerPlanWorkflow:
 
     @pytest.fixture
-    def settings(self):
+    def settings(self, tmp_path):
         from toddler.config.settings import Settings
         return Settings(
+            session_dir=tmp_path,
             streaming_enabled=False,
         )
 
@@ -1892,9 +1893,9 @@ class TestCLIAppPlanApproval:
     """
 
     @pytest.fixture
-    def settings(self):
+    def settings(self, tmp_path):
         from toddler.config.settings import Settings
-        return Settings(streaming_enabled=False)
+        return Settings(session_dir=tmp_path, streaming_enabled=False)
 
     @pytest.fixture
     def storage_mgr(self, tmp_path):

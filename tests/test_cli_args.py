@@ -28,6 +28,7 @@ _SHARED_FLAGS = [
     ("--api-key", "k"),
     ("--max-iterations", "7"),
     ("--reasoning-effort", "low"),
+    ("--new-session", None),
     ("--verbose", None),
 ]
 

@@ -13,10 +13,11 @@ import logging
 import os
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from toddler.llm import Message, MessageBlock, TokenUsage
-from toddler.session.database import SQLiteDatabase
+from toddler.session.database import SQLiteDatabase, normalize_project_path
 from toddler.session.models import (
     Conversation,
     ConversationSummary,
@@ -67,17 +68,18 @@ class StorageManager:
         Parameters
         ----------
         cwd:
-            Working directory for this session.  Stored in
-            ``metadata["cwd"]`` and used as a fallback title.
+            Working directory for this session.  Recorded as the session's
+            normalized :attr:`Session.project_path` — the key a later
+            startup resumes by — and used as a fallback title.
             Defaults to :func:`os.getcwd`.
         """
         cwd = cwd or os.getcwd()
-        merged_metadata = {"cwd": cwd, **(metadata or {})}
         session = Session(
             id=uuid.uuid4().hex,
             title=title or os.path.basename(cwd),
             mode=mode,
-            metadata=merged_metadata,
+            project_path=normalize_project_path(cwd),
+            metadata=dict(metadata or {}),
         )
         self._db.create_session(session)
         logger.info(f"Created session {session.id} (mode={mode}).")
@@ -116,15 +118,28 @@ class StorageManager:
 
     @staticmethod
     def _warn_cwd_mismatch(session: Session, cwd: str | None) -> None:
-        """Log a warning if *session* was created in a different directory."""
-        stored_cwd = session.metadata.get("cwd") if session.metadata else None
-        current_cwd = cwd or os.getcwd()
-        if stored_cwd and stored_cwd != current_cwd:
+        """Log a warning if *session* is bound to a different directory."""
+        stored_path = session.project_path
+        if not stored_path:
+            return
+        current_path = normalize_project_path(cwd or os.getcwd())
+        if stored_path != current_path:
             logger.warning(
                 f"Session {session.id[:12]} was created in "
-                f"{stored_cwd}, but current directory is "
-                f"{current_cwd}. Tool calls may fail if paths differ."
+                f"{stored_path}, but current directory is "
+                f"{current_path}. Tool calls may fail if paths differ."
             )
+
+    def last_for_project(self, project_path: str | Path) -> Session | None:
+        """Return the most recently used session for *project_path*.
+
+        "Used" means it holds at least one message — a session that never
+        got one is startup residue, not a conversation worth resuming.
+        *None* when the project has no such session.
+        """
+        return self._db.get_latest_session_for_project(
+            normalize_project_path(project_path),
+        )
 
     def list_all(self) -> list[SessionSummary]:
         """Return all sessions, most-recently-updated first."""

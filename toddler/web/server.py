@@ -21,6 +21,7 @@ def run_server(
     port: int = 8000,
     open_browser: bool = True,
     dev: bool = False,
+    new_session: bool = False,
 ) -> None:
     """Run the FastAPI app under uvicorn (blocks until interrupted).
 
@@ -28,7 +29,12 @@ def run_server(
     CLI's ``setup_logging`` file handler already routes INFO+ messages to
     ``~/.toddler/logs``.
     """
-    app = create_app(settings, repo_root=Path.cwd(), dev=dev)
+    app = create_app(
+        settings,
+        repo_root=Path.cwd(),
+        dev=dev,
+        new_session=new_session,
+    )
 
     if open_browser:
         # A wildcard bind host isn't openable by the browser — point it

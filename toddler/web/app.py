@@ -36,6 +36,7 @@ def create_app(
     *,
     repo_root: Path = _DEFAULT_REPO_ROOT,
     dev: bool = False,
+    new_session: bool = False,
     llm: BaseLLMProvider | None = None,
 ) -> FastAPI:
     """Build the FastAPI app with lifespan wiring and the static mount.
@@ -50,6 +51,9 @@ def create_app(
         is expected to live.  Defaults to the current directory.
     dev:
         Enable dev-mode CORS for the Vite dev server at ``:5173``.
+    new_session:
+        Start a fresh session instead of resuming the last one used in
+        *repo_root* — the same default the CLI has (``--new-session``).
     llm:
         Optional provider override — tests inject a mock provider so
         turn flows need no network.  Defaults to the real
@@ -68,7 +72,7 @@ def create_app(
         session_mgr = SessionManager(
             settings, storage_mgr, provider, repo_root=root,
         )
-        await session_mgr.resolve()
+        await session_mgr.resolve(new_session=new_session)
         app.state.web = WebAppState(
             settings=settings,
             db=db,
@@ -89,8 +93,9 @@ def create_app(
         try:
             yield
         finally:
-            # CLI parity: prune the fresh empty session created on startup.
-            await session_mgr.prune_if_empty()
+            # CLI parity: drop the claim so another process can take the
+            # session, and prune it when nothing ever happened in it.
+            await session_mgr.close()
             db.close()
 
     app = FastAPI(title="Toddler", lifespan=lifespan)

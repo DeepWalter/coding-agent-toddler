@@ -33,6 +33,7 @@ from toddler.config.models import TurnConfig, resolve_slot
 from toddler.config.settings import Settings
 from toddler.context.manager import CompactionResult, ContextManager
 from toddler.llm import BaseLLMProvider, Message, TokenUsage
+from toddler.session.lock import SessionLock, SessionLockManager
 from toddler.session.models import MAX_TITLE_LENGTH, Conversation, Session
 from toddler.session.storage import StorageManager
 from toddler.tools import create_default_registry
@@ -144,11 +145,22 @@ class SessionManager:
         # Persistence tracking (manager owns this, not the context).
         self._base_seq: int = 0
 
+        # One live process per session — the claim file under
+        # ``<session_dir>/sessions`` is held for as long as this manager
+        # owns the session and removed in :meth:`close`.
+        self._locks = SessionLockManager(settings.session_dir / "sessions")
+        self._lock: SessionLock | None = None
+
     # ==================================================================
     # Session lifecycle
     # ==================================================================
 
-    async def resolve(self, session_id: str | None = None) -> Session:
+    async def resolve(
+        self,
+        session_id: str | None = None,
+        *,
+        new_session: bool = False,
+    ) -> Session:
         """Resolve or create a session and activate its conversation context.
 
         Must be called once before :meth:`process_turn`.  After this returns,
@@ -157,10 +169,21 @@ class SessionManager:
         Parameters
         ----------
         session_id:
-            When set, resume the session with this ID.  When *None*,
-            a fresh session is created.
+            When set, resume the session with this ID.  Raises
+            :class:`~toddler.session.lock.SessionInUseError` when another
+            process already holds it.
+        new_session:
+            Start a fresh session even when the project has one to resume.
+            Without a *session_id* and without this flag, the most
+            recently used session started in the working directory is
+            resumed when it is free; a project with no history — or whose
+            last session another process holds — gets a new one.
         """
-        self._session = self._storage_mgr.get_or_create(session_id)
+        # Re-resolving starts over; drop any claim from a previous call.
+        self._release_lock()
+        self._session, self._lock = self._pick_session(
+            session_id, new_session=new_session,
+        )
 
         self._ctx = ContextManager(
             self._llm,
@@ -177,6 +200,61 @@ class SessionManager:
             self._ckpt_mgr.set_session(self._session.id)
         logger.info(f"Session resolved: {self._session.id[:12]}...")
         return self._session
+
+    def _pick_session(
+        self, session_id: str | None, *, new_session: bool,
+    ) -> tuple[Session, SessionLock]:
+        """Choose the session to run and claim it.
+
+        An explicit ID is claimed as asked — a busy one raises rather than
+        quietly opening something else.  Auto-resume is a preference, not
+        an instruction: the project's last used session is taken when it
+        is free, and a fresh session is opened when another process
+        already has it.
+        """
+        if session_id:
+            session = self._storage_mgr.get_or_create(
+                session_id, cwd=str(self._repo_root),
+            )
+            return session, self._locks.acquire(session.id)
+
+        if not new_session:
+            last = self._storage_mgr.last_for_project(self._repo_root)
+            if last is not None:
+                lock = self._locks.try_acquire(last.id)
+                if lock is not None:
+                    logger.info(
+                        f"Resuming session {last.id[:12]} for "
+                        f"{self._repo_root}."
+                    )
+                    return last, lock
+                logger.info(
+                    f"Session {last.id[:12]} is open in another process — "
+                    f"starting a new one."
+                )
+
+        session = self._storage_mgr.create(cwd=str(self._repo_root))
+        return session, self._locks.acquire(session.id)
+
+    def _release_lock(self) -> None:
+        """Drop this manager's claim on its session, if it has one."""
+        lock, self._lock = self._lock, None
+        if lock is not None:
+            lock.release()
+
+    async def close(self) -> None:
+        """Release the session and prune it if nothing ever happened in it.
+
+        Every exit path calls this — REPL, one-shot, and the web lifespan
+        — so the claim file is deleted rather than left for the next
+        process's sweep.  Pruning happens before the release, so the
+        delete cannot race a process that has just claimed the session.
+        """
+        try:
+            if self._lock is not None:
+                await self.prune_if_empty()
+        finally:
+            self._release_lock()
 
     @property
     def session(self) -> Session | None:
@@ -874,7 +952,9 @@ class SessionManager:
     async def switch_session(self, session_id: str) -> None:
         """Switch to a different session by ID.
 
-        Raises :class:`ValueError` if the session is not found.
+        Raises :class:`ValueError` if the session is not found, and
+        :class:`~toddler.session.lock.SessionInUseError` if another
+        process holds it — the manager stays on the session it was on.
         """
         session = self._storage_mgr.get(session_id)
         if session is None:
@@ -882,18 +962,40 @@ class SessionManager:
                 f"Session '{session_id[:16]}...' not found."
             )
 
-        self._session = session
-        # Create new context and load active conversation.
-        self._ctx = ContextManager(
-            self._llm,
-            config=self._settings_config(),
-            project_root=self._repo_root,
-            memory_dir=self._settings.session_dir,
+        if self._session is not None and session.id == self._session.id:
+            return  # Already here — and re-claiming our own file would fail.
+
+        # Claim the target before disturbing the current one: a busy
+        # session raises here, leaving the manager where it was.
+        lock = self._locks.acquire(session.id)
+
+        # Build the new context and swap it in only once it has loaded; a
+        # failure leaves — and keeps claiming — the session we came from.
+        previous_state = (
+            self._session, self._ctx, self._conv,
+            self._selection, self._base_seq,
         )
-        self._conv = self._storage_mgr.get_or_create_active_conversation(
-            self._session.id,
-        )
-        await self._activate_context()
+        try:
+            self._session = session
+            self._ctx = ContextManager(
+                self._llm,
+                config=self._settings_config(),
+                project_root=self._repo_root,
+                memory_dir=self._settings.session_dir,
+            )
+            self._conv = self._storage_mgr.get_or_create_active_conversation(
+                session.id,
+            )
+            await self._activate_context()
+        except Exception:
+            (
+                self._session, self._ctx, self._conv,
+                self._selection, self._base_seq,
+            ) = previous_state
+            # This process is not switching after all — do not keep
+            # another process out of the session it does not use.
+            lock.release()
+            raise
 
         # Reset the agent and the planner so they capture the new context —
         # both hold the one they were built with.
@@ -902,6 +1004,11 @@ class SessionManager:
 
         if self._ckpt_mgr is not None:
             self._ckpt_mgr.set_session(self._session.id)
+
+        # The switch succeeded: let go of the session we came from.
+        previous, self._lock = self._lock, lock
+        if previous is not None:
+            previous.release()
 
     # ==================================================================
     # Persistence
