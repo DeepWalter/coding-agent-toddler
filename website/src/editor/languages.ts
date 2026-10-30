@@ -172,3 +172,28 @@ export function languageForName(name: string | null): Language | null {
   // No trim: markdown-it passes the first whitespace-separated word already.
   return byFence[name.toLowerCase()] ?? null
 }
+
+// The node a grammar parses a top-level import statement as, plus a cheap
+// line prefilter for the fold service (it runs before the syntax tree is
+// consulted, so most lines bail out on a regex).  Only these two families
+// fold imports; every other grammar keeps its own fold props.
+const PY_IMPORT = { node: 'ImportStatement', line: /^\s*(?:import|from)\s/ }
+const JS_IMPORT = { node: 'ImportDeclaration', line: /^\s*import\s/ }
+
+/** Import-fold metadata for a grammar, or null when its imports are not
+ *  folded.  Kept beside the grammar table so the language→node-name
+ *  knowledge lives in one place. */
+export function importFoldInfo(
+  language: Language | null,
+): { node: string; line: RegExp } | null {
+  if (language === T.python) return PY_IMPORT
+  if (
+    language === T.javascript ||
+    language === T.typescript ||
+    language === T.jsx ||
+    language === T.tsx
+  ) {
+    return JS_IMPORT
+  }
+  return null
+}

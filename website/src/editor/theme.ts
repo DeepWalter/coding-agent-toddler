@@ -77,7 +77,9 @@ export const highlightStyle = HighlightStyle.define([
 ])
 
 // Matches the old `.editor-textarea` look (the old stylesheet): --editor-bg
-// background, --text color, 13px/1.5 mono, 10px 12px padding, tab-size 2.
+// background, --text color, 13px/1.5 mono, 10px 12px padding, tab-size 2 —
+// except the content's left edge, pulled in to 8px so the text hugs the fold
+// gutter instead of leaving a double gap behind the markers.
 // The line number gutter sits on --editor-surface-2; numerals are
 // --line-number, the active line's brighter on --active-line.  Selection
 // and caret use the theme's dedicated vars.
@@ -90,7 +92,7 @@ export const editorTheme = EditorView.theme({
     lineHeight: '1.5',
   },
   '.cm-content': {
-    padding: '10px 12px',
+    padding: '10px 12px 10px 0',
     fontFamily: 'var(--mono)',
     caretColor: 'var(--cursor)',
     tabSize: '2',
@@ -108,6 +110,45 @@ export const editorTheme = EditorView.theme({
   },
   '.cm-lineNumbers .cm-activeLineGutter': {
     color: 'var(--line-number-active)',
+  },
+  // Folding chrome: every marker is a fixed 16px square centered in the line
+  // row — one chevron path, turned a quarter when the fold is closed — so
+  // folding and unfolding never shift its center.  It reads as gutter chrome
+  // (line-number gray) and takes the accent on hover; the collapsed
+  // placeholder is a small chip on the gutter surface that brightens to the
+  // hover fill.
+  '.cm-foldGutter': {
+    color: 'var(--line-number)',
+  },
+  '.cm-foldGutter .cm-gutterElement': {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  '.cm-foldGutter .cm-foldMarker': {
+    display: 'block',
+    width: '16px',
+    height: '16px',
+    padding: '0',
+  },
+  '.cm-foldGutter .cm-foldMarker svg': {
+    display: 'block',
+  },
+  '.cm-foldGutter .cm-foldMarkerClosed svg': {
+    transform: 'rotate(-90deg)',
+  },
+  '.cm-foldGutter .cm-gutterElement:hover': {
+    color: 'var(--accent-hover)',
+    backgroundColor: 'var(--editor-surface-3)',
+  },
+  '.cm-foldPlaceholder': {
+    backgroundColor: 'var(--editor-surface-2)',
+    border: '1px solid var(--editor-border)',
+    color: 'var(--text-subtle)',
+  },
+  '.cm-foldPlaceholder:hover': {
+    backgroundColor: 'var(--editor-surface-3)',
+    color: 'var(--accent-hover)',
   },
   '.cm-activeLine': {
     backgroundColor: 'var(--active-line)',

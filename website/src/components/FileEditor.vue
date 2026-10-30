@@ -6,6 +6,7 @@ import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { forceParsing } from '@codemirror/language'
 import type { Language } from '@codemirror/language'
 import { api } from '../api'
+import { foldingExtensions } from '../editor/folding'
 import { languageForName, languageForPath } from '../editor/languages'
 import { editorTheme, highlightExt } from '../editor/theme'
 import { gitBadgeClass } from '../gitStatus'
@@ -30,10 +31,12 @@ import FileEditorDocView from './FileEditorDocView.vue'
  * pane — the EditorView's parent must never unmount.  Files load via
  * `GET /api/file`, save with Ctrl/Cmd+S via `PUT /api/file` — the same
  * path-safe endpoint the agent's WriteFile tool backs onto.  Syntax
- * highlighting comes from the CodeMirror legacy grammars
- * (`editor/languages.ts`).  Tabs refetch from disk on activation, on the
- * end frame of a write tool that names their file, and once more when a
- * turn ends (the catch-all for shell/formatter changes) — unless they have
+ * highlighting comes from the CodeMirror grammars (`editor/languages.ts`),
+ * folding from `editor/folding.ts` — syntax blocks for the tree grammars, a
+ * leading import run as one block, multi-line bracket pairs, indented
+ * blocks for the stream and plain-text buffers.  Tabs refetch from disk on activation, on the end
+ * frame of a write tool that names their file, and once more when a turn
+ * ends (the catch-all for shell/formatter changes) — unless they have
  * unsaved edits, which always win.
  */
 
@@ -365,6 +368,9 @@ function buildExtensions(
     ...editing,
     drawSelection(),
     lineNumbers(),
+    // After the line numbers, so the fold column sits to their right; shared
+    // by every buffer, read-only ones included.
+    ...foldingExtensions(language),
     EditorView.lineWrapping,
     editorTheme,
     highlightExt,
