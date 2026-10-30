@@ -308,6 +308,21 @@ const FILES = new Map([
   ['mock-a.md', `${MOCK_A_LINES.join('\n')}\n`],
   ['mock-b.md', '# mock B\n\nsecond seeded file\n'],
   ['mock-d.md', `${MOCK_D_LINES.join('\n')}\n`],
+  // The folding phase's fixtures: Python's lezer grammar folds its bodies,
+  // while YAML is a legacy stream grammar with no fold info — it exercises
+  // the indentation fallback.  Both stay short: the gutter only builds
+  // markers for lines in the viewport.
+  ['mock-fold.py', 'def outer():\n    first = 1\n    second = 2\n    return first + second\n\n\ndef other():\n    return 3\n'],
+  ['mock-fold.yaml', 'root:\n  alpha: 1\n  beta: 2\n  nested:\n    gamma: 3\nother: 4\n'],
+  // The import-fold fixture: a docstring, a comment inside the run, and a
+  // function-local import that must not join the leading block.
+  ['mock-fold-imports.py', '"""Import folding fixture."""\n\nimport os\nimport sys\nfrom pathlib import Path\n\n# grouped below\nfrom collections import OrderedDict\n\n\ndef f():\n    import shutil\n    return shutil\n'],
+  ['mock-fold-imports.ts', "import { readFile } from 'node:fs/promises'\nimport path from 'node:path'\n\n// local helper\nimport { helper } from './helper'\n\nexport const x = helper(path, readFile)\n"],
+  // Bracket folds: a multi-line call (no grammar fold covers a Python
+  // ArgList), a shell brace body (the stream grammar's coarse tokens), a
+  // string whose brackets must stay unfoldable, and a one-line call.
+  ['mock-fold-brackets.py', 'result = compute(\n    first,\n    second,\n)\n\nlabel = "("\nother = ")"\n\nsame = call(a, b)\n'],
+  ['mock-fold-brackets.sh', 'run() {\n  echo hi\n}\necho done\n'],
   // The external fixture: keyed by its resolved absolute path, which is what
   // the editor asks for once a card falls back to `path_abs`.
   ['/home/mock/.toddler/notes.md', '# notes\noutside the repo\n'],

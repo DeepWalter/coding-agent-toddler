@@ -105,6 +105,19 @@
 //            under the text, left-aligned with the text rather than the
 //            status gutter, invisible until hovered or focused, and absent
 //            until the stream settles (phase 5 pins the raw-markdown case)
+//  phase 21 — code folding: the editor marks syntax blocks for tree grammars
+//            (Python) and indented blocks for stream grammars and plain text
+//            (YAML), a gutter click hides the block behind a click-to-unfold
+//            placeholder, and a fold survives a tab switch because it lives
+//            in the tab's stored EditorState
+//  phase 22 — import folding: a leading run of top-level imports (Python and
+//            JS/TS) folds as one block from the first import's line end —
+//            through comments and blank lines, ending at the first other
+//            statement — while a function-local import stays out of it
+//  phase 23 — bracket folding: a bracket pair whose closer is on a later line
+//            folds to `call(…)` — Python's call arguments and a shell brace
+//            body — while a same-line pair and brackets inside strings stay
+//            unfoldable
 // Prints PASS/FAIL plus diagnostics; exits 1 on any failure.
 import { chromium } from 'playwright'
 import WebSocket from 'ws'
@@ -3744,6 +3757,282 @@ const planTodo = (marks) =>
     `phase20 a streaming thought has no copy action, and the settled one copies the raw reasoning ${JSON.stringify({ openActions, chars: copiedThink?.length, raw: copiedThink === THINK_REASONING })} ${okThink ? 'PASS' : 'FAIL'}`,
   )
   if (!okThink) fails++
+}
+
+// The fold-gutter readings shared by phases 21 and 22.  The gutter's width
+// spacer is a hidden .cm-gutterElement whose marker carries the same
+// "Unfold line" title as a real closed fold — filter it out by computed
+// visibility.  Markers are named by title, not glyph.
+const folding = () =>
+  page.evaluate(() => {
+    const shown = (el) => getComputedStyle(el.closest('.cm-gutterElement')).visibility !== 'hidden'
+    return {
+      gutter: !!document.querySelector('.cm-foldGutter'),
+      foldable: [...document.querySelectorAll('.cm-foldGutter span[title="Fold line"]')].filter(shown).length,
+      folded: [...document.querySelectorAll('.cm-foldGutter span[title="Unfold line"]')].filter(shown).length,
+      placeholders: [...document.querySelectorAll('.cm-foldPlaceholder')].map((el) => el.textContent),
+      text: document.querySelector('.editor-cm .cm-content')?.textContent ?? '',
+    }
+  })
+const waitFoldable = (count) =>
+  page.waitForFunction(
+    (n) => document.querySelectorAll('.cm-foldGutter span[title="Fold line"]').length >= n,
+    count,
+    { timeout: 8000 },
+  )
+
+// --- Phase 21: code folding — tree and indentation folds ---
+
+// Python folds through its lezer grammar (foldNodeProp on Body); YAML is a
+// legacy StreamLanguage with no foldNodeProp, so it exercises the indentation
+// fallback.  Both fixtures sit inside the viewport — the fold gutter only
+// builds markers for viewport lines.
+{
+  await page.evaluate(() => {
+    localStorage.setItem('tod.tabs', JSON.stringify({
+      open: ['mock-fold.py', 'mock-fold.yaml'],
+      active: 'mock-fold.py',
+      root: '/tmp',
+    }))
+  })
+  await page.reload()
+  await page.waitForFunction(
+    () => document.querySelector('.editor-cm .cm-content')?.textContent.includes('def outer'),
+    { timeout: 8000 },
+  )
+
+  // 1. Python: both def lines fold, and folding the first hides its body
+  // without touching the sibling def below it.
+  await waitFoldable(2)
+  let st = await folding()
+  let ok = st.gutter && st.foldable === 2 && st.folded === 0
+    && st.placeholders.length === 0 && st.text.includes('first = 1')
+  console.log(`phase21 python offers a fold per def line ${JSON.stringify(st)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+
+  await page.locator('.cm-foldGutter span[title="Fold line"]').first().click()
+  await page.waitForSelector('.cm-foldPlaceholder')
+  st = await folding()
+  ok = st.placeholders.length === 1 && st.placeholders[0] === '…'
+    && !st.text.includes('first = 1') && !st.text.includes('return first + second')
+    && st.text.includes('def outer():') && st.text.includes('def other():')
+  console.log(`phase21 a gutter click hides the body, not the sibling def ${JSON.stringify(st)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+
+  // 2. The placeholder is the unfold control.
+  await page.locator('.cm-foldPlaceholder').click()
+  await page.waitForFunction(
+    () => document.querySelectorAll('.cm-foldPlaceholder').length === 0,
+    { timeout: 8000 },
+  )
+  st = await folding()
+  ok = st.placeholders.length === 0 && st.text.includes('first = 1') && st.foldable === 2
+  console.log(`phase21 the placeholder unfolds the body ${JSON.stringify(st)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+
+  // 3. YAML has no grammar folds: the indentation fallback marks root: and
+  // nested:, and the equal-indent `other:` closes the top-level block.
+  await page.locator('.editor-tab-name', { hasText: 'mock-fold.yaml' }).click()
+  await page.waitForFunction(
+    () => document.querySelector('.editor-cm .cm-content')?.textContent.includes('root:'),
+    { timeout: 8000 },
+  )
+  await waitFoldable(2)
+  st = await folding()
+  ok = st.foldable === 2 && st.text.includes('gamma: 3')
+  console.log(`phase21 yaml offers indentation folds ${JSON.stringify(st)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+
+  await page.locator('.cm-foldGutter span[title="Fold line"]').first().click()
+  await page.waitForSelector('.cm-foldPlaceholder')
+  st = await folding()
+  ok = st.placeholders.length === 1
+    && !st.text.includes('alpha: 1') && !st.text.includes('gamma: 3')
+    && st.text.includes('other: 4')
+  console.log(`phase21 an indentation fold stops at the equal-indent line ${JSON.stringify(st)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+
+  // 4. Folds live in the tab's stored EditorState: switching away and back
+  // (the activation refresh finds the disk unchanged and returns early)
+  // leaves the YAML block closed.  Python's tab, left unfolded, comes back
+  // unfolded — the same state round trip read the other way.
+  await page.locator('.editor-tab-name', { hasText: 'mock-fold.py' }).click()
+  await page.waitForFunction(
+    () => document.querySelector('.editor-cm .cm-content')?.textContent.includes('def outer'),
+    { timeout: 8000 },
+  )
+  await waitFoldable(2)
+  await page.waitForTimeout(400)
+  st = await folding()
+  ok = st.folded === 0 && st.placeholders.length === 0 && st.text.includes('first = 1')
+  console.log(`phase21 python's unfolded state survives the round trip ${JSON.stringify(st)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+
+  await page.locator('.editor-tab-name', { hasText: 'mock-fold.yaml' }).click()
+  await page.waitForFunction(
+    () => document.querySelector('.editor-cm .cm-content')?.textContent.includes('root:'),
+    { timeout: 8000 },
+  )
+  // No waitFoldable here: the restored state is already folded, so the only
+  // marker on screen is the "Unfold line" one — there is no foldable line
+  // left to wait for.
+  await page.waitForTimeout(400)
+  st = await folding()
+  ok = st.placeholders.length === 1 && !st.text.includes('alpha: 1')
+  console.log(`phase21 yaml's fold survives the round trip ${JSON.stringify(st)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+
+  // Leave the pane unfolded for the phases after this one.
+  await page.locator('.cm-foldPlaceholder').click()
+  await page.waitForFunction(
+    () => document.querySelectorAll('.cm-foldPlaceholder').length === 0,
+    { timeout: 8000 },
+  )
+}
+
+// --- Phase 22: import folding — one leading run, grammar-node based ---
+
+// Python and JS/TS grammars mark top-level imports (ImportStatement /
+// ImportDeclaration); the fold service collects the leading run and folds
+// it from the first import's line end.  Comments and blank lines inside the
+// run fold with it; an import inside a function does not join it.
+{
+  await page.evaluate(() => {
+    localStorage.setItem('tod.tabs', JSON.stringify({
+      open: ['mock-fold-imports.py', 'mock-fold-imports.ts'],
+      active: 'mock-fold-imports.py',
+      root: '/tmp',
+    }))
+  })
+  await page.reload()
+  await page.waitForFunction(
+    () => document.querySelector('.editor-cm .cm-content')?.textContent.includes('import os'),
+    { timeout: 8000 },
+  )
+  // The def body folds on its own too; the import marker is the first one
+  // (the docstring line above it has nothing to fold).
+  await waitFoldable(2)
+  let st = await folding()
+  let ok = st.text.includes('import shutil') && st.text.includes('OrderedDict')
+  console.log(`phase22 python offers the import fold above the def body ${JSON.stringify(st)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+
+  await page.locator('.cm-foldGutter span[title="Fold line"]').first().click()
+  await page.waitForSelector('.cm-foldPlaceholder')
+  st = await folding()
+  ok = st.placeholders.length === 1 && st.placeholders[0] === '…'
+    && st.text.includes('"""Import folding fixture."""') && st.text.includes('import os')
+    && !st.text.includes('import sys') && !st.text.includes('from pathlib')
+    && !st.text.includes('grouped below') && !st.text.includes('OrderedDict')
+    && st.text.includes('import shutil')
+  console.log(`phase22 the import fold keeps the docstring and first import ${JSON.stringify(st)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+
+  await page.locator('.cm-foldPlaceholder').click()
+  await page.waitForFunction(
+    () => document.querySelectorAll('.cm-foldPlaceholder').length === 0,
+    { timeout: 8000 },
+  )
+  st = await folding()
+  ok = st.text.includes('OrderedDict') && st.text.includes('import sys')
+  console.log(`phase22 the import fold unfolds ${JSON.stringify(st)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+
+  // TS imports use ImportDeclaration; the same leading-run rule applies,
+  // and the export after the run stays visible.
+  await page.locator('.editor-tab-name', { hasText: 'mock-fold-imports.ts' }).click()
+  await page.waitForFunction(
+    () => document.querySelector('.editor-cm .cm-content')?.textContent.includes('readFile'),
+    { timeout: 8000 },
+  )
+  await waitFoldable(1)
+  st = await folding()
+  ok = st.text.includes('./helper')
+  console.log(`phase22 typescript offers the import fold ${JSON.stringify(st)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+
+  await page.locator('.cm-foldGutter span[title="Fold line"]').first().click()
+  await page.waitForSelector('.cm-foldPlaceholder')
+  st = await folding()
+  ok = st.placeholders.length === 1
+    && st.text.includes("import { readFile } from 'node:fs/promises'")
+    && !st.text.includes('node:path') && !st.text.includes('local helper')
+    && !st.text.includes('./helper') && st.text.includes('export const x')
+  console.log(`phase22 the typescript fold hides the rest of the run ${JSON.stringify(st)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+
+  // Leave the pane unfolded for anything after this phase.
+  await page.locator('.cm-foldPlaceholder').click()
+  await page.waitForFunction(
+    () => document.querySelectorAll('.cm-foldPlaceholder').length === 0,
+    { timeout: 8000 },
+  )
+}
+
+// --- Phase 23: bracket folding — multi-line pairs, code only ---
+
+// No grammar fold covers Python's call argument list or a shell brace body;
+// the bracket service folds from the opener to the closer (both stay
+// visible).  Same-line pairs and brackets inside strings must not fold.
+{
+  await page.evaluate(() => {
+    localStorage.setItem('tod.tabs', JSON.stringify({
+      open: ['mock-fold-brackets.py', 'mock-fold-brackets.sh'],
+      active: 'mock-fold-brackets.py',
+      root: '/tmp',
+    }))
+  })
+  await page.reload()
+  await page.waitForFunction(
+    () => document.querySelector('.editor-cm .cm-content')?.textContent.includes('result = compute'),
+    { timeout: 8000 },
+  )
+  await waitFoldable(1)
+  let st = await folding()
+  let ok = st.foldable === 1
+    && st.text.includes('label = "("') && st.text.includes('same = call(a, b)')
+  console.log(`phase23 python offers a fold for the multi-line call only ${JSON.stringify(st)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+
+  await page.locator('.cm-foldGutter span[title="Fold line"]').first().click()
+  await page.waitForSelector('.cm-foldPlaceholder')
+  st = await folding()
+  ok = st.placeholders.length === 1
+    && st.text.includes('result = compute(…)')
+    && !st.text.includes('first') && !st.text.includes('second')
+    && st.text.includes('label = "("') && st.text.includes('other = ")"')
+  console.log(`phase23 the call folds between its brackets ${JSON.stringify(st)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+
+  await page.locator('.cm-foldPlaceholder').click()
+  await page.waitForFunction(
+    () => document.querySelectorAll('.cm-foldPlaceholder').length === 0,
+    { timeout: 8000 },
+  )
+
+  // Shell is a stream grammar: the same-line () pair is skipped, the brace
+  // pair folds, and the bracket fold wins over the indentation fold that
+  // would also mark this line.
+  await page.locator('.editor-tab-name', { hasText: 'mock-fold-brackets.sh' }).click()
+  await page.waitForFunction(
+    () => document.querySelector('.editor-cm .cm-content')?.textContent.includes('run() {'),
+    { timeout: 8000 },
+  )
+  await waitFoldable(1)
+  await page.locator('.cm-foldGutter span[title="Fold line"]').first().click()
+  await page.waitForSelector('.cm-foldPlaceholder')
+  st = await folding()
+  ok = st.placeholders.length === 1
+    && st.text.includes('run() {…}') && st.text.includes('echo done')
+    && !st.text.includes('echo hi')
+  console.log(`phase23 a shell brace pair folds across lines ${JSON.stringify(st)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+
+  await page.locator('.cm-foldPlaceholder').click()
+  await page.waitForFunction(
+    () => document.querySelectorAll('.cm-foldPlaceholder').length === 0,
+    { timeout: 8000 },
+  )
 }
 
 // The browser connection is an open handle: without closing it the process
