@@ -333,6 +333,10 @@ if _TEST == "cli":
                 ("reasoning", "The user typed 'reason', which asks for a "),
                 ("reasoning", "thinking-mode reply: streams the reasoning "),
                 ("reasoning", "first, then the answer.\n"),
+                ("reasoning", " # Level One title\n\n"),
+                ("reasoning", " ## Level Two title\n\n"),
+                ("reasoning", " ### Level Three title\n\n"),
+                ("reasoning", " content with *emphasis* and **strong** and `code` and a [link](CLAUDE.md)\n"),
                 (
                     "text",
                     "That was my reasoning, streamed before this answer.\n",
@@ -437,6 +441,7 @@ if _TEST == "cli":
                         "Python file count"
                     ),
                     "command": (
+                        "rm nonexistent_file || true\n"
                         "echo hello world\n"
                         "ls -la\n"
                         "git status --short\n"
