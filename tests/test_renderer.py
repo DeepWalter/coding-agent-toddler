@@ -22,9 +22,18 @@ from toddler.agent.events import (
     ToolUseStart,
 )
 from toddler.agent.planner import Plan, PlanStep
-from toddler.cli.renderer import NonStreamingRenderer, StreamingRenderer
+from toddler.cli.renderer import (
+    ConfirmResult,
+    NonStreamingRenderer,
+    StreamingRenderer,
+)
 from toddler.llm.responses import TokenUsage
-from toddler.tools.base import ToolCallPrompt, ToolResult
+from toddler.tools.base import (
+    Question,
+    QuestionChoice,
+    ToolCallPrompt,
+    ToolResult,
+)
 
 
 class _FakeClock:
@@ -818,3 +827,118 @@ class TestPausePromptLine:
         Console(file=buf, width=120).print(renderer._build_confirm_table())
 
         assert "[ -f notes.md ] && rm notes.md[/]" in buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# ask_user answers
+# ---------------------------------------------------------------------------
+
+
+def _question() -> Question:
+    return Question(
+        title="Storage",
+        content="Where should sessions live?",
+        choices=(
+            QuestionChoice("SQLite", "One file, no server."),
+            QuestionChoice("Redis", "Shared storage."),
+        ),
+    )
+
+
+class TestQuestionConfirmation:
+    """The non-streaming confirm path carries the chosen index and can
+    be declined, which is what the CLI's sequential ask uses."""
+
+    def _renderer(self) -> tuple[NonStreamingRenderer, io.StringIO]:
+        buf = io.StringIO()
+        return NonStreamingRenderer(console=Console(file=buf)), buf
+
+    def test_confirm_result_defaults(self):
+        result = ConfirmResult(decision="deny")
+        assert result.choice_index is None
+        assert result.cancelled is False
+
+    async def test_numbered_choice_returns_its_index_and_shows_the_detail(
+        self,
+    ):
+        renderer, buf = self._renderer()
+        renderer._console.input = lambda prompt="": "2"
+
+        result = await renderer.confirm(
+            "Question 1/2: Storage",
+            ["1. SQLite — One file.", "2. Redis — Shared."],
+            detail="Where should sessions live?",
+        )
+
+        assert result.choice_index == 1
+        assert result.cancelled is False
+        # Arbitrary labels have no approve/deny meaning; the index is the
+        # answer the ask path reads.
+        assert result.decision == "deny"
+        output = buf.getvalue()
+        assert "Where should sessions live?" in output
+        assert "SQLite" in output
+
+    async def test_eof_is_cancelled(self):
+        renderer, _ = self._renderer()
+
+        def raise_eof(prompt=""):
+            raise EOFError
+
+        renderer._console.input = raise_eof
+        result = await renderer.confirm("Q", ["1. A", "2. B"])
+        assert result.cancelled is True
+        assert result.choice_index is None
+
+    async def test_unmatched_input_is_cancelled(self):
+        renderer, _ = self._renderer()
+        renderer._console.input = lambda prompt="": "nope"
+
+        result = await renderer.confirm("Q", ["1. A", "2. B"])
+        assert result.cancelled is True
+        assert result.choice_index is None
+
+    def test_case_is_preserved_in_the_choice_labels(self):
+        renderer = StreamingRenderer(console=Console(file=io.StringIO()))
+        renderer._confirm_choices = ["1. SQLite — one file"]
+        renderer._confirm_prompt = "Storage"
+        buf = io.StringIO()
+        Console(file=buf, width=120).print(renderer._build_confirm_table())
+        assert "SQLite" in buf.getvalue()
+        assert "Sqlite" not in buf.getvalue()
+
+
+class TestQuestionToolRow:
+    """The visible ask_user call is a normal tools-panel row: the signature
+    counts the questions, the result names what was chosen."""
+
+    def test_the_row_names_the_question_count(self):
+        renderer = StreamingRenderer(console=Console(file=io.StringIO()))
+        renderer.on_tool_call_start(ToolCallStart(
+            tool_id="q1",
+            tool_name="ask_user",
+            input={"questions": [_question().to_dict()]},
+        ))
+        row = renderer._tools["q1"]
+        assert row.signature == "ask_user(1 question)"
+        assert row.status == "running"
+
+    def test_the_row_lists_the_chosen_titles(self):
+        renderer = StreamingRenderer(console=Console(file=io.StringIO()))
+        raw = [_question().to_dict()]
+        renderer.on_tool_call_start(ToolCallStart(
+            tool_id="q1", tool_name="ask_user",
+            input={"questions": raw},
+        ))
+        renderer.on_tool_call_end(ToolCallEnd(
+            tool_id="q1", tool_name="ask_user",
+            input={"questions": raw},
+            result=ToolResult(
+                tool_id="q1", tool_name="ask_user", success=True,
+                output="The user answered your questions:",
+                metadata={"questions": raw, "answers": [1]},
+            ),
+        ))
+        row = renderer._tools["q1"]
+        assert row.result == "Redis"
+        assert row.status == "success"

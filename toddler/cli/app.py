@@ -253,14 +253,62 @@ class CLIApp:
                     self._renderer.on_plan_step_update(event)
 
                 case AgentPaused():
-                    result = await self._renderer.confirm(
-                        prompt=event.prompt.one_line(),
-                        choices=event.choices or ["approve", "deny"],
-                    )
-                    if result.decision == "approve":
-                        self._session_mgr.agent.approve_tool_call()
+                    questions = event.prompt.questions
+                    if questions is None:
+                        result = await self._renderer.confirm(
+                            prompt=event.prompt.one_line(),
+                            choices=event.choices or ["approve", "deny"],
+                        )
+                        if result.decision == "approve":
+                            self._session_mgr.agent.approve_tool_call(
+                                event.tool_id,
+                            )
+                        else:
+                            self._session_mgr.agent.deny_tool_call(
+                                event.tool_id,
+                            )
                     else:
-                        self._session_mgr.agent.deny_tool_call()
+                        # The terminal has no tabs: each question is a
+                        # numbered prompt in the turn's own display.  A
+                        # cancelled prompt declines the set rather than
+                        # leaving the loop waiting forever.
+                        answers: list[int] = []
+                        total = len(questions)
+                        declined = False
+                        for number, question in enumerate(questions, 1):
+                            result = await self._renderer.confirm(
+                                prompt=(
+                                    f"Question {number}/{total}: "
+                                    f"{question.title}"
+                                ),
+                                detail=" ".join(question.content.split()),
+                                choices=[
+                                    f"{index}. {choice.title} — "
+                                    f"{choice.content}"
+                                    for index, choice in enumerate(
+                                        question.choices, 1,
+                                    )
+                                ],
+                            )
+                            if (
+                                result.cancelled
+                                or result.choice_index is None
+                            ):
+                                declined = True
+                                break
+                            answers.append(result.choice_index)
+                        if (
+                            declined
+                            or not self._session_mgr.agent.answer_questions(
+                                event.tool_id, answers,
+                            )
+                        ):
+                            # A cancelled prompt — or a stale pause that
+                            # moved on — declines the set instead of
+                            # parking.
+                            self._session_mgr.agent.deny_tool_call(
+                                event.tool_id,
+                            )
 
                 case AgentFinished():
                     self._renderer.stop()

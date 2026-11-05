@@ -49,7 +49,7 @@ from toddler.agent.events import (
     ToolCallStart,
     ToolUseStart,
 )
-from toddler.tools import HIDDEN_TOOL_NAMES
+from toddler.tools import HIDDEN_TOOL_NAMES, QuestionTool
 from toddler.tools.base import CALL_DESCRIPTION_PARAM
 from toddler.tools.plan import PlanStepStatus
 from toddler.tools.shell import Shell
@@ -167,13 +167,22 @@ def _plan_snapshot_worth_rendering(
 
 @dataclass
 class ConfirmResult:
-    """Outcome of a confirmation prompt (tool approval, plan approval)."""
+    """Outcome of a confirmation prompt (tool approval, plan approval, or
+    an ask_user question).
+
+    ``choice_index`` is the row that was selected, for a caller that
+    wants the choice itself rather than the approve/deny reading;
+    ``cancelled`` says the prompt was interrupted (Ctrl+C, EOF) instead
+    of answered.
+    """
 
     decision: Literal[
         "approve", "deny", "feedback",
         "approve_with_manual", "approve_with_auto",
     ]
     feedback: str | None = None
+    choice_index: int | None = None
+    cancelled: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -439,6 +448,7 @@ class Renderer(ABC):
         choices: list[str],
         *,
         allow_feedback: bool = False,
+        detail: str | None = None,
     ) -> ConfirmResult:
         """Prompt the user to confirm an action.
 
@@ -453,6 +463,9 @@ class Renderer(ABC):
         allow_feedback:
             When True, the user can type free-text feedback instead of
             selecting a predefined choice.
+        detail:
+            Optional body shown above the choices — an ask_user
+            question's content, which is too long for the title.
         """
 
     # ------------------------------------------------------------------
@@ -594,6 +607,7 @@ class StreamingRenderer(Renderer):
         # -- confirmation state (set when confirm() is active) --------------
         self._confirming: bool = False
         self._confirm_prompt: str = ""
+        self._confirm_detail: str | None = None
         self._confirm_choices: list[str] = []
         self._confirm_selection: int = 0
         self._confirm_buf: str = ""
@@ -786,6 +800,7 @@ class StreamingRenderer(Renderer):
         choices: list[str],
         *,
         allow_feedback: bool = False,  # noqa: ARG002
+        detail: str | None = None,
     ) -> ConfirmResult:
         """Display an interactive confirmation table inside the Live display.
 
@@ -797,6 +812,7 @@ class StreamingRenderer(Renderer):
         # -- Store confirmation state ---------------------------------
         self._confirming = True
         self._confirm_prompt = prompt
+        self._confirm_detail = detail
         self._confirm_choices = list(choices)
         self._confirm_selection = 0
         self._confirm_buf = ""
@@ -828,6 +844,7 @@ class StreamingRenderer(Renderer):
         buf: str = ""
         saved_buf: str = ""
         input_mode: bool = False
+        cancelled: bool = False
 
         def _navigate(new_index: int) -> None:
             """Move selection, saving/restoring feedback buffer."""
@@ -917,6 +934,7 @@ class StreamingRenderer(Renderer):
 
                 # ── Ctrl+C ───────────────────────────────────────
                 if ch == b"\x03":
+                    cancelled = True
                     self._confirm_selection = deny_index
                     buf = ""
                     self._confirm_buf = ""
@@ -940,22 +958,29 @@ class StreamingRenderer(Renderer):
             idx = self._confirm_selection
             selected = choices[idx] if 0 <= idx < len(choices) else "deny"
             sel = selected.lower()
+            if cancelled:
+                return ConfirmResult(decision="deny", cancelled=True)
             if sel == "feedback" and buf:
                 return ConfirmResult(
-                    decision="feedback", feedback=buf,
+                    decision="feedback", feedback=buf, choice_index=idx,
                 )
             elif sel == "approve with manual accept":
-                return ConfirmResult(decision="approve_with_manual")
+                return ConfirmResult(
+                    decision="approve_with_manual", choice_index=idx,
+                )
             elif sel == "approve with auto accept":
-                return ConfirmResult(decision="approve_with_auto")
+                return ConfirmResult(
+                    decision="approve_with_auto", choice_index=idx,
+                )
             elif sel in ("approve", "yes", "y", "ok"):
-                return ConfirmResult(decision="approve")
+                return ConfirmResult(decision="approve", choice_index=idx)
             else:
-                return ConfirmResult(decision="deny")
+                return ConfirmResult(decision="deny", choice_index=idx)
 
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
             self._confirming = False
+            self._confirm_detail = None
             self._refresh(force=True)
 
     # ------------------------------------------------------------------
@@ -1108,6 +1133,8 @@ class StreamingRenderer(Renderer):
             else:
                 row.status = "error"
             row.result = _truncate_tool_result(result)
+            if event.tool_name == QuestionTool.name:
+                row.result = _question_tool_result(result)
         self._refresh()
 
     def on_agent_error(self, event: AgentError) -> None:
@@ -1176,6 +1203,10 @@ class StreamingRenderer(Renderer):
             budget -= _DISMISS_HINT_LINES
         if self._confirming:
             budget -= len(self._confirm_choices) + _CONFIRM_FIXED_LINES
+            if self._confirm_detail:
+                # The CLI passes a flattened one-line body; one line is
+                # what the panel needs to reserve.
+                budget -= 1
 
         # What is available for tools / errors above the output minimum.
         allocatable = max(0, budget - _MIN_OUTPUT_LINES)
@@ -1351,13 +1382,21 @@ class StreamingRenderer(Renderer):
                     row_text = Text("  Feedback: ▏", style=style)
             else:
                 cursor = "▸ " if focused else "  "
-                row_text = Text(cursor + choice.capitalize(), style=style)
+                # Uppercase the first letter only: the labels are the
+                # tool's own words, and str.capitalize() would lowercase
+                # the rest of a title such as "SQLite".
+                label = choice[:1].upper() + choice[1:]
+                row_text = Text(cursor + label, style=style)
 
             table.add_row(row_text)
 
         hint = "Tab to move · Enter to select"
+        body: list[RenderableType] = []
+        if self._confirm_detail:
+            body.append(Text(self._confirm_detail))
+        body.extend((table, Text(hint, style="dim italic")))
         return Panel(
-            Group(table, Text(hint, style="dim italic")),
+            Group(*body),
             # A Text, not the string: a title is parsed for markup, and a
             # gated call's prompt carries the arguments as written — a
             # shell command with brackets would lose them to a tag it is
@@ -1814,6 +1853,7 @@ class NonStreamingRenderer(Renderer):
         choices: list[str],
         *,
         allow_feedback: bool = False,
+        detail: str | None = None,
     ) -> ConfirmResult:
         """Prompt the user to confirm via the main console.
 
@@ -1821,14 +1861,17 @@ class NonStreamingRenderer(Renderer):
         we use a plain :meth:`~rich.console.Console.input` prompt with
         key hints.
         """
-        labels = [c.capitalize() for c in choices]
+        labels = [c[:1].upper() + c[1:] for c in choices]
         hint = " / ".join(
             f"[{c[0].upper()}]{c[1:]}" for c in choices
         )
+        body: list[RenderableType] = [Text(prompt, style="bold white")]
+        if detail:
+            body.append(Text(detail))
         self._console.print()
         self._console.print(
             Panel(
-                Text(prompt, style="bold white"),
+                Group(*body) if len(body) > 1 else body[0],
                 title=hint,
                 title_align="left",
                 border_style=_TOOL_RUNNING,
@@ -1845,35 +1888,49 @@ class NonStreamingRenderer(Renderer):
         try:
             answer = self._console.input("> ").strip().lower()
         except (EOFError, KeyboardInterrupt):
-            return ConfirmResult(decision="deny")
+            return ConfirmResult(decision="deny", cancelled=True)
 
-        # Match against known labels
-        for choice in choices:
-            if answer == choice.lower() or (
-                len(answer) == 1 and choice.lower().startswith(answer)
-            ):
-                if choice.lower() == "feedback" and allow_feedback:
-                    try:
-                        fb = self._console.input(
-                            "Feedback: ",
-                        ).strip()
-                    except (EOFError, KeyboardInterrupt):
-                        return ConfirmResult(decision="deny")
-                    if fb:
-                        return ConfirmResult(
-                            decision="feedback", feedback=fb,
-                        )
-                    return ConfirmResult(decision="deny")
-                elif choice.lower() == "approve with manual accept":
-                    return ConfirmResult(decision="approve_with_manual")
-                elif choice.lower() == "approve with auto accept":
-                    return ConfirmResult(decision="approve_with_auto")
-                elif choice.lower() in ("approve", "yes", "y", "ok"):
-                    return ConfirmResult(decision="approve")
-                else:
-                    return ConfirmResult(decision="deny")
+        # A digit picks the numbered row: ask_user labels its choices
+        # "1. …", and a terminal user should not have to type a title's
+        # first letter when the rows already carry numbers.
+        matched: int | None = None
+        if answer.isdigit():
+            index = int(answer) - 1
+            if 0 <= index < len(choices):
+                matched = index
+        if matched is None:
+            for index, choice in enumerate(choices):
+                if answer == choice.lower() or (
+                    len(answer) == 1 and choice.lower().startswith(answer)
+                ):
+                    matched = index
+                    break
+        if matched is None:
+            return ConfirmResult(decision="deny", cancelled=True)
 
-        return ConfirmResult(decision="deny")
+        choice = choices[matched]
+        if choice.lower() == "feedback" and allow_feedback:
+            try:
+                fb = self._console.input("Feedback: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                return ConfirmResult(decision="deny", cancelled=True)
+            if fb:
+                return ConfirmResult(
+                    decision="feedback", feedback=fb,
+                    choice_index=matched,
+                )
+            return ConfirmResult(decision="deny", cancelled=True)
+        elif choice.lower() == "approve with manual accept":
+            return ConfirmResult(
+                decision="approve_with_manual", choice_index=matched,
+            )
+        elif choice.lower() == "approve with auto accept":
+            return ConfirmResult(
+                decision="approve_with_auto", choice_index=matched,
+            )
+        elif choice.lower() in ("approve", "yes", "y", "ok"):
+            return ConfirmResult(decision="approve", choice_index=matched)
+        return ConfirmResult(decision="deny", choice_index=matched)
 
 
 # ---------------------------------------------------------------------------
@@ -1970,6 +2027,11 @@ def _format_tool_signature(name: str, params: dict) -> str:
         command = _one_line(str(params.get("command", "")))
         return f"{name}({_clip(command, 40)})" if command else name
 
+    if name == QuestionTool.name:
+        raw = params.get("questions")
+        count = len(raw) if isinstance(raw, (list, tuple)) else 0
+        return f"{name}({count} question{'' if count == 1 else 's'})"
+
     parts: list[str] = []
     for k, v in params.items():
         if k == CALL_DESCRIPTION_PARAM:
@@ -1992,6 +2054,37 @@ def _truncate_tool_result(result: ToolResult | None) -> str:
     if len(text) > 60:
         text = text[:57] + "..."
     return text
+
+
+def _question_tool_result(result: ToolResult | None) -> str:
+    """The chosen answer titles for an ask_user row's Result column.
+
+    The result's prose says the whole exchange; the table has one cell,
+    so it names only what was chosen, one title per question.  A declined
+    or malformed result falls back to the ordinary preview.
+    """
+    if result is None:
+        return ""
+    metadata = result.metadata or {}
+    questions = metadata.get("questions") or []
+    answers = metadata.get("answers") or []
+    chosen: list[str] = []
+    for question, answer in zip(questions, answers, strict=False):
+        if not isinstance(question, dict):
+            continue
+        choices = question.get("choices")
+        if (
+            isinstance(choices, list)
+            and isinstance(answer, int)
+            and 0 <= answer < len(choices)
+            and isinstance(choices[answer], dict)
+        ):
+            title = choices[answer].get("title")
+            if title:
+                chosen.append(str(title))
+    if not chosen:
+        return _truncate_tool_result(result)
+    return _clip("; ".join(chosen), 60)
 
 
 def _guess_language(code: str) -> str:
@@ -2038,6 +2131,11 @@ def _format_tool_call(name: str, params: dict) -> str:
     if name == Shell.name:
         command = _one_line(str(params.get("command", "")))
         return f"{name}({_clip(command, 60)})" if command else name
+
+    if name == QuestionTool.name:
+        raw = params.get("questions")
+        count = len(raw) if isinstance(raw, (list, tuple)) else 0
+        return f"{name}({count} question{'' if count == 1 else 's'})"
 
     short: dict[str, str] = {}
     for k, v in params.items():
