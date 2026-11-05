@@ -12,6 +12,9 @@ from toddler.tools.base import (
     FileScope,
     FileScopePolicy,
     Permission,
+    Question,
+    QuestionChoice,
+    QuestionValidationError,
     ToolCall,
     ToolCallPrompt,
     ToolResult,
@@ -23,6 +26,7 @@ from toddler.tools.executor import (
 from toddler.tools.files import EditFile, ReadFile, WriteFile
 from toddler.tools.git import GitBranch, GitCommit, GitDiff, GitLog, GitStatus
 from toddler.tools.plan import PlanState, PlanUpdateTool
+from toddler.tools.question import QuestionTool
 from toddler.tools.registry import TOOL_CATALOG, ToolRegistry
 from toddler.tools.search import Glob, Grep
 from toddler.tools.shell import Shell
@@ -31,6 +35,9 @@ __all__ = [
     # Base
     "BaseTool",
     "ToolCallPrompt",
+    "Question",
+    "QuestionChoice",
+    "QuestionValidationError",
     "Decision",
     "FileScope",
     "FileScopePolicy",
@@ -56,6 +63,8 @@ __all__ = [
     # Plan
     "PlanState",
     "PlanUpdateTool",
+    # Questions
+    "QuestionTool",
     # Git tools
     "GitStatus",
     "GitDiff",

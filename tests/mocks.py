@@ -30,6 +30,7 @@ __all__ = [
     "TEST_TURN_CONFIG",
     "MockLLMProvider",
     "SlowStreamLLM",
+    "ask_user_response",
     "make_mock_llm",
     "pause_on_write",
     "plan_proposal_response",
@@ -236,6 +237,22 @@ def tool_use_response(
         ],
         stop_reason="tool_use",
         usage=TokenUsage(input_tokens=10, output_tokens=5),
+    )
+
+
+def ask_user_response(
+    questions: list[dict],
+    *,
+    tool_id: str = "call_ask",
+) -> LLMResponse:
+    """A call to the real ``ask_user`` tool.
+
+    The loop pauses with an ``AgentPaused`` prompt carrying the questions
+    until a client answers through :meth:`AgentLoop.answer_questions` (in
+    tests, via the ``answer_questions`` WebSocket command).
+    """
+    return tool_use_response(
+        "ask_user", {"questions": questions}, tool_id=tool_id,
     )
 
 

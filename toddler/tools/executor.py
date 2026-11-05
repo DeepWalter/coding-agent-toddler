@@ -67,7 +67,13 @@ class ToolExecutor:
         self._registry = registry
         self._checkpoint_cb = checkpoint_cb
 
-    async def execute(self, call: ToolCall, *, mutating: bool) -> ToolResult:
+    async def execute(
+        self,
+        call: ToolCall,
+        *,
+        mutating: bool,
+        extra_params: dict[str, Any] | None = None,
+    ) -> ToolResult:
         """Resolve, checkpoint, and run a single tool call.
 
         *mutating* is the caller's classification of the call — what it read
@@ -75,6 +81,12 @@ class ToolExecutor:
         :attr:`~toddler.tools.base.Permission.is_mutating` — and it orders
         the checkpoint only: a call that changes state gets its snapshot
         taken before it runs.
+
+        *extra_params* are loop-injected arguments for a tool the loop
+        paused on — today only an ask-user tool's ``answers``.  They are
+        not part of the model's schema and never appear in the call's
+        stored parameters; they are merged in next to the call's own
+        arguments just before ``execute``.
 
         Returns a ``ToolResult`` — even for a tool the registry does not
         know, or one that raises (the result will have ``success=False`` so
@@ -101,8 +113,11 @@ class ToolExecutor:
         # The call description is a record, not an argument: a tool's
         # ``execute`` takes its own parameters only, and ``params`` itself
         # has to keep the key (the events and the transcript read it).
+        kwargs = execution_params(params)
+        if extra_params:
+            kwargs.update(extra_params)
         try:
-            result = await tool.execute(**execution_params(params))
+            result = await tool.execute(**kwargs)
             result.checkpoint_id = result.checkpoint_id or checkpoint_id
             return result
         except Exception as exc:

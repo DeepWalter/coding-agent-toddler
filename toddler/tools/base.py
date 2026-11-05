@@ -485,7 +485,7 @@ ONE_LINE_DETAIL_LIMIT = 200
 
 @dataclass(frozen=True)
 class ToolCallPrompt:
-    """What one call asks the user while it waits to be approved.
+    """What one call asks the user while it waits to be approved or answered.
 
     Built by :meth:`BaseTool.build_call_prompt` — one part from each of
     that tool's ``_prompt_*`` methods — and carried on
@@ -499,35 +499,104 @@ class ToolCallPrompt:
     is the call's own line about what it does: the ``description``
     parameter, or the file the call names.  ``None`` is "nothing to show"
     rather than an empty string, and the wire form keeps the difference.
+
+    ``questions`` is the other kind of pause: a call that needs an answer
+    rather than an approval.  It is ``None`` for an ordinary call; an
+    ask-user tool fills it, and the front-end that sees it renders the
+    question card instead of approve/deny.  The answers are indexes into
+    each question's ``choices``, in question order.
     """
 
     title: str
     content: str | None = None
     description: str | None = None
+    questions: tuple[Question, ...] | None = None
 
     def to_dict(self) -> dict:
-        """The wire form — three keys, always present, ``None`` as null."""
+        """The wire form — all keys present, ``None`` as null."""
         return {
             "title": self.title,
             "content": self.content,
             "description": self.description,
+            "questions": (
+                [question.to_dict() for question in self.questions]
+                if self.questions is not None
+                else None
+            ),
         }
 
     def one_line(self) -> str:
         """The terminal's rendering: one line, never two.
 
         The content leads where there is one — a command is what is being
-        approved — and the description answers where there is not.
-        Whitespace runs collapse, newlines included: this lands in a Rich
-        panel *title*, which has no second line to give.
+        approved — and the description answers where there is not.  A
+        question prompt has neither, so it names its count instead.  The
+        terminal front-end asks its questions one at a time; this is only
+        the summary a log or a card title would show.
         """
-        detail = self.content or self.description
+        if self.questions is not None:
+            count = len(self.questions)
+            detail = f"{count} question{'' if count == 1 else 's'}"
+        else:
+            detail = self.content or self.description
         if not detail:
             return self.title
         collapsed = " ".join(detail.split())
         if len(collapsed) > ONE_LINE_DETAIL_LIMIT:
             collapsed = collapsed[:ONE_LINE_DETAIL_LIMIT - 1].rstrip() + "…"
         return f"{self.title} — {collapsed}"
+
+
+# ---------------------------------------------------------------------------
+# Question payload — what an ask-user tool pauses the turn for
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class QuestionChoice:
+    """One answer to a question the agent asks the user.
+
+    ``title`` is the short label a choice row leads with; ``content`` is
+    the sentence explaining what choosing it means.  The first choice of
+    a question is the recommended one.
+    """
+
+    title: str
+    content: str
+
+    def to_dict(self) -> dict:
+        """The wire form — what the web card and replay entries carry."""
+        return {"title": self.title, "content": self.content}
+
+
+@dataclass(frozen=True)
+class Question:
+    """One single-choice question an ask-user tool asks the user.
+
+    ``title`` is the short tab label, ``content`` the full question, and
+    ``choices`` the two or three answers, best first.
+    """
+
+    title: str
+    content: str
+    choices: tuple[QuestionChoice, ...]
+
+    def to_dict(self) -> dict:
+        """The wire form — questions nested as the card renders them."""
+        return {
+            "title": self.title,
+            "content": self.content,
+            "choices": [choice.to_dict() for choice in self.choices],
+        }
+
+
+class QuestionValidationError(ValueError):
+    """A model-authored question payload that cannot be asked.
+
+    Raised while a tool builds its pause prompt; the loop turns the
+    message into the call's failed tool result so the model can retry with
+    corrected arguments instead of taking the turn down.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -573,9 +642,10 @@ class BaseTool(ABC):
 
     They MAY override ``permission`` (default: READ),
     ``in_default_registry`` (default: True), ``visible`` (default:
-    True) and ``require_description_parameter`` (default: True); a tool
-    that touches files declares them in ``path_params`` (or overrides
-    ``get_scope_paths``) so the gate can place the call.
+    True), ``require_description_parameter`` (default: True) and
+    ``asks_user`` (default: False); a tool that touches files declares
+    them in ``path_params`` (or overrides ``get_scope_paths``) so the
+    gate can place the call.
     """
 
     name: str
@@ -604,6 +674,15 @@ class BaseTool(ABC):
     #: The call is still made, executed, and stored in the transcript;
     #: only its card is withheld.
     visible: bool = True
+
+    #: Whether this tool asks the user a question before it can return.
+    #: The loop always pauses such a call for an answer, whatever the
+    #: permission mode — the pause is input, not a risk decision.  The
+    #: prompt carries the questions (see
+    #: :attr:`ToolCallPrompt.questions`); once answered, the answers are
+    #: injected into :meth:`execute`.  A question tool is non-mutating and
+    #: names no files.
+    asks_user: bool = False
 
     #: Parameters naming a file or directory the call touches, for
     #: :meth:`get_scope_paths`.  A tool whose paths sit in arguments of
@@ -823,4 +902,23 @@ class BaseTool(ABC):
             title=self._prompt_title(**kwargs),
             content=self._prompt_content(**kwargs),
             description=self._prompt_description(**kwargs),
+        )
+
+    # ------------------------------------------------------------------
+    # User interaction
+    # ------------------------------------------------------------------
+
+    def questions_result(
+        self,
+        questions: tuple[Question, ...],
+        answers: list[int] | None,
+    ) -> ToolResult:
+        """The tool result for *questions*, answered by *answers*.
+
+        ``answers`` indexes each question's choices in question order;
+        ``None`` means the user declined to answer.  Only a tool
+        declaring :attr:`asks_user` implements this.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not ask the user"
         )

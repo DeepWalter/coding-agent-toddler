@@ -47,6 +47,7 @@ from toddler.tools.base import (
     ToolResult,
 )
 from toddler.tools.executor import CheckpointCallback, ToolExecutor
+from toddler.tools.question import QuestionTool
 from toddler.tools.registry import ToolRegistry
 
 # ============================================================================
@@ -1554,6 +1555,295 @@ class TestCallDescription:
         ends = [e for e in events if isinstance(e, ToolCallEnd)]
         assert ends[0].result.success
         assert ends[0].input["description"] == "record the deploy token"
+
+
+# ============================================================================
+# Tests: ask_user questions
+# ============================================================================
+
+
+def _question_payload() -> list[dict]:
+    return [
+        {
+            "title": "Storage",
+            "content": "Where should sessions live?",
+            "choices": [
+                {"title": "SQLite", "content": "One file, no server."},
+                {"title": "Redis", "content": "Shared storage."},
+            ],
+        },
+    ]
+
+
+class TestUserQuestions:
+    """A tool declaring ``asks_user`` pauses the loop for an answer."""
+
+    @pytest.fixture
+    def question_registry(self) -> ToolRegistry:
+        reg = ToolRegistry()
+        reg.register(QuestionTool())
+        return reg
+
+    @pytest.fixture
+    def question_executor(self, question_registry) -> ToolExecutor:
+        return ToolExecutor(question_registry)
+
+    def _loop(self, llm, registry, executor, settings, conv_ctx):
+        return AgentLoop(
+            llm, registry, executor, settings,
+            context=conv_ctx, permission_manager=PermissionManager(),
+        )
+
+    async def test_answers_are_returned_as_the_tool_result(
+        self, question_registry, question_executor, settings, conv_ctx,
+    ):
+        llm = MockLLMProvider(responses=[
+            _make_llm_response(
+                tool_blocks=[
+                    _make_tool_use_block(
+                        "q1", "ask_user", {"questions": _question_payload()},
+                    ),
+                ],
+                stop_reason="tool_use",
+            ),
+            _make_llm_response(text="Done", stop_reason="end_turn"),
+        ])
+        loop = self._loop(
+            llm, question_registry, question_executor, settings, conv_ctx,
+        )
+
+        events = []
+        async for event in loop.run("Ask", config=TEST_TURN_CONFIG):
+            events.append(event)
+            if (
+                isinstance(event, AgentPaused)
+                and event.prompt.questions is not None
+            ):
+                # A question is answered, never approved.
+                assert loop.approve_tool_call(event.tool_id) is False
+                assert loop.answer_questions("q1", [1]) is True
+
+        asked = [e for e in events if isinstance(e, AgentPaused)]
+        ends = [e for e in events if isinstance(e, ToolCallEnd)]
+
+        assert len(asked) == 1
+        assert asked[0].prompt.questions is not None
+        assert asked[0].prompt.questions[0].title == "Storage"
+        assert asked[0].tool_id == "q1"
+        assert asked[0].choices is None
+        assert len(ends) == 1
+        assert ends[0].result.success
+        assert "Redis" in ends[0].result.output
+        assert ends[0].result.metadata["answers"] == [1]
+
+        # The next model call sees the answer as this call's tool result.
+        tool_messages = [
+            message for message in llm.messages_history[-1]
+            if message.role == "tool"
+        ]
+        assert "Redis" in tool_messages[-1].blocks[-1].tool_result_content
+
+    async def test_auto_mode_still_pauses_for_an_answer(
+        self, question_registry, question_executor, settings, conv_ctx,
+    ):
+        """The pause is input, not a risk decision: AUTO must not skip it."""
+        llm = MockLLMProvider(responses=[
+            _make_llm_response(
+                tool_blocks=[
+                    _make_tool_use_block(
+                        "q1", "ask_user", {"questions": _question_payload()},
+                    ),
+                ],
+                stop_reason="tool_use",
+            ),
+            _make_llm_response(text="Done", stop_reason="end_turn"),
+        ])
+        loop = AgentLoop(
+            llm, question_registry, question_executor, settings,
+            context=conv_ctx,
+            permission_manager=PermissionManager(PermissionMode.AUTO),
+        )
+
+        pauses = []
+        ends = []
+        async for event in loop.run("Ask", config=TEST_TURN_CONFIG):
+            if (
+                isinstance(event, AgentPaused)
+                and event.prompt.questions is not None
+            ):
+                pauses.append(event)
+                assert loop.answer_questions(event.tool_id, [0]) is True
+            if isinstance(event, ToolCallEnd):
+                ends.append(event)
+
+        assert len(pauses) == 1
+        assert len(ends) == 1
+        assert ends[0].result.success
+
+    async def test_invalid_arguments_do_not_pause(
+        self, question_registry, question_executor, settings, conv_ctx,
+    ):
+        llm = MockLLMProvider(responses=[
+            _make_llm_response(
+                tool_blocks=[
+                    _make_tool_use_block(
+                        "q1", "ask_user", {"questions": []},
+                    ),
+                ],
+                stop_reason="tool_use",
+            ),
+            _make_llm_response(text="Done", stop_reason="end_turn"),
+        ])
+        loop = self._loop(
+            llm, question_registry, question_executor, settings, conv_ctx,
+        )
+
+        events = await _collect_events(
+            loop.run("Ask", config=TEST_TURN_CONFIG),
+        )
+
+        assert not [e for e in events if isinstance(e, AgentPaused)]
+        ends = [e for e in events if isinstance(e, ToolCallEnd)]
+        assert len(ends) == 1
+        assert not ends[0].result.success
+        assert "Invalid ask_user call" in ends[0].result.error
+
+    async def test_stale_and_malformed_answers_are_rejected(
+        self, question_registry, question_executor, settings, conv_ctx,
+    ):
+        llm = MockLLMProvider(responses=[
+            _make_llm_response(
+                tool_blocks=[
+                    _make_tool_use_block(
+                        "q1", "ask_user", {"questions": _question_payload()},
+                    ),
+                ],
+                stop_reason="tool_use",
+            ),
+            _make_llm_response(text="Done", stop_reason="end_turn"),
+        ])
+        loop = self._loop(
+            llm, question_registry, question_executor, settings, conv_ctx,
+        )
+
+        async for event in loop.run("Ask", config=TEST_TURN_CONFIG):
+            if not (
+                isinstance(event, AgentPaused)
+                and event.prompt.questions is not None
+            ):
+                continue
+            assert loop.answer_questions("other", [0]) is False
+            assert loop.answer_questions("q1", []) is False
+            assert loop.answer_questions("q1", [5]) is False
+            assert loop.answer_questions("q1", [True]) is False
+            assert loop.answer_questions("q1", [0]) is True
+            # One-shot: the settled channel takes no second answer.
+            assert loop.answer_questions("q1", [1]) is False
+
+    async def test_deny_declines_the_questions_and_continues(
+        self, question_registry, question_executor, settings, conv_ctx,
+    ):
+        llm = MockLLMProvider(responses=[
+            _make_llm_response(
+                tool_blocks=[
+                    _make_tool_use_block(
+                        "q1", "ask_user", {"questions": _question_payload()},
+                    ),
+                ],
+                stop_reason="tool_use",
+            ),
+            _make_llm_response(text="Done", stop_reason="end_turn"),
+        ])
+        loop = self._loop(
+            llm, question_registry, question_executor, settings, conv_ctx,
+        )
+
+        events = []
+        async for event in loop.run("Ask", config=TEST_TURN_CONFIG):
+            events.append(event)
+            if (
+                isinstance(event, AgentPaused)
+                and event.prompt.questions is not None
+            ):
+                assert loop.deny_tool_call("q1") is True
+                assert loop.deny_tool_call("q1") is False
+
+        ends = [e for e in events if isinstance(e, ToolCallEnd)]
+        assert len(ends) == 1
+        assert not ends[0].result.success
+        assert "declined" in ends[0].result.error.lower()
+
+    async def test_two_asks_in_one_response_pause_twice(
+        self, question_registry, question_executor, settings, conv_ctx,
+    ):
+        payload = _question_payload()
+        llm = MockLLMProvider(responses=[
+            _make_llm_response(
+                tool_blocks=[
+                    _make_tool_use_block(
+                        "q1", "ask_user", {"questions": payload},
+                    ),
+                    _make_tool_use_block(
+                        "q2", "ask_user", {"questions": payload},
+                    ),
+                ],
+                stop_reason="tool_use",
+            ),
+            _make_llm_response(text="Done", stop_reason="end_turn"),
+        ])
+        loop = self._loop(
+            llm, question_registry, question_executor, settings, conv_ctx,
+        )
+
+        asked: list[str] = []
+        async for event in loop.run("Ask", config=TEST_TURN_CONFIG):
+            if (
+                isinstance(event, AgentPaused)
+                and event.prompt.questions is not None
+            ):
+                asked.append(event.tool_id)
+                loop.answer_questions(event.tool_id, [0])
+
+        assert asked == ["q1", "q2"]
+
+    async def test_closing_the_generator_clears_the_channel(
+        self, question_registry, question_executor, settings, conv_ctx,
+    ):
+        llm = MockLLMProvider(responses=[
+            _make_llm_response(
+                tool_blocks=[
+                    _make_tool_use_block(
+                        "q1", "ask_user", {"questions": _question_payload()},
+                    ),
+                ],
+                stop_reason="tool_use",
+            ),
+        ])
+        loop = self._loop(
+            llm, question_registry, question_executor, settings, conv_ctx,
+        )
+
+        gen = loop.run("Ask", config=TEST_TURN_CONFIG)
+        async for event in gen:
+            if (
+                isinstance(event, AgentPaused)
+                and event.prompt.questions is not None
+            ):
+                assert loop._pending is not None
+                break
+        await gen.aclose()
+        assert loop._pending is None
+
+    async def test_nothing_pending_is_rejected(self, loop):
+        assert loop.answer_questions("q1", [0]) is False
+        assert loop.approve_tool_call("q1") is False
+        assert loop.deny_tool_call("q1") is False
+
+
+def test_persona_points_at_ask_user():
+    from toddler.context.builder import _BASE_PERSONA
+
+    assert "ask_user" in _BASE_PERSONA
 
 
 if __name__ == "__main__":

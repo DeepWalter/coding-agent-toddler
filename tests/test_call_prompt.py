@@ -73,6 +73,7 @@ class TestToolCallPrompt:
             "title": ALLOW_CALL_TITLE,
             "content": "ls -la",
             "description": None,
+            "questions": None,
         }
 
     def test_it_is_frozen(self):

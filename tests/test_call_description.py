@@ -173,6 +173,7 @@ class TestOptOut:
         has to fail here rather than in the model's schema."""
         assert {t.name for t in _opted_out_tools()} == {
             "read_file", "write_file", "edit_file", "plan_update",
+            "ask_user",
         }
 
     def test_no_description_property_is_injected(self):

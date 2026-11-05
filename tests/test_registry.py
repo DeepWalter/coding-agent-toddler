@@ -19,6 +19,7 @@ BUILTIN_NAMES = {
     "shell",
     "grep", "glob",
     "git_status", "git_diff", "git_log", "git_commit", "git_branch",
+    "ask_user",
 }
 
 #: What registers itself at import time — the default tools plus the ones a
@@ -201,8 +202,9 @@ class TestHiddenToolNames:
 
     def test_hidden_is_not_the_same_question_as_not_default(self):
         """Two declarations, two questions: what a session is handed, and
-        what the front-ends draw.  ``plan_update`` answers no to both, but
-        nothing ties the two together."""
+        what the front-ends draw.  ``plan_update`` is hidden and not
+        shipped; ``ask_user`` is visible and shipped — the two
+        declarations are independent."""
         assert set(HIDDEN_TOOL_NAMES) == {"plan_update"}
         assert set(create_default_registry().list_names()) == BUILTIN_NAMES
 
