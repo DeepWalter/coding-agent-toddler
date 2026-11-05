@@ -80,6 +80,48 @@ _PLAN_PROPOSAL = {
     "estimated_files_touched": 0,
 }
 
+# The canned questions the dummy asks on "ask" / "question": two
+# three-choice questions, recommendation first, so the tabbed card and
+# the next-unanswered advance both have somewhere to go.
+_ASK_USER_QUESTIONS = [
+    {
+        "title": "Storage",
+        "content": "Where should session data live?",
+        "choices": [
+            {
+                "title": "SQLite",
+                "content": "One local file; no server to run.",
+            },
+            {
+                "title": "Postgres",
+                "content": "A shared server the team already operates.",
+            },
+            {
+                "title": "In-memory",
+                "content": "Fastest, but nothing survives a restart.",
+            },
+        ],
+    },
+    {
+        "title": "Interface",
+        "content": "How should the new command be exposed?",
+        "choices": [
+            {
+                "title": "CLI flag",
+                "content": "A flag on the existing command.",
+            },
+            {
+                "title": "Slash command",
+                "content": "A command typed in the REPL.",
+            },
+            {
+                "title": "Environment variable",
+                "content": "Configure it once, outside the command line.",
+            },
+        ],
+    },
+]
+
 # ---------------------------------------------------------------------------
 # Guard: which AsyncOpenAI to export
 # ---------------------------------------------------------------------------
@@ -155,6 +197,9 @@ if _TEST == "cli":
                     * ``"edit"`` — emit an ``edit_file`` tool call that
                       replaces the README path constant with
                       ``/tmp/README.md`` in ``~/.toddler/test_write.py``.
+                    * ``"ask"`` / ``"question"`` — emit an ``ask_user``
+                      tool call with two three-choice questions, so the
+                      tabbed question card can be exercised.
                     * the plan proposal prompt — answer with the canned
                       two-step plan JSON.
                     * the approved-plan execution prompt — open the plan
@@ -246,6 +291,8 @@ if _TEST == "cli":
                 return self._chunks_for_write()
             elif content == "edit":
                 return self._chunks_for_edit()
+            elif content in ("ask", "question"):
+                return self._chunks_for_ask()
             else:
                 return self._chunks_for_unknown(content)
 
@@ -512,6 +559,29 @@ if _TEST == "cli":
                     "~/.toddler/test_write.py.\n\n",
                 ),
                 ("tool_name", "edit_file"),
+                ("tool_args", args),
+                ("finish", "tool_calls"),
+            ]
+            return _DummyStream._materialize(blocks)
+
+        @staticmethod
+        def _chunks_for_ask():
+            """Emit an ``ask_user`` call with two three-choice questions.
+
+            The first choice of each question is the recommendation.  The
+            loop pauses on the call; the answer comes back as its tool
+            result, which the generic tool-result branch acknowledges.
+            """
+            args = json.dumps(
+                {"questions": _ASK_USER_QUESTIONS},
+                ensure_ascii=False,
+            )
+            blocks: list[tuple[str, str | None]] = [
+                (
+                    "text",
+                    "I need a couple of decisions before I continue.\n\n",
+                ),
+                ("tool_name", "ask_user"),
                 ("tool_args", args),
                 ("finish", "tool_calls"),
             ]
