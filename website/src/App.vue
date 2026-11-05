@@ -27,6 +27,7 @@ const {
   cancelTurn,
   approveTool,
   denyTool,
+  answerQuestions,
   approvePlan,
   rejectPlan,
   setMode,
@@ -114,7 +115,9 @@ const awaitingPlanId = computed(() => awaitingPlan.value?.id ?? null)
 // True while the console dock floats an ask (tool gate or awaiting plan)
 // over the input bar — the console pins to the bottom then, so the content
 // being asked about sits right above the card.
-const askVisible = computed(() => state.paused !== null || awaitingPlanId.value !== null)
+const askVisible = computed(
+  () => state.paused !== null || awaitingPlanId.value !== null,
+)
 
 // Three split panes: explorer | editor | console.  Each divider drags its
 // leading pane's width as a % of the split width, clamped cross-wise so
@@ -672,6 +675,7 @@ function onDividerUp(event: PointerEvent) {
           @compact="sendCompact"
           @approve-tool="approveTool"
           @deny-tool="denyTool"
+          @answer-questions="answerQuestions"
           @approve-plan="approvePlan"
           @reject-plan="rejectPlan"
         />

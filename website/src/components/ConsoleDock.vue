@@ -4,6 +4,7 @@ import type { Block, Mode, ModelSlotInfo, Paused } from '../types'
 import ConsoleDockInputBar from './ConsoleDockInputBar.vue'
 import ConsoleDockPausePrompt from './ConsoleDockPausePrompt.vue'
 import ConsoleDockPlanAsk from './ConsoleDockPlanAsk.vue'
+import ConsoleDockQuestion from './ConsoleDockQuestion.vue'
 
 // One floating card occupies the console's bottom slot at any time: the tool
 // gate (state.paused), a plan awaiting THIS tab's decision, or the input bar.
@@ -33,6 +34,7 @@ const emit = defineEmits<{
   compact: []
   'approve-tool': []
   'deny-tool': []
+  'answer-questions': [toolId: string, answers: number[]]
   'approve-plan': [planId: string, mode: 'manual' | 'auto']
   'reject-plan': [planId: string, feedback: string]
 }>()
@@ -63,8 +65,17 @@ onBeforeUnmount(() => dockObserver?.disconnect())
 
 <template>
   <div ref="dockEl" class="console-dock">
+    <ConsoleDockQuestion
+      v-if="paused?.prompt.questions"
+      :key="paused.tool_id ?? 'questions'"
+      :questions="paused?.prompt.questions ?? []"
+      :tool-id="paused?.tool_id ?? ''"
+      :busy="busy"
+      @submit="(toolId, answers) => emit('answer-questions', toolId, answers)"
+      @cancel="emit('cancel')"
+    />
     <ConsoleDockPausePrompt
-      v-if="paused"
+      v-else-if="paused"
       :paused="paused"
       :busy="busy"
       @approve="emit('approve-tool')"

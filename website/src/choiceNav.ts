@@ -26,7 +26,8 @@
 
 /** Where the choice rows live inside an ask card — each alternative is a
  * complete selector (a comma never shares a descendant part). */
-const ROW_SELECTOR = '.pause-prompt-actions button, .plan-ask-actions button'
+const ROW_SELECTOR =
+  '.pause-prompt-actions button, .plan-ask-actions button, .question-choices .question-choice'
 
 /** The mark on the row the card would answer with.  Worn by one row at a
  * time, and kept while the focus is elsewhere. */

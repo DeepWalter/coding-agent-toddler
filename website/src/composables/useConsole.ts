@@ -73,14 +73,6 @@ function findTool(
   return null
 }
 
-function lastOpenToolId(s: ConsoleState): string | null {
-  for (let i = s.blocks.length - 1; i >= 0; i--) {
-    const b = s.blocks[i]
-    if (b.kind === 'tool' && b.open) return b.tool_id
-  }
-  return null
-}
-
 function closeAssistant(s: ConsoleState): void {
   // Open assistant blocks may sit anywhere in the stream (text before a
   // tool card, text after it) — the turn ending closes all of them so a
@@ -160,7 +152,11 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
       // Resume a mid-approval reconnect — but only while actually
       // paused; the snapshot can outlive the turn by a race.
       s.paused = action.busy && action.paused
-        ? { prompt: action.paused.prompt, choices: action.paused.choices, tool_id: null }
+        ? {
+            prompt: action.paused.prompt,
+            choices: action.paused.choices,
+            tool_id: action.paused.tool_id,
+          }
         : null
       s.blocks = []
       for (const msg of action.messages) {
@@ -385,10 +381,16 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
       break
     }
     case 'agent_paused':
+      // Both pause shapes arrive here: an approve/deny gate and an
+      // ask-user prompt (`prompt.questions`).  The pause holds the turn
+      // the way a tool call does, so the prose that set it up must stop
+      // reading as still streaming.
+      closeThinking(s)
+      closeAssistant(s)
       s.paused = {
         prompt: action.prompt,
         choices: action.choices,
-        tool_id: lastOpenToolId(s),
+        tool_id: action.tool_id,
       }
       break
     case 'agent_finished':
@@ -461,6 +463,9 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
       ) {
         s.paused = null
       }
+      // The tool_call_end frame clears the card on every tab; this clears
+      // the submitter's card on the ack, a frame earlier.
+      if (action.accepted && action.cmd === 'answer_questions') s.paused = null
       break
     }
     case 'error':
@@ -544,6 +549,14 @@ export function useConsole(send: (cmd: Command) => void) {
   function denyTool() {
     const toolId = state.paused?.tool_id
     if (toolId) send({ cmd: 'deny_tool', tool_id: toolId })
+  }
+
+  /** Submit a complete set of answers for the pending question card.
+   *  Nothing is marked locally: the tool_call_end frame carries the
+   *  record, and a rejected ack leaves the card standing. */
+  function answerQuestions(toolId: string, answers: number[]) {
+    if (state.paused?.tool_id !== toolId) return
+    send({ cmd: 'answer_questions', tool_id: toolId, answers })
   }
 
   // The shared decision path for the dock ask and the inline card: mark the
@@ -641,6 +654,7 @@ export function useConsole(send: (cmd: Command) => void) {
     cancelTurn,
     approveTool,
     denyTool,
+    answerQuestions,
     approvePlan,
     rejectPlan,
     setMode,

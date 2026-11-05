@@ -4035,6 +4035,112 @@ const waitFoldable = (count) =>
   )
 }
 
+// --- Phase 24: the ask_user card — tabs, auto-advance, manual submit ---
+{
+  await page.fill('textarea.input-bar-textarea', 'ask me something')
+  await page.click('button:has-text("Send")')
+  await page.waitForSelector('.question-card', { timeout: 15000 })
+  // The dock is the live ask: the transcript holds only the call's heading
+  // until the card is dismissed, when the record appears with its answers.
+  const duringAsk = await page.locator('.tool-card-questions').count()
+  const okDuringAsk = duringAsk === 0
+  console.log(`phase24 no record while asking -> ${duringAsk} ${okDuringAsk ? 'PASS' : 'FAIL'}`)
+  if (!okDuringAsk) fails++
+
+  const tabs = await page.locator('.question-tab').allTextContents()
+  const okTabs = tabs.length === 3
+  console.log(`phase24 ask card tabs -> ${JSON.stringify(tabs)} ${okTabs ? 'PASS' : 'FAIL'}`)
+  if (!okTabs) fails++
+
+  const activeTitle = () =>
+    page.evaluate(
+      () => document.querySelector('.question-tab.active .question-tab-title')?.textContent?.trim() ?? '',
+    )
+  const first = await activeTitle()
+  const okFirst = first === 'Storage'
+  console.log(`phase24 first tab active -> ${JSON.stringify(first)} ${okFirst ? 'PASS' : 'FAIL'}`)
+  if (!okFirst) fails++
+
+  const recommended = await page.locator('.question-choices .question-recommended').count()
+  const okRecommended = recommended === 1
+  console.log(`phase24 recommended badge -> ${recommended} ${okRecommended ? 'PASS' : 'FAIL'}`)
+  if (!okRecommended) fails++
+
+  const submitDisabled = await page.locator('.question-submit').isDisabled()
+  console.log(`phase24 submit disabled until answered -> ${submitDisabled} ${submitDisabled ? 'PASS' : 'FAIL'}`)
+  if (!submitDisabled) fails++
+
+  // Answer Q1 (the non-recommended choice) → auto-advance to Q2.
+  await page.locator('.question-choice').nth(1).click()
+  await page.waitForFunction(
+    () => document.querySelector('.question-tab.active .question-tab-title')?.textContent?.trim() === 'Auth',
+    { timeout: 5000 },
+  )
+  const advanced = await activeTitle()
+  const okAdvance = advanced === 'Auth'
+  console.log(`phase24 answer advances -> ${JSON.stringify(advanced)} ${okAdvance ? 'PASS' : 'FAIL'}`)
+  if (!okAdvance) fails++
+
+  // Q2 and Q3; the third answer completes the set.
+  await page.locator('.question-choice').first().click()
+  await page.waitForFunction(
+    () => document.querySelector('.question-tab.active .question-tab-title')?.textContent?.trim() === 'Testing',
+    { timeout: 5000 },
+  )
+  await page.locator('.question-choice').first().click()
+  await page.waitForFunction(
+    () => !document.querySelector('.question-submit')?.disabled,
+    { timeout: 5000 },
+  )
+  const answeredTabs = await page.locator('.question-tab.answered').count()
+  const submitEnabled = !(await page.locator('.question-submit').isDisabled())
+  const okAll = answeredTabs === 3 && submitEnabled
+  console.log(
+    `phase24 all answered -> ${answeredTabs} tabs, submit ${submitEnabled ? 'enabled' : 'disabled'} ${okAll ? 'PASS' : 'FAIL'}`,
+  )
+  if (!okAll) fails++
+
+  // Manual submit: the dock card goes, and the tool card settles with the
+  // chosen answers marked.
+  await page.locator('.question-submit').click()
+  await page.waitForSelector('.question-card', { state: 'detached', timeout: 8000 })
+  await page.waitForFunction(
+    () => document.querySelectorAll('.tool-card-choice.is-chosen').length === 3,
+    { timeout: 8000 },
+  )
+  const record = await page.locator('.tool-call').last().evaluate((el) => ({
+    name: el.querySelector('.tool-call-name')?.textContent?.trim() ?? '',
+    questions: el.querySelectorAll('.tool-card-question').length,
+    chosen: [...el.querySelectorAll('.tool-card-choice.is-chosen')]
+      .map((row) => row.textContent.trim()),
+    text: el.querySelector('.tool-card-questions')?.innerText ?? '',
+  }))
+  const okRecord =
+    record.name === 'Questions' &&
+    record.questions === 3 &&
+    record.chosen.length === 3 &&
+    record.text.includes('Where should sessions live?') &&
+    record.chosen[0].includes('Redis')
+  console.log(`phase24 Q&A record -> ${JSON.stringify(record.chosen)} ${okRecord ? 'PASS' : 'FAIL'}`)
+  if (!okRecord) fails++
+
+  // Reload: the dock card is gone; the tool card replays with its marks.
+  await page.reload()
+  await page.waitForSelector('.tool-card-questions', { timeout: 15000 })
+  const replayed = await page.locator('.tool-call').last().evaluate((el) => ({
+    questions: el.querySelectorAll('.tool-card-question').length,
+    chosen: [...el.querySelectorAll('.tool-card-choice.is-chosen')]
+      .map((row) => row.textContent.trim()),
+  }))
+  const okReplay =
+    replayed.questions === 3 &&
+    replayed.chosen.length === 3 &&
+    replayed.chosen[0].includes('Redis')
+  console.log(`phase24 record replays after reload -> ${JSON.stringify(replayed.chosen)} ${okReplay ? 'PASS' : 'FAIL'}`)
+  if (!okReplay) fails++
+  await page.waitForTimeout(300)
+}
+
 // The browser connection is an open handle: without closing it the process
 // outlives the last check and a run never returns.
 await browser.close()

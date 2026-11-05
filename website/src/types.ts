@@ -104,13 +104,31 @@ export interface ToolCallPrompt {
   title: string
   content: string | null
   description: string | null
+  /** An ask-user prompt: the questions the pause waits on.  Null for an
+   *  ordinary approve/deny gate. */
+  questions: Question[] | null
 }
 
 /** The agent_paused frame as replayed by hello.paused. */
 export interface PausedFrame {
   type: 'agent_paused'
+  tool_id: string
   prompt: ToolCallPrompt
   choices: string[] | null
+}
+
+/** One answer to a question the agent asks.  The first choice is the
+ *  recommendation; the rest of the row is what the question card shows. */
+export interface QuestionChoice {
+  title: string
+  content: string
+}
+
+/** One single-choice question in an ask_user call. */
+export interface Question {
+  title: string
+  content: string
+  choices: QuestionChoice[]
 }
 
 /** A plan awaiting (or already running under) approval, as replayed by
@@ -239,7 +257,12 @@ export type Frame =
     }
   | { type: 'plan_proposed'; plan: Plan }
   | { type: 'plan_step_update'; steps: PlanStepRow[] }
-  | { type: 'agent_paused'; prompt: ToolCallPrompt; choices: string[] | null }
+  | {
+      type: 'agent_paused'
+      tool_id: string
+      prompt: ToolCallPrompt
+      choices: string[] | null
+    }
   | { type: 'agent_finished'; reason: string; usage: TokenUsage | null }
   | { type: 'recoverable_error'; message: string }
   | { type: 'notice'; message: string }
@@ -264,6 +287,7 @@ export type Command =
   | { cmd: 'cancel' }
   | { cmd: 'approve_tool'; tool_id: string }
   | { cmd: 'deny_tool'; tool_id: string }
+  | { cmd: 'answer_questions'; tool_id: string; answers: number[] }
   | { cmd: 'approve_plan'; plan_id: string; mode: 'manual' | 'auto' }
   | { cmd: 'reject_plan'; plan_id: string; feedback?: string }
   | { cmd: 'set_mode'; mode: Mode }

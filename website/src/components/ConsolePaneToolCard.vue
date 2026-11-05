@@ -4,6 +4,7 @@ import type { Block, EditSelection, TabEntry } from '../types'
 import { blockStatus } from '../blockStatus'
 import { editSelection, toolBodyTab, toolCard, toolTab, type ToolCardRow } from '../toolCard'
 import ConsolePaneToolCardDiff from './ConsolePaneToolCardDiff.vue'
+import ConsolePaneToolCardQuestions from './ConsolePaneToolCardQuestions.vue'
 import ConsolePaneToolCardRow from './ConsolePaneToolCardRow.vue'
 import ExternalTag from './ExternalTag.vue'
 import SymlinkTag from './SymlinkTag.vue'
@@ -89,9 +90,17 @@ function openPath() {
          A write and an edit are the exception — the content it wrote, or the
          change it made, is the body, drawn above the failure row when it has
          one.  The box appears only when there is something to put in it. -->
-    <div v-if="card.body || card.rows.length" class="tool-card" :class="state">
+    <div
+      v-if="card.questions || card.body || card.rows.length"
+      class="tool-card"
+      :class="state"
+    >
+      <ConsolePaneToolCardQuestions
+        v-if="card.questions"
+        :questions="card.questions"
+      />
       <ConsolePaneToolCardDiff
-        v-if="card.body"
+        v-else-if="card.body"
         :rows="card.body"
         :full-label="card.bodyKind === 'content' ? 'content' : 'diff'"
         @open="openBody"

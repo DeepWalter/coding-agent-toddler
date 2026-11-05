@@ -245,6 +245,53 @@ const PLAN_FRAME = {
 // second proposal (after a rejection) is its own plan — a new doc tab, its
 // own decision.
 let planSeq = 0
+
+// The ask_user pause: three questions, so the tab strip and the "next
+// unanswered" advance both have somewhere to go.  Every question puts its
+// recommendation first, matching the tool's contract.  The questions ride
+// on the ordinary agent_paused frame — the real server's unified pause —
+// so a reload restores the card through hello.paused.
+const QUESTION_TOOL_ID = 'call_ask'
+const QUESTION_PAUSE = {
+  type: 'agent_paused',
+  tool_id: QUESTION_TOOL_ID,
+  prompt: {
+    title: 'Answer these questions',
+    content: null,
+    description: null,
+    questions: [
+      {
+        title: 'Storage',
+        content: 'Where should sessions live?',
+        choices: [
+          { title: 'SQLite', content: 'One file, no server to run.' },
+          { title: 'Redis', content: 'Shared storage across processes.' },
+        ],
+      },
+      {
+        title: 'Auth',
+        content: 'How should the first sign-in be verified?',
+        choices: [
+          { title: 'Existing OAuth', content: 'Reuse the provider already wired in.' },
+          { title: 'Local password', content: 'Add a password check of our own.' },
+          { title: 'Magic link', content: 'Email a one-time link instead.' },
+        ],
+      },
+      {
+        title: 'Testing',
+        content: 'What should the new path be covered by?',
+        choices: [
+          { title: 'Unit tests', content: 'Fast, isolated, and close to the code.' },
+          { title: 'End-to-end', content: 'Slower, but exercises the whole flow.' },
+        ],
+      },
+    ],
+  },
+  choices: null,
+}
+// Held while the card waits, so a reload's hello restores it.  Cleared by
+// answer_questions and by cancel.
+let pendingAsk = null
 // The file turn's last call — the outside read — holds at a gate, so a test
 // can watch the card name the file, and wear the external marker, before
 // the call is allowed to run.  The pending call waits here for the
@@ -550,8 +597,8 @@ function helloFrame() {
     type: 'hello',
     session,
     conversation,
-    busy: false,
-    paused: null,
+    busy: Boolean(pendingAsk),
+    paused: pendingAsk,
     plan: null,
     messages: [...transcript],
   }
@@ -624,6 +671,7 @@ wss.on('connection', (ws) => {
             }
             transcript = []
           }
+          pendingAsk = null
           broadcast(helloFrame())
           broadcast({
             type: 'notice',
@@ -696,6 +744,10 @@ wss.on('connection', (ws) => {
         // decision, the way a tool gate does — the approve_plan command
         // below streams the execution beats.
         const planTurn = msg.input.startsWith('plan')
+        // An "ask" turn opens the tabbed ask_user card and holds for the
+        // answer — the real loop's ordinary agent_paused prompt, carrying
+        // questions instead of an approve/deny choice.
+        const ask = msg.input.startsWith('ask')
         // The real server auto-titles a conversation from the first user
         // input of its first turn, before the state change whose observer
         // re-broadcasts session_info — so a live header follows untitled →
@@ -705,6 +757,25 @@ wss.on('connection', (ws) => {
           broadcast(sessionInfoFrame())
         }
         send({ type: 'turn_started' })
+        if (ask) {
+          send({ type: 'content_delta', text_delta: 'I need a decision first.\n' })
+          const questions = QUESTION_PAUSE.prompt.questions
+          useStart(QUESTION_TOOL_ID, 'ask_user')
+          send({
+            type: 'tool_call_start',
+            tool_id: QUESTION_TOOL_ID,
+            tool_name: 'ask_user',
+            input: { questions },
+            path: null,
+            path_abs: null,
+            path_named: null,
+            path_symlink: false,
+            path_is_file: false,
+          })
+          pendingAsk = QUESTION_PAUSE
+          send(pendingAsk)
+          break // holds for answer_questions, like the tool gate
+        }
         if (planTurn) {
           send({ type: 'content_delta', text_delta: 'putting a plan together\n' })
           send({
@@ -1005,10 +1076,12 @@ wss.on('connection', (ws) => {
           })
           send({
             type: 'agent_paused',
+            tool_id: FILE_GATE_ID,
             prompt: {
               title: GATE_TITLES.read_file,
               content: null,
               description: OUTSIDE_DESCRIPTION,
+              questions: null,
             },
             choices: null,
           })
@@ -1090,10 +1163,12 @@ wss.on('connection', (ws) => {
           })
           send({
             type: 'agent_paused',
+            tool_id: OVERWRITE_GATE_ID,
             prompt: {
               title: GATE_TITLES.write_file,
               content: null,
               description: OVERWRITE_DESCRIPTION,
+              questions: null,
             },
             choices: null,
           })
@@ -1141,10 +1216,12 @@ wss.on('connection', (ws) => {
           }
           send({
             type: 'agent_paused',
+            tool_id: EDIT_GATE_ID,
             prompt: {
               title: 'Allow edit this file?',
               content: null,
               description: EDIT_D_PATH,
+              questions: null,
             },
             choices: null,
           })
@@ -1237,17 +1314,82 @@ wss.on('connection', (ws) => {
         })
         send({
           type: 'agent_paused',
+          tool_id: 't1',
           prompt: {
             title: GATE_TITLES.shell,
             content: pendingShellCall.command,
             description: pendingShellCall.description,
+            questions: null,
           },
           choices: null,
         })
         break
       }
+      case 'answer_questions': {
+        const questions = pendingAsk?.prompt?.questions
+        const valid = questions
+          && msg.tool_id === pendingAsk.tool_id
+          && Array.isArray(msg.answers)
+          && msg.answers.length === questions.length
+          && msg.answers.every(
+            (answer, i) => Number.isInteger(answer)
+              && answer >= 0
+              && answer < questions[i].choices.length,
+          )
+        if (!valid) {
+          send({ type: 'ack', cmd: 'answer_questions', accepted: false })
+          break
+        }
+        const answers = [...msg.answers]
+        const input = { questions }
+        const result = {
+          success: true,
+          output: 'The user answered your questions.',
+          error: null,
+          checkpoint_id: null,
+          metadata: { questions, answers },
+        }
+        pendingAsk = null
+        send({ type: 'ack', cmd: 'answer_questions', accepted: true })
+        broadcast({
+          type: 'tool_call_end',
+          tool_id: QUESTION_TOOL_ID,
+          tool_name: 'ask_user',
+          input,
+          path: null,
+          path_abs: null,
+          path_named: null,
+          path_symlink: false,
+          path_is_file: false,
+          result,
+        })
+        // The record a reload replays: the real server pairs the stored
+        // tool use with its result metadata.
+        transcript.push({
+          role: 'tool',
+          tool_id: QUESTION_TOOL_ID,
+          tool_name: 'ask_user',
+          input,
+          path: null,
+          path_abs: null,
+          path_named: null,
+          path_symlink: false,
+          path_is_file: false,
+          result,
+        })
+        send({ type: 'content_delta', text_delta: 'thanks — continuing\n' })
+        send({ type: 'agent_finished', reason: 'completed', usage: null })
+        send({ type: 'state', busy: false })
+        break
+      }
       case 'approve_tool':
       case 'deny_tool':
+        if (pendingAsk) {
+          // A question pause is answered with answer_questions; the
+          // question card never sends approve/deny.
+          send({ type: 'ack', cmd: msg.cmd, accepted: false })
+          break
+        }
         send({ type: 'ack', cmd: msg.cmd, accepted: true })
         if (pendingFileCall && msg.tool_id === pendingFileCall.tool_id) {
           // A gated file call — the outside read, the write over a file
@@ -1321,6 +1463,7 @@ wss.on('connection', (ws) => {
         break
       case 'cancel':
         send({ type: 'ack', cmd: 'cancel', accepted: true })
+        pendingAsk = null
         send({ type: 'turn_cancelled' })
         // Mirrors the real contract: cancel_turn() persists the repair
         // marker, then the runner's finally broadcasts busy:false.

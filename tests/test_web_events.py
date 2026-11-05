@@ -21,7 +21,12 @@ from toddler.agent.events import (
 from toddler.agent.planner import Plan, PlanStep
 from toddler.llm import TokenUsage
 from toddler.llm.messages import Message, MessageBlock
-from toddler.tools.base import ToolCallPrompt, ToolResult
+from toddler.tools.base import (
+    Question,
+    QuestionChoice,
+    ToolCallPrompt,
+    ToolResult,
+)
 from toddler.tools.plan import PlanStepStatus
 from toddler.web.events import (
     serialize_event,
@@ -35,6 +40,17 @@ from toddler.web.events import (
 # disk: what the root decides is the shape of a call's resolved ``path``,
 # and the same one has to reach a live frame and a replayed entry.
 ROOT = Path("/repo")
+
+
+def _question() -> Question:
+    return Question(
+        title="Storage",
+        content="Where should sessions live?",
+        choices=(
+            QuestionChoice("SQLite", "One file, no server."),
+            QuestionChoice("Redis", "Shared storage."),
+        ),
+    )
 
 
 def _plan() -> Plan:
@@ -324,10 +340,12 @@ class TestSerializeEvent:
             choices=["approve", "deny"],
         ), ROOT) == {
             "type": "agent_paused",
+            "tool_id": "",
             "prompt": {
                 "title": "Allow this tool call?",
                 "content": "ls -la",
                 "description": "list the files",
+                "questions": None,
             },
             "choices": ["approve", "deny"],
         }
@@ -339,13 +357,65 @@ class TestSerializeEvent:
             prompt=ToolCallPrompt(title="Allow this tool call?"),
         ), ROOT) == {
             "type": "agent_paused",
+            "tool_id": "",
             "prompt": {
                 "title": "Allow this tool call?",
                 "content": None,
                 "description": None,
+                "questions": None,
             },
             "choices": None,
         }
+
+    def test_agent_paused_with_questions(self):
+        """An ask-user prompt rides the same pause frame; the question
+        array is the discriminant and there is no approve/deny choice."""
+        question = _question()
+        assert serialize_event(AgentPaused(
+            tool_id="q1",
+            prompt=ToolCallPrompt(
+                title="Answer these questions",
+                questions=(question,),
+            ),
+            choices=None,
+        ), ROOT) == {
+            "type": "agent_paused",
+            "tool_id": "q1",
+            "prompt": {
+                "title": "Answer these questions",
+                "content": None,
+                "description": None,
+                "questions": [question.to_dict()],
+            },
+            "choices": None,
+        }
+
+    def test_ask_user_tool_frames_are_visible(self):
+        """The tool card is the durable Q&A record, so its frames ship."""
+        assert serialize_event(ToolUseStart(
+            tool_id="q1", tool_name="ask_user",
+        ), ROOT) == {
+            "type": "tool_use_start",
+            "tool_id": "q1",
+            "tool_name": "ask_user",
+        }
+        start = serialize_event(ToolCallStart(
+            tool_id="q1", tool_name="ask_user",
+            input={"questions": []},
+        ), ROOT)
+        assert start["tool_name"] == "ask_user"
+        assert start["input"] == {"questions": []}
+
+        end = serialize_event(ToolCallEnd(
+            tool_id="q1", tool_name="ask_user",
+            input={"questions": []},
+            result=ToolResult(
+                tool_id="q1", tool_name="ask_user", success=True,
+                output="answered",
+            ),
+        ), ROOT)
+        assert end["tool_name"] == "ask_user"
+        assert end["result"]["success"] is True
 
     def test_agent_finished(self):
         usage = TokenUsage(
@@ -486,6 +556,60 @@ class TestSerializeTranscript:
             "line_start": 3,
             "column_start": 4,
         }
+
+    def test_answered_question_replays_as_a_tool_card(self):
+        question = _question()
+        messages = self._tool_pair(
+            "q1",
+            name="ask_user",
+            tool_input={"questions": [question.to_dict()]},
+            result="The user answered your questions:",
+            metadata={
+                "questions": [question.to_dict()],
+                "answers": [1],
+            },
+        )
+        entry = serialize_transcript(messages, ROOT)[0]
+        assert entry["role"] == "tool"
+        assert entry["tool_id"] == "q1"
+        assert entry["tool_name"] == "ask_user"
+        assert entry["input"] == {"questions": [question.to_dict()]}
+        assert entry["path"] is None
+        assert entry["result"]["success"] is True
+        assert entry["result"]["metadata"] == {
+            "questions": [question.to_dict()],
+            "answers": [1],
+        }
+
+    def test_declined_question_replays_as_a_failed_tool_card(self):
+        question = _question()
+        messages = self._tool_pair(
+            "q1",
+            name="ask_user",
+            tool_input={"questions": [question.to_dict()]},
+            result="The user declined to answer these questions.",
+            is_error=True,
+            metadata={
+                "questions": [question.to_dict()],
+                "declined": True,
+            },
+        )
+        entry = serialize_transcript(messages, ROOT)[0]
+        assert entry["tool_name"] == "ask_user"
+        assert entry["result"]["success"] is False
+        assert entry["result"]["metadata"]["declined"] is True
+
+    def test_unanswered_question_replays_as_a_cancelled_tool_card(self):
+        # A turn cancelled while the ask waited persists the use alone.
+        messages = [Message.assistant([
+            MessageBlock.tool_use_block(
+                "q1", "ask_user",
+                {"questions": [_question().to_dict()]},
+            ),
+        ])]
+        entry = serialize_transcript(messages, ROOT)[0]
+        assert entry["tool_name"] == "ask_user"
+        assert entry["result"] is None
 
     def test_use_without_result_replays_as_cancelled(self):
         # A turn cancelled mid-execution persists the use but no result.

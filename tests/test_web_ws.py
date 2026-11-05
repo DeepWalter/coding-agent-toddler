@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from tests.mocks import (
     SlowStreamLLM,
+    ask_user_response,
     make_mock_llm,
     pause_on_write,
     plan_proposal_response,
@@ -87,6 +88,30 @@ def _wait_until(predicate, timeout: float = 5.0) -> None:
             return
         time.sleep(0.05)
     raise AssertionError("condition not met within timeout")
+
+
+def _questions() -> list[dict]:
+    return [{
+        "title": "Storage",
+        "content": "Where should sessions live?",
+        "choices": [
+            {"title": "SQLite", "content": "One file, no server."},
+            {"title": "Redis", "content": "Shared storage."},
+        ],
+    }]
+
+
+def _collect_until(ws, wanted: str, max_frames: int = 100) -> list[dict]:
+    """Collect frames until *wanted* arrives, preserving the rest for
+    assertions — acks and broadcasts race, so a test must not assume an
+    order between them."""
+    frames: list[dict] = []
+    for _ in range(max_frames):
+        frame = ws.receive_json()
+        frames.append(frame)
+        if frame["type"] == wanted:
+            return frames
+    raise AssertionError(f"no {wanted!r} frame received")
 
 
 def _plan() -> Plan:
@@ -256,6 +281,7 @@ class TestBusyRejection:
                 "title": "Allow write this file?",
                 "content": None,
                 "description": str(tmp_path / "out.txt"),
+                "questions": None,
             }
 
             ws.send_json({"cmd": "turn", "input": "second turn"})
@@ -342,6 +368,228 @@ class TestToolApproval:
                 "cmd": "approve_tool",
                 "accepted": False,
             }
+
+
+# ============================================================================
+# Ask-user questions
+# ============================================================================
+
+
+class TestQuestions:
+    """The ask-user pause (an agent_paused prompt with questions), the
+    answer command, and its replay."""
+
+    def test_answer_round_trip_and_replay(self, tmp_path):
+        llm = make_mock_llm(
+            ask_user_response(_questions()),
+            text_response("Done"),
+        )
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client:
+            with client.websocket_connect("/ws") as ws:
+                hello = ws.receive_json()
+                assert hello["paused"] is None
+
+                ws.send_json({"cmd": "turn", "input": "ask"})
+                asked = _wait_for(ws, "agent_paused")
+                assert asked["tool_id"] == "call_ask"
+                assert asked["choices"] is None
+                questions = asked["prompt"]["questions"]
+                assert questions[0]["title"] == "Storage"
+                assert len(questions[0]["choices"]) == 2
+
+                ws.send_json({
+                    "cmd": "answer_questions",
+                    "tool_id": "call_ask",
+                    "answers": [1],
+                })
+                frames = _collect_until(ws, "agent_finished")
+                types = [frame["type"] for frame in frames]
+                assert "ack" in types
+                assert "tool_call_end" in types
+                ack = next(f for f in frames if f["type"] == "ack")
+                assert ack == {
+                    "type": "ack",
+                    "cmd": "answer_questions",
+                    "accepted": True,
+                }
+                ended = next(
+                    f for f in frames if f["type"] == "tool_call_end"
+                )
+                assert ended["tool_id"] == "call_ask"
+                assert ended["tool_name"] == "ask_user"
+                assert ended["result"]["success"] is True
+                assert ended["result"]["metadata"]["answers"] == [1]
+                assert not [
+                    f for f in frames if f["type"] == "agent_paused"
+                ]
+
+                # The next model call received the chosen answer.
+                tool_messages = [
+                    message for message in llm.messages_history[-1]
+                    if message.role == "tool"
+                ]
+                assert "Redis" in (
+                    tool_messages[-1].blocks[-1].tool_result_content
+                )
+
+                _wait_until(lambda: not client.app.state.web.runner.busy)
+
+            # A reload rebuilds the Q&A record as the tool card.
+            with client.websocket_connect("/ws") as ws:
+                hello = ws.receive_json()
+                entries = [
+                    message for message in hello["messages"]
+                    if message["role"] == "tool"
+                    and message["tool_name"] == "ask_user"
+                ]
+                assert len(entries) == 1
+                assert entries[0]["tool_id"] == "call_ask"
+                assert (
+                    entries[0]["input"]["questions"][0]["title"]
+                    == "Storage"
+                )
+                assert entries[0]["result"]["metadata"]["answers"] == [1]
+
+    def test_reconnect_while_asking_restores_the_card(self, tmp_path):
+        llm = make_mock_llm(
+            ask_user_response(_questions()),
+            text_response("Done"),
+        )
+        app = _app(tmp_path, llm)
+        with (
+            TestClient(app) as client,
+            client.websocket_connect("/ws") as first,
+        ):
+            first.receive_json()
+            first.send_json({"cmd": "turn", "input": "ask"})
+            _wait_for(first, "agent_paused")
+
+            with client.websocket_connect("/ws") as second:
+                hello = second.receive_json()
+                assert hello["busy"] is True
+                assert hello["paused"]["tool_id"] == "call_ask"
+                assert (
+                    hello["paused"]["prompt"]["questions"][0]["title"]
+                    == "Storage"
+                )
+
+                second.send_json({
+                    "cmd": "answer_questions",
+                    "tool_id": "call_ask",
+                    "answers": [0],
+                })
+                second_frames = _collect_until(second, "agent_finished")
+                assert any(
+                    frame["type"] == "tool_call_end"
+                    and frame["tool_name"] == "ask_user"
+                    for frame in second_frames
+                )
+
+            first_frames = _collect_until(first, "agent_finished")
+            assert any(
+                frame["type"] == "tool_call_end"
+                and frame["tool_name"] == "ask_user"
+                for frame in first_frames
+            )
+            _wait_until(lambda: not client.app.state.web.runner.busy)
+
+    def test_wrong_tool_id_keeps_the_ask_pending(self, tmp_path):
+        llm = make_mock_llm(
+            ask_user_response(_questions()),
+            text_response("Done"),
+        )
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()
+            ws.send_json({"cmd": "turn", "input": "ask"})
+            _wait_for(ws, "agent_paused")
+
+            # A question is answered, not approved.
+            ws.send_json({"cmd": "approve_tool", "tool_id": "call_ask"})
+            ack = _wait_for(ws, "ack")
+            assert ack["accepted"] is False
+
+            ws.send_json({
+                "cmd": "answer_questions",
+                "tool_id": "wrong",
+                "answers": [0],
+            })
+            ack = _wait_for(ws, "ack")
+            assert ack["accepted"] is False
+
+            # Still pending: a valid answer now settles it.
+            ws.send_json({
+                "cmd": "answer_questions",
+                "tool_id": "call_ask",
+                "answers": [1],
+            })
+            frames = _collect_until(ws, "agent_finished")
+            ended = next(
+                frame for frame in frames
+                if frame["type"] == "tool_call_end"
+                and frame["tool_name"] == "ask_user"
+            )
+            assert ended["result"]["metadata"]["answers"] == [1]
+
+    def test_malformed_answers_get_an_error(self, tmp_path):
+        llm = make_mock_llm(
+            ask_user_response(_questions()),
+            text_response("Done"),
+        )
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()
+            ws.send_json({"cmd": "turn", "input": "ask"})
+            _wait_for(ws, "agent_paused")
+
+            ws.send_json({
+                "cmd": "answer_questions",
+                "tool_id": "call_ask",
+                "answers": "nope",
+            })
+            error = _wait_for(ws, "error")
+            assert error["code"] == "invalid_answers"
+
+            # Clean up so the turn is not left waiting.
+            ws.send_json({
+                "cmd": "answer_questions",
+                "tool_id": "call_ask",
+                "answers": [0],
+            })
+            _collect_until(ws, "agent_finished")
+
+    def test_last_watcher_leaves_and_the_turn_cancels(self, tmp_path):
+        llm = make_mock_llm(ask_user_response(_questions()))
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client:
+            with client.websocket_connect("/ws") as ws:
+                ws.receive_json()
+                ws.send_json({"cmd": "turn", "input": "ask"})
+                _wait_for(ws, "agent_paused")
+                # Exit without answering: nobody can answer, so the
+                # stranded-answer guard must cancel the turn.
+            state = client.app.state.web
+            _wait_until(lambda: not state.runner.busy)
+            assert state.runner.paused_snapshot is None
+
+    def test_cancel_while_asking(self, tmp_path):
+        llm = make_mock_llm(ask_user_response(_questions()))
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()
+            ws.send_json({"cmd": "turn", "input": "ask"})
+            _wait_for(ws, "agent_paused")
+
+            ws.send_json({"cmd": "cancel"})
+            frames = []
+            for _ in range(12):
+                frame = ws.receive_json()
+                frames.append(frame)
+                if frame["type"] == "state" and frame["busy"] is False:
+                    break
+            assert "turn_cancelled" in [f["type"] for f in frames]
+            assert client.app.state.web.runner.paused_snapshot is None
 
 
 # ============================================================================

@@ -42,6 +42,7 @@
 
 @import './components/console-dock.css';
 @import './components/console-dock-pause-prompt.css';
+@import './components/console-dock-question.css';
 @import './components/console-dock-plan-ask.css';
 @import './components/console-dock-input-bar.css';
 @import './components/console-dock-input-bar-model-picker.css';

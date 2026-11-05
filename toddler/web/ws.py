@@ -61,7 +61,7 @@ def _notice_frame(message: str) -> dict:
 def _hello_frame(state: WebAppState) -> dict:
     """Build the ``hello`` frame: session info, transcript replay, and
     the live busy/paused/plan state so reconnecting tabs resume
-    mid-approval."""
+    mid-approval (or mid-question)."""
     mgr = state.session_mgr
     session = mgr.session
     conv = mgr.conversation
@@ -80,7 +80,9 @@ def _hello_frame(state: WebAppState) -> dict:
         ),
         "conversation": conversation_payload(state.session_mgr),
         "busy": state.runner.busy,
-        # The full agent_paused frame — the frontend re-applies it.
+        # The full agent_paused frame — the frontend re-applies it.  An
+        # ask-user pause carries its questions on the prompt, so the
+        # question card survives a reconnect through this one snapshot.
         "paused": state.runner.paused_snapshot,
         # The pending plan proposal (plan + latest step statuses) — the
         # frontend re-renders its PlanCard from this instead of losing
@@ -230,18 +232,17 @@ async def _cmd_cancel(websocket: WebSocket, state: WebAppState, raw: dict) -> No
 def _tool_decision(
     state: WebAppState, cmd: str, tool_id: str,
 ) -> bool:
-    """Approve or deny the pending tool confirmation.
+    """Approve or deny the pending pause.
 
-    The calls are no-ops when the agent isn't paused, so the snapshot
-    check doubles as the ``accepted`` verdict.
+    The agent validates the live call id and the pause shape, so its
+    return value is the ``accepted`` verdict: an approve that arrives for
+    a question prompt (or a stale call) is refused, while a deny also
+    declines a question.
     """
-    if state.runner.paused_snapshot is None:
-        return False
+    agent = state.session_mgr.agent
     if cmd == "approve_tool":
-        state.session_mgr.agent.approve_tool_call(tool_id)
-    else:
-        state.session_mgr.agent.deny_tool_call(tool_id)
-    return True
+        return agent.approve_tool_call(tool_id)
+    return agent.deny_tool_call(tool_id)
 
 
 async def _cmd_approve_tool(
@@ -260,6 +261,31 @@ async def _cmd_deny_tool(
     await websocket.send_json(
         _ack_frame("deny_tool", _tool_decision(state, "deny_tool", tool_id)),
     )
+
+
+async def _cmd_answer_questions(
+    websocket: WebSocket, state: WebAppState, raw: dict,
+) -> None:
+    """Answer the pending question card.
+
+    The wire shape is checked here; the loop checks the call id, the
+    answer count, and every choice index.  A rejected answer leaves the
+    card standing, so another tab or a corrected payload can still
+    answer it.
+    """
+    tool_id = str(raw.get("tool_id", ""))
+    answers = raw.get("answers")
+    if not isinstance(answers, list) or not all(
+        isinstance(answer, int) and not isinstance(answer, bool)
+        for answer in answers
+    ):
+        await _send_error(
+            websocket, "invalid_answers",
+            "`answers` must be an array of choice indexes.",
+        )
+        return
+    accepted = state.session_mgr.agent.answer_questions(tool_id, answers)
+    await websocket.send_json(_ack_frame("answer_questions", accepted))
 
 
 async def _cmd_approve_plan(
@@ -504,6 +530,7 @@ _COMMANDS: dict[str, Callable] = {
     "cancel": _cmd_cancel,
     "approve_tool": _cmd_approve_tool,
     "deny_tool": _cmd_deny_tool,
+    "answer_questions": _cmd_answer_questions,
     "approve_plan": _cmd_approve_plan,
     "reject_plan": _cmd_reject_plan,
     "set_mode": _cmd_set_mode,

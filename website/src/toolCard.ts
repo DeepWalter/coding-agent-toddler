@@ -1,4 +1,10 @@
-import type { Block, EditSelection, TabEntry, ToolResult } from './types'
+import type {
+  Block,
+  EditSelection,
+  Question,
+  TabEntry,
+  ToolResult,
+} from './types'
 import { basename } from './utils'
 import { editDiff, editDiffText, type EditDiffRow } from './diff'
 
@@ -43,6 +49,10 @@ interface CardSpec {
   content?: {
     param: string
   }
+  /** The call is a set of single-choice questions: the box is the
+   *  questions layout, and the chosen answers come from the result
+   *  metadata.  No success OUT row — the chosen rows are the result. */
+  questions?: boolean
 }
 
 /** The tools whose call reads as a tool card, and what each of them shows.
@@ -95,6 +105,11 @@ const CARDS = new Map<string, CardSpec>([
     path: { param: 'file_path' },
     diff: { oldParam: 'old_string', newParam: 'new_string' },
   }],
+  // A question call is its own record: the questions and the chosen
+  // answers are read from the call's input and result metadata, not from
+  // the generic IN/OUT rows.  The interactive ask is the dock card; this
+  // is what stays in the transcript.
+  ['ask_user', { name: 'Questions', questions: true }],
 ])
 
 /** Which side of the card a row is, and the key its editor tab is filed
@@ -117,6 +132,10 @@ export interface ToolCardRow {
   /** The text is a failure, which tints it. */
   error?: boolean
 }
+
+/** One question in an ask_user card: the tool's question plus the chosen
+ *  choice index (null while the call waits, or after a failure). */
+export type ToolCardQuestion = Question & { answer: number | null }
 
 export interface ToolCard {
   /** The reader's name for the tool. */
@@ -152,6 +171,10 @@ export interface ToolCard {
   body: EditDiffRow[] | null
   /** What the body is, so the footer and the opened tab can name it. */
   bodyKind: 'diff' | 'content' | null
+  /** An ask_user call's questions, with the chosen answers once the call
+   *  has landed.  Null for every other tool, and null while the call waits:
+   *  the dock's card is the live ask, and this one is its record. */
+  questions: ToolCardQuestion[] | null
 }
 
 /** Read a parameter the model wrote.  Parameters are `unknown` because they
@@ -175,6 +198,7 @@ function outputText(result: ToolResult): string {
 /** The card a call reads as: its title, and the rows under it. */
 export function toolCard(block: ToolBlock): ToolCard {
   const spec = CARDS.get(block.tool_name)
+  const questions = spec?.questions ? questionsFor(block) : null
   const rows: ToolCardRow[] = []
   // The first row is what the call was told to do, where the tool has one
   // worth a row; the second is what came back, where the call has anything
@@ -216,7 +240,18 @@ export function toolCard(block: ToolBlock): ToolCard {
   // so its OUT row is the failure reason alone.
   const result = block.result
   const hasBody = !!(spec?.diff || spec?.content)
-  if (hasBody) {
+  if (spec?.questions) {
+    // The chosen choices are the result; only a failure needs a row.
+    if (result && !result.success) {
+      rows.push({
+        side: 'out',
+        label: 'OUT',
+        text: outputText(result),
+        language: null,
+        error: true,
+      })
+    }
+  } else if (hasBody) {
     if (result && !result.success) {
       rows.push({
         side: 'out',
@@ -267,19 +302,67 @@ export function toolCard(block: ToolBlock): ToolCard {
     // still hovers the path rather than opening a tab onto a 404.
     path: spec?.path && named
       ? {
-          abs: block.path_named ?? block.path_abs ?? named,
-          label: basename(block.path_named ?? block.path_abs ?? named),
-          resolved: block.path_abs ?? named,
-          target,
-          external: block.path === null && block.path_abs !== null,
-          symlink: block.path_symlink ?? false,
-          exists: target !== null && block.path_is_file,
-        }
+        abs: block.path_named ?? block.path_abs ?? named,
+        label: basename(block.path_named ?? block.path_abs ?? named),
+        resolved: block.path_abs ?? named,
+        target,
+        external: block.path === null && block.path_abs !== null,
+        symlink: block.path_symlink ?? false,
+        exists: target !== null && block.path_is_file,
+      }
       : null,
     rows,
     body,
     bodyKind,
+    questions,
   }
+}
+
+/** The questions an ask_user call asked, with its chosen answers.
+ *
+ *  The record is drawn only once the call has landed: while the dock is
+ *  asking, that card is the live ask and a second copy in the transcript
+ *  would only echo it.  The end frame's metadata carries the normalized
+ *  questions and the answer indexes; a settled call without them — a turn
+ *  cancelled while waiting — still records what was asked from the input.
+ *  A malformed frame yields null rather than a half-drawn card. */
+function questionsFor(block: ToolBlock): ToolCardQuestion[] | null {
+  if (!block.result) return null
+  const metadata = block.result.metadata
+  const metaQuestions = metadata && Array.isArray(metadata.questions)
+    ? metadata.questions
+    : null
+  const raw = metaQuestions ?? block.input.questions
+  if (!Array.isArray(raw) || raw.length === 0) return null
+
+  const answers = metadata && Array.isArray(metadata.answers)
+    ? metadata.answers
+    : []
+  return raw
+    .filter(
+      (item): item is Record<string, unknown> =>
+        typeof item === 'object' && item !== null,
+    )
+    .map((item, index) => {
+      const choices = Array.isArray(item.choices)
+        ? item.choices.filter(
+          (choice): choice is Record<string, unknown> =>
+            typeof choice === 'object' && choice !== null,
+        )
+        : []
+      const answer = answers[index]
+      return {
+        title: typeof item.title === 'string' ? item.title : '',
+        content: typeof item.content === 'string' ? item.content : '',
+        choices: choices.map((choice) => ({
+          title: typeof choice.title === 'string' ? choice.title : '',
+          content: typeof choice.content === 'string' ? choice.content : '',
+        })),
+        answer: typeof answer === 'number' && Number.isInteger(answer)
+          ? answer
+          : null,
+      }
+    })
 }
 
 /** A recorded 1-based line or 0-based column, when the tool sent one. */

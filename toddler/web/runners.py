@@ -10,11 +10,11 @@ Events are serialized once and broadcast into per-connection
 drains its own queue in a separate task.
 
 The runner also snapshots ``AgentPaused`` payloads (a pending tool
-approval) and ``PlanProposed`` (a plan awaiting approval, plus the latest
-step statuses as they stream) so reconnecting clients can resume either
-state — both are delivered in ``hello``.  When the last watcher leaves
-with a decision still pending, the turn is auto-cancelled: nobody can
-answer it, so it would hang forever.
+approval or an ask-user prompt) and ``PlanProposed`` (a plan awaiting
+approval, plus the latest step statuses as they stream) so reconnecting
+clients can resume either state — both are delivered in ``hello``.  When
+the last watcher leaves with an answer still pending, the turn is
+auto-cancelled: nobody can answer it, so it would hang forever.
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ from toddler.agent.events import (
     FatalAgentError,
     PlanProposed,
     PlanStepUpdate,
+    ToolCallEnd,
 )
 from toddler.agent.state_machine import AgentStateMachine
 from toddler.config.models import context_length_for
@@ -161,8 +162,9 @@ class TurnRunner:
         self._subscribers: dict[int, asyncio.Queue[dict]] = {}
         self._next_queue_id = 0
 
-        # Snapshot of the last AgentPaused frame — delivered to
-        # reconnecting clients in hello; cleared when the turn ends.
+        # Snapshot of the last AgentPaused frame — a tool gate or a
+        # question prompt.  Delivered to reconnecting clients in hello and
+        # cleared once answered or when the turn ends.
         self._paused_snapshot: dict | None = None
 
         # Snapshot of the pending PlanProposed frame ({"plan": ..., "steps":
@@ -204,13 +206,15 @@ class TurnRunner:
     def unsubscribe(self, queue_id: int) -> None:
         """Drop a connection's queue.
 
-        Stranded-approval guard: when the last watcher leaves while a
-        decision is pending (tool approval or plan approval), auto-cancel
-        the turn — nobody can answer, so it would hang forever.
+        Stranded-answer guard: when the last watcher leaves while an
+        answer is pending (tool approval, question card, or plan
+        approval), auto-cancel the turn — nobody can answer, so it would
+        hang forever.
         """
         self._subscribers.pop(queue_id, None)
         if not self._subscribers and (
-            self._paused_snapshot is not None or self._plan_snapshot is not None
+            self._paused_snapshot is not None
+            or self._plan_snapshot is not None
         ):
             logger.info("Last watcher left a pending turn — cancelling.")
             self.cancel()
@@ -321,6 +325,14 @@ class TurnRunner:
         try:
             async for event in gen:
                 frame = serialize_event(event, Path(self._cwd))
+                # The end frame settles the pause it answered — approve,
+                # deny, or an ask-user answer.
+                if (
+                    isinstance(event, ToolCallEnd)
+                    and self._paused_snapshot is not None
+                    and self._paused_snapshot.get("tool_id") == event.tool_id
+                ):
+                    self._paused_snapshot = None
                 if frame is None:
                     continue
                 if isinstance(event, AgentPaused):

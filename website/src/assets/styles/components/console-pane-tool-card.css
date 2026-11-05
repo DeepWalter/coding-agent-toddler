@@ -193,3 +193,119 @@
   color: var(--text-subtle);
   font-size: 11px;
 }
+/* ------------------------------------------------------------------ */
+/* The ask_user body                                                   */
+/* ------------------------------------------------------------------ */
+
+/* The questions card is a record, not a control: each question reads as
+   its own small block, and the chosen choice is marked.  The interactive
+   ask lives in the dock; this is what stays in the transcript. */
+.tool-card-questions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 8px 10px;
+}
+
+.tool-card-question {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tool-card-question-title {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.tool-card-question-content {
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tool-card-question-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+}
+
+/* A choice row carries a rail rather than a box: the card already has one,
+   and the chosen row is the only one that needs to stand out.  Every row
+   leads with the same circle — the relation a single-choice row has.  The
+   first column is the four-column indent the choice text sits behind, and
+   the mark centers in that gutter rather than joining the indent. */
+.tool-card-choice {
+  display: grid;
+  grid-template-columns: 4ch minmax(0, 1fr);
+  align-items: center;
+  padding: 3px 8px 3px 0;
+  border-left: 2px solid transparent;
+  color: var(--text-muted);
+}
+
+.tool-card-choice.is-chosen {
+  border-left-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--text);
+}
+
+/* The circle centers in the gutter — a list marker rather than a further
+   indent — and on the row's height, so a two-line choice keeps it midway
+   between its title and its description. */
+.tool-card-choice-mark {
+  justify-self: center;
+  position: relative;
+  width: 10px;
+  height: 10px;
+  border: 1px solid var(--text-subtle);
+  border-radius: 50%;
+}
+
+/* The chosen row's bullet: the ring keeps its size and the fill carries the
+   selection, so choosing never moves the text. */
+.tool-card-choice.is-chosen .tool-card-choice-mark {
+  border-color: var(--accent);
+}
+
+.tool-card-choice.is-chosen .tool-card-choice-mark::after {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.tool-card-choice-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.tool-card-choice-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.tool-card-choice-content {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.tool-card-recommended {
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--editor-surface-3);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}

@@ -1,0 +1,222 @@
+/* ConsoleDockQuestion.vue — the ask_user card.  The head, tab strip,
+   question panel, choice rows, and manual submit.  The card lives inside
+   .console-dock (which owns the chrome); the tab strip borrows the editor
+   tabs' active-underline reading. */
+
+.question-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* The card's own body is focusable so a click lands in it, but the ring
+   the browser draws around a cardful of text is not the reading meant —
+   the dock's edge says which surface has the keyboard. */
+.question-card:focus {
+  outline: none;
+}
+
+.question-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.question-card-title {
+  flex: none;
+  color: var(--text);
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.question-card-progress {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Tabs                                                                */
+/* ------------------------------------------------------------------ */
+
+.question-tabs {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--editor-border);
+}
+
+.question-tab {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  max-width: 12rem;
+  padding: 4px 8px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.question-tab:hover {
+  background: var(--editor-surface-3);
+  color: var(--text);
+}
+
+.question-tab.active {
+  border-bottom-color: var(--accent);
+  color: var(--text);
+}
+
+.question-tab:focus-visible {
+  outline: none;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.question-tab-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.question-tab-check {
+  flex: none;
+  color: var(--success);
+  font-size: 11px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Active question                                                     */
+/* ------------------------------------------------------------------ */
+
+.question-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  /* Five questions' worth of text never has to fit at once — only the
+     active tab's body does, and it scrolls in place. */
+  max-height: min(45vh, 320px);
+  overflow-y: auto;
+}
+
+.question-content {
+  margin: 0;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.question-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* A choice fills the card width as its own row.  The rows rest as plain
+   text on the card surface; hover thickens the label only, and the fill
+   belongs to the selection.  The first column is the gutter the radio mark
+   centers in, so every choice reads as one of a set and the text starts one
+   indent in — the same reading as the transcript's record card. */
+.question-choice {
+  display: grid;
+  grid-template-columns: 4ch minmax(0, 1fr);
+  align-items: center;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.question-choice:hover {
+  font-weight: 600;
+}
+
+.question-choice:focus-visible {
+  outline: none;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.question-choice.is-chosen {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+/* The ring centers in the gutter and on the row's height; the chosen row
+   keeps the ring's size and fills it with a bullet, so selecting never
+   moves the text. */
+.question-choice-mark {
+  justify-self: center;
+  position: relative;
+  width: 10px;
+  height: 10px;
+  border: 1px solid var(--text-subtle);
+  border-radius: 50%;
+}
+
+.question-choice.is-chosen .question-choice-mark {
+  border-color: var(--accent);
+}
+
+.question-choice.is-chosen .question-choice-mark::after {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.question-choice-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.question-choice-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.question-choice-content {
+  color: var(--text-muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.question-recommended {
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--editor-surface-3);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* ------------------------------------------------------------------ */
+/* Submit                                                              */
+/* ------------------------------------------------------------------ */
+
+.question-actions {
+  display: flex;
+  justify-content: flex-start;
+}
