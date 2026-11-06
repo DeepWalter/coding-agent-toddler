@@ -1631,7 +1631,7 @@ def _question_payload() -> list[dict]:
 
 
 class TestUserQuestions:
-    """A tool declaring ``asks_user`` pauses the loop for an answer."""
+    """A tool with the ``INTERACT`` tier pauses the loop for an answer."""
 
     @pytest.fixture
     def question_registry(self) -> ToolRegistry:

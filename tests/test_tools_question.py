@@ -68,7 +68,6 @@ class TestDeclaration:
     def test_it_is_the_ask_user_tool(self):
         tool = QuestionTool()
         assert tool.name == "ask_user"
-        assert tool.asks_user is True
         assert tool.visible is True
         assert tool.in_default_registry is True
         assert tool.permission is Permission.INTERACT

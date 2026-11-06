@@ -713,11 +713,6 @@ class AgentLoop:
         tool = self._registry.get(call.tool_name)
         if tool is None:
             return _Verdict(None, Decision.ALLOW)   # the executor errors
-        # An ask-user call always pauses, whatever the permission mode and
-        # file scope: the pause is input, not a risk decision.  It is
-        # non-mutating by declaration, so no checkpoint is taken.
-        if tool.asks_user:
-            return _Verdict(Permission.READ, Decision.ASK)
         try:
             perm = tool.get_permission(**call.parameters)
             scope = tool.get_file_scope(**call.parameters)

@@ -1,9 +1,9 @@
 """The ``ask_user`` tool — the agent's way to ask the user a question.
 
-The tool declares :attr:`~toddler.tools.base.BaseTool.asks_user`, so the
-agent loop always pauses its call and puts the questions on the approval
-prompt.  The questions reach the browser as an interactive card and the
-terminal as a sequence of prompts; the answers are injected into
+The tool declares :attr:`~toddler.tools.base.Permission.INTERACT`, so
+the agent loop always pauses its call and puts the questions on the
+approval prompt.  The questions reach the browser as an interactive card
+and the terminal as a sequence of prompts; the answers are injected into
 :meth:`QuestionTool.execute`, which returns them as the call's tool
 result.
 """
@@ -136,13 +136,13 @@ def parse_questions(raw: object) -> tuple[Question, ...]:
 class QuestionTool(BaseTool):
     """Ask the user one to five single-choice questions.
 
-    The call pauses at the ordinary approval gate — ``asks_user`` makes
-    the loop ask whatever the permission mode — and the prompt carries
-    the questions instead of an approve/deny choice.  The answers arrive
-    as an injected ``answers`` argument to :meth:`execute`, so the tool
-    owns its result just like every other tool.  The call is visible: its
-    tool card is the durable Q&A record, while the dock card is the
-    interaction.
+    The call pauses at the ordinary approval gate — the ``INTERACT``
+    tier makes the loop ask whatever the permission mode — and the
+    prompt carries the questions instead of an approve/deny choice.  The
+    answers arrive as an injected ``answers`` argument to
+    :meth:`execute`, so the tool owns its result just like every other
+    tool.  The call is visible: its tool card is the durable Q&A record,
+    while the dock card is the interaction.
     """
 
     name = "ask_user"
@@ -218,9 +218,6 @@ class QuestionTool(BaseTool):
     #: The tool card is the durable Q&A record (the web has a dedicated
     #: questions layout for it); the dock card is the live interaction.
     visible = True
-
-    #: The loop presents the questions and waits for the answer.
-    asks_user = True
 
     @property
     def permission(self) -> Permission:

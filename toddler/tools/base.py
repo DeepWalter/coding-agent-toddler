@@ -795,10 +795,9 @@ class BaseTool(ABC):
 
     They MAY override ``permission`` (default: READ),
     ``in_default_registry`` (default: True), ``visible`` (default:
-    True), ``require_description_parameter`` (default: True) and
-    ``asks_user`` (default: False); a tool that touches files declares
-    them in ``path_params`` (or overrides ``get_scope_paths``) so the
-    gate can place the call.
+    True) and ``require_description_parameter`` (default: True); a
+    tool that touches files declares them in ``path_params`` (or
+    overrides ``get_scope_paths``) so the gate can place the call.
     """
 
     name: str
@@ -827,15 +826,6 @@ class BaseTool(ABC):
     #: The call is still made, executed, and stored in the transcript;
     #: only its card is withheld.
     visible: bool = True
-
-    #: Whether this tool asks the user a question before it can return.
-    #: The loop always pauses such a call for an answer, whatever the
-    #: permission mode — the pause is input, not a risk decision.  The
-    #: prompt carries the questions (see :attr:`ToolCallPrompt.choices`,
-    #: whose ``type`` is ``QUESTION``); once answered, the answers are
-    #: injected into :meth:`execute`.  A question tool is non-mutating and
-    #: names no files.
-    asks_user: bool = False
 
     #: Parameters naming a file or directory the call touches, for
     #: :meth:`get_scope_paths`.  A tool whose paths sit in arguments of
@@ -1080,8 +1070,8 @@ class BaseTool(ABC):
         """The tool result for *questions*, answered by *answers*.
 
         ``answers`` is one :class:`PromptAnswer` per question, in order;
-        ``None`` means the user declined to answer.  Only a tool
-        declaring :attr:`asks_user` implements this.
+        ``None`` means the user declined to answer.  Only a tool with
+        :attr:`Permission.INTERACT` implements this.
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not ask the user"
