@@ -221,7 +221,8 @@ class TestTurnStream:
                 assert start["path_is_file"] is False
                 _wait_for(ws, "agent_paused")
                 ws.send_json({
-                    "cmd": "approve_tool", "tool_id": "call_write",
+                    "cmd": "answer_tool", "tool_id": "call_write",
+                    "answers": [{"choice": 0}],
                 })
                 # The live card is handed the file the call was about, in
                 # both spellings: the tool wrote an absolute path, and the
@@ -281,7 +282,13 @@ class TestBusyRejection:
                 "title": "Allow write this file?",
                 "content": None,
                 "description": str(tmp_path / "out.txt"),
-                "questions": None,
+                "choices": {
+                    "type": "single",
+                    "data": [
+                        {"title": "Approve", "level": "approve"},
+                        {"title": "Deny", "level": "deny"},
+                    ],
+                },
             }
 
             ws.send_json({"cmd": "turn", "input": "second turn"})
@@ -314,13 +321,22 @@ class TestToolApproval:
             ws.receive_json()  # hello
             ws.send_json({"cmd": "turn", "input": "write it"})
             paused = _wait_for(ws, "agent_paused")
-            assert paused["choices"] == ["approve", "deny"]
+            assert paused["prompt"]["choices"] == {
+                "type": "single",
+                "data": [
+                    {"title": "Approve", "level": "approve"},
+                    {"title": "Deny", "level": "deny"},
+                ],
+            }
 
-            ws.send_json({"cmd": "approve_tool", "tool_id": "call_write"})
+            ws.send_json({
+                "cmd": "answer_tool", "tool_id": "call_write",
+                "answers": [{"choice": 0}],
+            })
             ack = _wait_for(ws, "ack")
             assert ack == {
                 "type": "ack",
-                "cmd": "approve_tool",
+                "cmd": "answer_tool",
                 "accepted": True,
             }
 
@@ -344,11 +360,14 @@ class TestToolApproval:
             ws.send_json({"cmd": "turn", "input": "write"})
             _wait_for(ws, "agent_paused")
 
-            ws.send_json({"cmd": "deny_tool", "tool_id": "call_write"})
+            ws.send_json({
+                "cmd": "answer_tool", "tool_id": "call_write",
+                "answers": [{"choice": 1}],
+            })
             ack = _wait_for(ws, "ack")
             assert ack == {
                 "type": "ack",
-                "cmd": "deny_tool",
+                "cmd": "answer_tool",
                 "accepted": True,
             }
 
@@ -356,18 +375,50 @@ class TestToolApproval:
             assert end["result"]["success"] is False
             assert "denied" in end["result"]["error"].lower()
 
-    def test_approve_when_not_paused_returns_false(self, tmp_path):
+    def test_answering_when_not_paused_returns_false(self, tmp_path):
         llm = make_mock_llm(text_response("Hi"))
         app = _app(tmp_path, llm)
         with TestClient(app) as client, client.websocket_connect("/ws") as ws:
             ws.receive_json()  # hello
-            ws.send_json({"cmd": "approve_tool", "tool_id": "x"})
+            ws.send_json({
+                "cmd": "answer_tool", "tool_id": "x",
+                "answers": [{"choice": 0}],
+            })
             ack = ws.receive_json()
             assert ack == {
                 "type": "ack",
-                "cmd": "approve_tool",
+                "cmd": "answer_tool",
                 "accepted": False,
             }
+
+    def test_a_content_answer_when_not_paused_returns_false(self, tmp_path):
+        llm = make_mock_llm(text_response("Hi"))
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({
+                "cmd": "answer_tool", "tool_id": "x",
+                "answers": [{"choice": 0, "content": "no"}],
+            })
+            ack = ws.receive_json()
+            assert ack == {
+                "type": "ack",
+                "cmd": "answer_tool",
+                "accepted": False,
+            }
+
+    def test_answer_content_must_be_a_string(self, tmp_path):
+        llm = make_mock_llm(text_response("Hi"))
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({
+                "cmd": "answer_tool", "tool_id": "x",
+                "answers": [{"choice": 0, "content": 5}],
+            })
+            error = ws.receive_json()
+            assert error["type"] == "error"
+            assert error["code"] == "invalid_answers"
 
 
 # ============================================================================
@@ -393,15 +444,16 @@ class TestQuestions:
                 ws.send_json({"cmd": "turn", "input": "ask"})
                 asked = _wait_for(ws, "agent_paused")
                 assert asked["tool_id"] == "call_ask"
-                assert asked["choices"] is None
-                questions = asked["prompt"]["questions"]
+                choices = asked["prompt"]["choices"]
+                assert choices["type"] == "question"
+                questions = choices["data"]
                 assert questions[0]["title"] == "Storage"
                 assert len(questions[0]["choices"]) == 2
 
                 ws.send_json({
-                    "cmd": "answer_questions",
+                    "cmd": "answer_tool",
                     "tool_id": "call_ask",
-                    "answers": [1],
+                    "answers": [{"choice": 1}],
                 })
                 frames = _collect_until(ws, "agent_finished")
                 types = [frame["type"] for frame in frames]
@@ -410,7 +462,7 @@ class TestQuestions:
                 ack = next(f for f in frames if f["type"] == "ack")
                 assert ack == {
                     "type": "ack",
-                    "cmd": "answer_questions",
+                    "cmd": "answer_tool",
                     "accepted": True,
                 }
                 ended = next(
@@ -419,7 +471,9 @@ class TestQuestions:
                 assert ended["tool_id"] == "call_ask"
                 assert ended["tool_name"] == "ask_user"
                 assert ended["result"]["success"] is True
-                assert ended["result"]["metadata"]["answers"] == [1]
+                assert ended["result"]["metadata"]["answers"] == [
+                    {"choice": 1, "content": None},
+                ]
                 assert not [
                     f for f in frames if f["type"] == "agent_paused"
                 ]
@@ -449,7 +503,9 @@ class TestQuestions:
                     entries[0]["input"]["questions"][0]["title"]
                     == "Storage"
                 )
-                assert entries[0]["result"]["metadata"]["answers"] == [1]
+                assert entries[0]["result"]["metadata"]["answers"] == [
+                    {"choice": 1, "content": None},
+                ]
 
     def test_reconnect_while_asking_restores_the_card(self, tmp_path):
         llm = make_mock_llm(
@@ -470,14 +526,14 @@ class TestQuestions:
                 assert hello["busy"] is True
                 assert hello["paused"]["tool_id"] == "call_ask"
                 assert (
-                    hello["paused"]["prompt"]["questions"][0]["title"]
+                    hello["paused"]["prompt"]["choices"]["data"][0]["title"]
                     == "Storage"
                 )
 
                 second.send_json({
-                    "cmd": "answer_questions",
+                    "cmd": "answer_tool",
                     "tool_id": "call_ask",
-                    "answers": [0],
+                    "answers": [{"choice": 0}],
                 })
                 second_frames = _collect_until(second, "agent_finished")
                 assert any(
@@ -505,24 +561,28 @@ class TestQuestions:
             ws.send_json({"cmd": "turn", "input": "ask"})
             _wait_for(ws, "agent_paused")
 
-            # A question is answered, not approved.
-            ws.send_json({"cmd": "approve_tool", "tool_id": "call_ask"})
+            # An index outside the card is not an answer.
+            ws.send_json({
+                "cmd": "answer_tool",
+                "tool_id": "call_ask",
+                "answers": [{"choice": 9}],
+            })
             ack = _wait_for(ws, "ack")
             assert ack["accepted"] is False
 
             ws.send_json({
-                "cmd": "answer_questions",
+                "cmd": "answer_tool",
                 "tool_id": "wrong",
-                "answers": [0],
+                "answers": [{"choice": 0}],
             })
             ack = _wait_for(ws, "ack")
             assert ack["accepted"] is False
 
             # Still pending: a valid answer now settles it.
             ws.send_json({
-                "cmd": "answer_questions",
+                "cmd": "answer_tool",
                 "tool_id": "call_ask",
-                "answers": [1],
+                "answers": [{"choice": 1}],
             })
             frames = _collect_until(ws, "agent_finished")
             ended = next(
@@ -530,7 +590,9 @@ class TestQuestions:
                 if frame["type"] == "tool_call_end"
                 and frame["tool_name"] == "ask_user"
             )
-            assert ended["result"]["metadata"]["answers"] == [1]
+            assert ended["result"]["metadata"]["answers"] == [
+                {"choice": 1, "content": None},
+            ]
 
     def test_malformed_answers_get_an_error(self, tmp_path):
         llm = make_mock_llm(
@@ -544,7 +606,7 @@ class TestQuestions:
             _wait_for(ws, "agent_paused")
 
             ws.send_json({
-                "cmd": "answer_questions",
+                "cmd": "answer_tool",
                 "tool_id": "call_ask",
                 "answers": "nope",
             })
@@ -553,9 +615,9 @@ class TestQuestions:
 
             # Clean up so the turn is not left waiting.
             ws.send_json({
-                "cmd": "answer_questions",
+                "cmd": "answer_tool",
                 "tool_id": "call_ask",
-                "answers": [0],
+                "answers": [{"choice": 0}],
             })
             _collect_until(ws, "agent_finished")
 
@@ -707,7 +769,8 @@ class TestMultiTab:
                 )
 
                 tab2.send_json({
-                    "cmd": "approve_tool", "tool_id": "call_write",
+                    "cmd": "answer_tool", "tool_id": "call_write",
+                    "answers": [{"choice": 0}],
                 })
                 ack = _wait_for(tab2, "ack")
                 assert ack["accepted"] is True
@@ -1110,7 +1173,8 @@ class TestPlanReconnect:
                 assert hello2["paused"]["type"] == "agent_paused"
 
                 tab2.send_json({
-                    "cmd": "approve_tool", "tool_id": "call_write",
+                    "cmd": "answer_tool", "tool_id": "call_write",
+                    "answers": [{"choice": 0}],
                 })
                 _wait_for(tab2, "ack")
 
@@ -1787,7 +1851,10 @@ class TestSimpleCommands:
             assert info["session"]["permission_mode"] == "auto"
 
             # The parked approval is still answerable.
-            ws.send_json({"cmd": "approve_tool", "tool_id": "call_write"})
+            ws.send_json({
+                "cmd": "answer_tool", "tool_id": "call_write",
+                "answers": [{"choice": 0}],
+            })
             _wait_for(ws, "ack")
             _wait_for(ws, "agent_finished")
 

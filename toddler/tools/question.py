@@ -12,11 +12,13 @@ from __future__ import annotations
 
 from toddler.tools.base import (
     BaseTool,
+    ChoiceType,
     Permission,
+    PromptAnswer,
+    PromptChoices,
     Question,
     QuestionChoice,
     QuestionValidationError,
-    ToolCallPrompt,
     ToolResult,
 )
 from toddler.tools.registry import TOOL_CATALOG
@@ -225,28 +227,36 @@ class QuestionTool(BaseTool):
         """Asking is a read: it never mutates the workspace."""
         return Permission.READ
 
-    def build_call_prompt(self, **kwargs) -> ToolCallPrompt:
-        """The pause prompt: the parsed questions, and no approve/deny.
+    def _prompt_title(self, **kwargs) -> str:  # noqa: ARG002
+        """The pause asks for answers, not an approval."""
+        return "Answer these questions"
+
+    def _prompt_description(self, **kwargs) -> str | None:  # noqa: ARG002
+        """The question cards say everything the card needs; no summary."""
+        return None
+
+    def _prompt_choices(self, **kwargs) -> PromptChoices:
+        """The parsed questions, and no approve/deny rows.
 
         Raises :class:`QuestionValidationError` for model-authored
         arguments that cannot be asked; the loop returns the message as
         the call's failed result instead of pausing.
         """
-        questions = parse_questions(kwargs.get("questions"))
-        return ToolCallPrompt(
-            title="Answer these questions",
-            questions=questions,
+        return PromptChoices(
+            type=ChoiceType.QUESTION,
+            data=parse_questions(kwargs.get("questions")),
         )
 
     def questions_result(
         self,
         questions: tuple[Question, ...],
-        answers: list[int] | None,
+        answers: list[PromptAnswer] | None,
     ) -> ToolResult:
         """Format the answers as the call's tool result.
 
-        ``answers`` is ``None`` when the user declined (the terminal's
-        Escape/EOF path): the model is told to proceed on its own.
+        ``answers`` is one :class:`PromptAnswer` per question, in order;
+        ``None`` when the user declined (the terminal's Escape/EOF path),
+        in which case the model is told to proceed on its own.
         """
         if answers is None:
             return ToolResult(
@@ -278,9 +288,10 @@ class QuestionTool(BaseTool):
             )
         for answer, question in zip(answers, questions, strict=True):
             if (
-                not isinstance(answer, int)
-                or isinstance(answer, bool)
-                or not 0 <= answer < len(question.choices)
+                not isinstance(answer, PromptAnswer)
+                or not isinstance(answer.choice, int)
+                or isinstance(answer.choice, bool)
+                or not 0 <= answer.choice < len(question.choices)
             ):
                 return ToolResult(
                     tool_id="",
@@ -297,14 +308,18 @@ class QuestionTool(BaseTool):
         for index, (question, answer) in enumerate(
             zip(questions, answers, strict=True), 1,
         ):
-            choice = question.choices[answer]
+            choice = question.choices[answer.choice]
             recommended = (
                 " (recommended)"
-                if answer == 0 and len(question.choices) > 1
+                if answer.choice == 0 and len(question.choices) > 1
                 else ""
             )
-            lines.append(f"{index}. {question.title}: {choice.title}{recommended}")
-            lines.append(f"   {choice.content}")
+            # A row that takes free text (a future "Other" choice) reads
+            # as what the user wrote, not as the row's label.
+            label = answer.content or choice.title
+            lines.append(f"{index}. {question.title}: {label}{recommended}")
+            if answer.content is None:
+                lines.append(f"   {choice.content}")
         return ToolResult(
             tool_id="",
             tool_name=self.name,
@@ -312,7 +327,7 @@ class QuestionTool(BaseTool):
             output="\n".join(lines),
             metadata={
                 "questions": [q.to_dict() for q in questions],
-                "answers": list(answers),
+                "answers": [answer.to_dict() for answer in answers],
             },
         )
 
@@ -328,13 +343,18 @@ class QuestionTool(BaseTool):
     async def execute(
         self,
         questions: object,
-        answers: list[int] | None = None,
+        answers: list[PromptAnswer] | None = None,
+        parsed_questions: tuple[Question, ...] | None = None,
     ) -> ToolResult:
         """Return the user's answers as this call's tool result.
 
         ``answers`` is injected by the loop after the pause — it is not a
         model argument and never appears in the schema or the transcript.
         ``None`` means the user declined: the terminal's Escape/EOF path.
+
+        ``parsed_questions`` is injected alongside them when the call ran
+        through a pause: the gate parsed and validated the questions
+        already, so the tool does not parse the model's arguments again.
         """
-        parsed = parse_questions(questions)
+        parsed = parsed_questions or parse_questions(questions)
         return self.questions_result(parsed, answers)

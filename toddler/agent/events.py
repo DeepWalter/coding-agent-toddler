@@ -123,19 +123,19 @@ class AgentPaused(AgentEvent):
     """The agent is waiting for user input (approval, or an answer).
 
     ``prompt`` is the record the gate asks with — title, optional content
-    block, description, and (for an ask-user call) the questions (see
+    block, description, and the choices the pause offers (see
     :class:`~toddler.tools.base.ToolCallPrompt`) — rather than a rendered
     string: each front-end lays it out for its own surface, and the tool
     that built it is the only side that knows what the call is about.
 
-    ``prompt.questions is not None`` distinguishes the two pause shapes:
-    the answer is an array of choice indexes (``answer_questions``), not
-    approve/deny.  ``tool_id`` names the call so a stale answer cannot
-    settle a later pause.
+    ``prompt.choices.type`` distinguishes the two pause shapes: a
+    ``SINGLE`` prompt is answered with one :class:`PromptAnswer` whose
+    row's level decides the outcome, a ``QUESTION`` prompt with one answer
+    per question.  Both go through ``answer_tool_call``.  ``tool_id``
+    names the call so a stale answer cannot settle a later pause.
     """
 
     prompt: ToolCallPrompt
-    choices: list[str] | None = None
     tool_id: str = ""
 
 

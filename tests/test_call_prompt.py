@@ -20,8 +20,17 @@ import pytest
 
 from toddler.tools.base import (
     ALLOW_CALL_TITLE,
+    DEFAULT_SINGLE_CHOICES,
     ONE_LINE_DETAIL_LIMIT,
+    AnswerVerdict,
     BaseTool,
+    ChoiceLevel,
+    ChoiceType,
+    PromptAnswer,
+    PromptChoice,
+    PromptChoices,
+    Question,
+    QuestionChoice,
     ToolCallPrompt,
     ToolResult,
 )
@@ -50,12 +59,28 @@ class _BareTool(BaseTool):
 
 class _TitledTool(_BareTool):
     """A tool that overrides one part and nothing else — the shape the
-    three helpers exist for."""
+    four helpers exist for."""
 
     name = "titled"
 
     def _prompt_title(self, **kwargs) -> str:  # noqa: ARG002
         return "Allow this to happen?"
+
+
+class _FeedbackTool(_BareTool):
+    """A tool that words its own rows and offers a free-text answer."""
+
+    name = "feedbackish"
+
+    def _prompt_choices(self, **kwargs) -> PromptChoices:  # noqa: ARG002
+        return PromptChoices(
+            type=ChoiceType.SINGLE,
+            data=(
+                PromptChoice("Allow once", ChoiceLevel.APPROVE),
+                PromptChoice("Stop", ChoiceLevel.DENY),
+                PromptChoice("Tell me why", ChoiceLevel.FEEDBACK),
+            ),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -67,13 +92,19 @@ class TestToolCallPrompt:
     """The three fields, their wire form, and the one line the terminal
     gets out of them."""
 
-    def test_the_wire_form_keeps_a_missing_part_null(self):
+    def test_the_wire_form_carries_the_default_gate_choices(self):
         prompt = ToolCallPrompt(title=ALLOW_CALL_TITLE, content="ls -la")
         assert prompt.to_dict() == {
             "title": ALLOW_CALL_TITLE,
             "content": "ls -la",
             "description": None,
-            "questions": None,
+            "choices": {
+                "type": "single",
+                "data": [
+                    {"title": "Approve", "level": "approve"},
+                    {"title": "Deny", "level": "deny"},
+                ],
+            },
         }
 
     def test_it_is_frozen(self):
@@ -117,6 +148,29 @@ class TestToolCallPrompt:
         assert len(line) <= ONE_LINE_DETAIL_LIMIT + len(ALLOW_CALL_TITLE) + 3
         assert line.endswith("…")
 
+    def test_a_question_prompt_names_its_count(self):
+        questions = (
+            Question(
+                title="Storage",
+                content="Where should sessions live?",
+                choices=(
+                    QuestionChoice("SQLite", "One file."),
+                    QuestionChoice("Redis", "Shared storage."),
+                ),
+            ),
+        )
+        prompt = ToolCallPrompt(
+            title="Answer these questions",
+            choices=PromptChoices(
+                type=ChoiceType.QUESTION, data=questions,
+            ),
+        )
+        assert prompt.one_line() == "Answer these questions — 1 question"
+        assert prompt.to_dict()["choices"] == {
+            "type": "question",
+            "data": [question.to_dict() for question in questions],
+        }
+
 
 # ---------------------------------------------------------------------------
 # The three parts
@@ -127,15 +181,28 @@ class TestPromptParts:
     """Each part is asked for on its own, so a tool answers the one it
     knows about."""
 
-    def test_the_base_answers_a_default_title_and_no_content(self):
+    def test_the_base_answers_defaults(self):
         assert _BareTool()._prompt_title() == ALLOW_CALL_TITLE
         assert _BareTool()._prompt_content(command="ls -la") is None
+        assert _BareTool()._prompt_choices() is DEFAULT_SINGLE_CHOICES
 
-    def test_one_override_leaves_the_other_two_answered(self):
+    def test_one_override_leaves_the_others_answered(self):
         prompt = _TitledTool().build_call_prompt(anything="at all")
         assert prompt.title == "Allow this to happen?"
         assert prompt.content is None
         assert prompt.description == "titled(anything='at all')"
+        assert prompt.choices is DEFAULT_SINGLE_CHOICES
+
+    def test_a_tool_can_choose_its_own_rows(self):
+        prompt = _FeedbackTool().build_call_prompt()
+        assert [row.level for row in prompt.choices.data] == [
+            ChoiceLevel.APPROVE,
+            ChoiceLevel.DENY,
+            ChoiceLevel.FEEDBACK,
+        ]
+        assert [row.title for row in prompt.choices.data] == [
+            "Allow once", "Stop", "Tell me why",
+        ]
 
 
 class TestShellPrompt:
@@ -219,6 +286,65 @@ class TestFilePrompt:
         runs on model-authored arguments, and one bad value must not
         take down the gate that offers to run the call."""
         assert ReadFile().build_call_prompt(file_path=5).description == "read_file"
+
+
+class TestAnswerVerdict:
+    """A pause's choices decide what an answer means — including whether
+    it answered the pause at all."""
+
+    def _gate(self) -> PromptChoices:
+        return PromptChoices(
+            type=ChoiceType.SINGLE,
+            data=(
+                PromptChoice("Allow", ChoiceLevel.APPROVE),
+                PromptChoice("Stop", ChoiceLevel.DENY),
+                PromptChoice("Why?", ChoiceLevel.FEEDBACK),
+            ),
+        )
+
+    def test_a_single_gate_grants_only_on_an_approve_row(self):
+        gate = self._gate()
+        assert gate.verdict([PromptAnswer(choice=0)]) is AnswerVerdict.GRANTED
+        assert gate.verdict([PromptAnswer(choice=1)]) is AnswerVerdict.DENIED
+        assert gate.verdict([PromptAnswer(choice=2)]) is AnswerVerdict.DENIED
+
+    def test_feedback_text_does_not_change_the_verdict(self):
+        gate = self._gate()
+        assert gate.verdict([
+            PromptAnswer(choice=2, content="use the other file"),
+        ]) is AnswerVerdict.DENIED
+
+    def test_a_single_gate_rejects_a_malformed_answer(self):
+        gate = self._gate()
+        assert gate.verdict([]) is AnswerVerdict.INVALID
+        assert gate.verdict([
+            PromptAnswer(choice=0), PromptAnswer(choice=1),
+        ]) is AnswerVerdict.INVALID
+        assert gate.verdict([PromptAnswer(choice=3)]) is AnswerVerdict.INVALID
+        assert gate.verdict([PromptAnswer(choice=True)]) is AnswerVerdict.INVALID
+        assert gate.verdict([PromptAnswer(choice=-1)]) is AnswerVerdict.INVALID
+
+    def test_a_question_pause_grants_any_valid_answer_set(self):
+        choices = PromptChoices(
+            type=ChoiceType.QUESTION,
+            data=(
+                Question(
+                    title="Storage",
+                    content="Where should sessions live?",
+                    choices=(
+                        QuestionChoice("SQLite", "One file."),
+                        QuestionChoice("Redis", "Shared storage."),
+                    ),
+                ),
+            ),
+        )
+        assert choices.verdict([
+            PromptAnswer(choice=1),
+        ]) is AnswerVerdict.GRANTED
+        assert choices.verdict([]) is AnswerVerdict.INVALID
+        assert choices.verdict([
+            PromptAnswer(choice=9),
+        ]) is AnswerVerdict.INVALID
 
 
 class TestDescriptionsElsewhere:

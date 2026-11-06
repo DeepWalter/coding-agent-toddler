@@ -38,11 +38,16 @@ from toddler.llm import (
 from toddler.llm.base import BaseLLMProvider
 from toddler.tools.base import (
     BaseTool,
+    ChoiceLevel,
+    ChoiceType,
     Decision,
     FileScopePolicy,
     Permission,
     PermissionManager,
     PermissionMode,
+    PromptAnswer,
+    PromptChoice,
+    PromptChoices,
     ToolCall,
     ToolResult,
 )
@@ -210,6 +215,34 @@ class WriteTool(BaseTool):
     @property
     def permission(self) -> Permission:
         return Permission.WRITE
+
+
+class FeedbackGateTool(WriteTool):
+    """A WRITE gate whose rows carry all three levels."""
+
+    name = "feedback_gate"
+
+    def _prompt_choices(self, **kwargs) -> PromptChoices:  # noqa: ARG002
+        return PromptChoices(
+            type=ChoiceType.SINGLE,
+            data=(
+                PromptChoice("Allow", ChoiceLevel.APPROVE),
+                PromptChoice("Deny", ChoiceLevel.DENY),
+                PromptChoice("Why not?", ChoiceLevel.FEEDBACK),
+            ),
+        )
+
+
+class DenyOnlyGateTool(WriteTool):
+    """A gate offering no approval — the rows refuse or explain."""
+
+    name = "deny_only_gate"
+
+    def _prompt_choices(self, **kwargs) -> PromptChoices:  # noqa: ARG002
+        return PromptChoices(
+            type=ChoiceType.SINGLE,
+            data=(PromptChoice("Refuse", ChoiceLevel.DENY),),
+        )
 
 
 class DangerousTool(BaseTool):
@@ -564,14 +597,19 @@ class TestPermissionGating:
             events.append(event)
             if isinstance(event, AgentPaused):
                 # External code approves
-                loop.approve_tool_call()
+                loop.answer_tool_call(
+                    event.tool_id, [PromptAnswer(choice=0)],
+                )
 
         paused = [e for e in events if isinstance(e, AgentPaused)]
         assert len(paused) == 1
         # The mock declares no description param and names no path, so the
         # card falls back to the summary — a call still names itself.
         assert "write_stuff" in paused[0].prompt.description
-        assert paused[0].choices == ["approve", "deny"]
+        assert paused[0].prompt.choices.type is ChoiceType.SINGLE
+        assert [
+            row.level for row in paused[0].prompt.choices.data
+        ] == [ChoiceLevel.APPROVE, ChoiceLevel.DENY]
 
         # Tool should have executed after approval.
         ends = [e for e in events if isinstance(e, ToolCallEnd)]
@@ -601,7 +639,7 @@ class TestPermissionGating:
         async for event in gen:
             events.append(event)
             if isinstance(event, AgentPaused):
-                loop.deny_tool_call()
+                loop.answer_tool_call(event.tool_id, None)
 
         ends = [e for e in events if isinstance(e, ToolCallEnd)]
         assert len(ends) == 1
@@ -665,7 +703,9 @@ class TestPermissionMode:
         async for event in gen:
             events.append(event)
             if isinstance(event, AgentPaused):
-                loop.approve_tool_call()
+                loop.answer_tool_call(
+                    event.tool_id, [PromptAnswer(choice=0)],
+                )
 
         paused = [e for e in events if isinstance(e, AgentPaused)]
         assert len(paused) == 0  # WRITE auto-approved in AUTO mode
@@ -702,7 +742,9 @@ class TestPermissionMode:
         async for event in gen:
             events.append(event)
             if isinstance(event, AgentPaused):
-                loop.approve_tool_call()
+                loop.answer_tool_call(
+                    event.tool_id, [PromptAnswer(choice=0)],
+                )
 
         paused = [e for e in events if isinstance(e, AgentPaused)]
         assert len(paused) == 1
@@ -736,7 +778,9 @@ class TestPermissionMode:
         async for event in gen:
             events.append(event)
             if isinstance(event, AgentPaused):
-                loop.approve_tool_call()
+                loop.answer_tool_call(
+                    event.tool_id, [PromptAnswer(choice=0)],
+                )
 
         paused = [e for e in events if isinstance(e, AgentPaused)]
         assert len(paused) == 1  # WRITE still pauses in MANUAL mode
@@ -770,7 +814,9 @@ class TestPermissionMode:
         async for event in gen:
             events.append(event)
             if isinstance(event, AgentPaused):
-                loop.approve_tool_call()
+                loop.answer_tool_call(
+                    event.tool_id, [PromptAnswer(choice=0)],
+                )
 
         paused = [e for e in events if isinstance(e, AgentPaused)]
         assert len(paused) == 1  # WRITE pauses (MANUAL default)
@@ -880,7 +926,9 @@ class TestFileScopeGating:
         async for event in gen:
             events.append(event)
             if isinstance(event, AgentPaused):
-                loop.approve_tool_call()
+                loop.answer_tool_call(
+                    event.tool_id, [PromptAnswer(choice=0)],
+                )
 
         paused = [e for e in events if isinstance(e, AgentPaused)]
         assert len(paused) == 1
@@ -1021,7 +1069,9 @@ class TestCheckpointOnWrite:
         async for event in gen:
             events.append(event)
             if isinstance(event, AgentPaused):
-                loop.approve_tool_call()
+                loop.answer_tool_call(
+                    event.tool_id, [PromptAnswer(choice=0)],
+                )
 
         ends = [e for e in events if isinstance(e, ToolCallEnd)]
         assert log == ["checkpoint", "tool"]
@@ -1092,7 +1142,7 @@ class TestApprovalChannel:
         # Let the generator resume and reach its wait, as the runner does
         # the moment it has broadcast the pause.
         await asyncio.sleep(0.05)
-        loop.approve_tool_call()
+        loop.answer_tool_call("c1", [PromptAnswer(choice=0)])
         await asyncio.wait_for(task, timeout=5)
 
         ends = [e for e in events if isinstance(e, ToolCallEnd)]
@@ -1123,9 +1173,11 @@ class TestApprovalChannel:
             if isinstance(event, AgentPaused):
                 pauses += 1
                 if pauses == 1:
-                    loop.approve_tool_call()
+                    loop.answer_tool_call(
+                        event.tool_id, [PromptAnswer(choice=0)],
+                    )
                 else:
-                    loop.deny_tool_call()
+                    loop.answer_tool_call(event.tool_id, None)
 
         assert pauses == 2      # the second call was asked about on its own
         ends = [e for e in events if isinstance(e, ToolCallEnd)]
@@ -1136,8 +1188,8 @@ class TestApprovalChannel:
         """Both front-ends answer optimistically, and an answer with no
         pause to land on must land nowhere — not on whatever is paused by
         the time it arrives."""
-        loop.approve_tool_call()
-        loop.deny_tool_call()
+        assert loop.answer_tool_call("", [PromptAnswer(choice=0)]) is False
+        assert loop.answer_tool_call("", None) is False
         assert loop._pending is None
 
     async def test_a_gated_call_with_no_channel_is_not_run(
@@ -1147,7 +1199,8 @@ class TestApprovalChannel:
         bug in the loop, not a question.  It must not run, and must not
         fall back on whatever the previous call left behind."""
         loop = self._loop(registry, executor, settings, conv_ctx, [])
-        loop.approve_tool_call()    # an answered call's leftovers, if any
+        # An answered call's leftovers, if any, must not reach this one.
+        loop.answer_tool_call("", [PromptAnswer(choice=0)])
 
         result = await loop._execute_with_gating(
             ToolCall(
@@ -1547,7 +1600,9 @@ class TestCallDescription:
         async for event in loop.run("Write this down", config=TEST_TURN_CONFIG):
             events.append(event)
             if isinstance(event, AgentPaused):
-                loop.approve_tool_call()
+                loop.answer_tool_call(
+                    event.tool_id, [PromptAnswer(choice=0)],
+                )
 
         paused = [e for e in events if isinstance(e, AgentPaused)]
         assert paused[0].prompt.description == "record the deploy token"
@@ -1617,24 +1672,29 @@ class TestUserQuestions:
             events.append(event)
             if (
                 isinstance(event, AgentPaused)
-                and event.prompt.questions is not None
+                and event.prompt.choices.type is ChoiceType.QUESTION
             ):
-                # A question is answered, never approved.
-                assert loop.approve_tool_call(event.tool_id) is False
-                assert loop.answer_questions("q1", [1]) is True
+                # An out-of-range index is not an answer; a valid one is.
+                assert loop.answer_tool_call(
+                    "q1", [PromptAnswer(choice=99)],
+                ) is False
+                assert loop.answer_tool_call(
+                    "q1", [PromptAnswer(choice=1)],
+                ) is True
 
         asked = [e for e in events if isinstance(e, AgentPaused)]
         ends = [e for e in events if isinstance(e, ToolCallEnd)]
 
         assert len(asked) == 1
-        assert asked[0].prompt.questions is not None
-        assert asked[0].prompt.questions[0].title == "Storage"
+        assert asked[0].prompt.choices.type is ChoiceType.QUESTION
+        assert asked[0].prompt.choices.data[0].title == "Storage"
         assert asked[0].tool_id == "q1"
-        assert asked[0].choices is None
         assert len(ends) == 1
         assert ends[0].result.success
         assert "Redis" in ends[0].result.output
-        assert ends[0].result.metadata["answers"] == [1]
+        assert ends[0].result.metadata["answers"] == [
+            {"choice": 1, "content": None},
+        ]
 
         # The next model call sees the answer as this call's tool result.
         tool_messages = [
@@ -1669,10 +1729,12 @@ class TestUserQuestions:
         async for event in loop.run("Ask", config=TEST_TURN_CONFIG):
             if (
                 isinstance(event, AgentPaused)
-                and event.prompt.questions is not None
+                and event.prompt.choices.type is ChoiceType.QUESTION
             ):
                 pauses.append(event)
-                assert loop.answer_questions(event.tool_id, [0]) is True
+                assert loop.answer_tool_call(
+                    event.tool_id, [PromptAnswer(choice=0)],
+                ) is True
             if isinstance(event, ToolCallEnd):
                 ends.append(event)
 
@@ -1729,16 +1791,26 @@ class TestUserQuestions:
         async for event in loop.run("Ask", config=TEST_TURN_CONFIG):
             if not (
                 isinstance(event, AgentPaused)
-                and event.prompt.questions is not None
+                and event.prompt.choices.type is ChoiceType.QUESTION
             ):
                 continue
-            assert loop.answer_questions("other", [0]) is False
-            assert loop.answer_questions("q1", []) is False
-            assert loop.answer_questions("q1", [5]) is False
-            assert loop.answer_questions("q1", [True]) is False
-            assert loop.answer_questions("q1", [0]) is True
+            assert loop.answer_tool_call(
+                "other", [PromptAnswer(choice=0)],
+            ) is False
+            assert loop.answer_tool_call("q1", []) is False
+            assert loop.answer_tool_call(
+                "q1", [PromptAnswer(choice=5)],
+            ) is False
+            assert loop.answer_tool_call(
+                "q1", [PromptAnswer(choice=True)],
+            ) is False
+            assert loop.answer_tool_call(
+                "q1", [PromptAnswer(choice=0)],
+            ) is True
             # One-shot: the settled channel takes no second answer.
-            assert loop.answer_questions("q1", [1]) is False
+            assert loop.answer_tool_call(
+                "q1", [PromptAnswer(choice=1)],
+            ) is False
 
     async def test_deny_declines_the_questions_and_continues(
         self, question_registry, question_executor, settings, conv_ctx,
@@ -1763,10 +1835,10 @@ class TestUserQuestions:
             events.append(event)
             if (
                 isinstance(event, AgentPaused)
-                and event.prompt.questions is not None
+                and event.prompt.choices.type is ChoiceType.QUESTION
             ):
-                assert loop.deny_tool_call("q1") is True
-                assert loop.deny_tool_call("q1") is False
+                assert loop.answer_tool_call("q1", None) is True
+                assert loop.answer_tool_call("q1", None) is False
 
         ends = [e for e in events if isinstance(e, ToolCallEnd)]
         assert len(ends) == 1
@@ -1799,10 +1871,12 @@ class TestUserQuestions:
         async for event in loop.run("Ask", config=TEST_TURN_CONFIG):
             if (
                 isinstance(event, AgentPaused)
-                and event.prompt.questions is not None
+                and event.prompt.choices.type is ChoiceType.QUESTION
             ):
                 asked.append(event.tool_id)
-                loop.answer_questions(event.tool_id, [0])
+                loop.answer_tool_call(
+                    event.tool_id, [PromptAnswer(choice=0)],
+                )
 
         assert asked == ["q1", "q2"]
 
@@ -1827,7 +1901,7 @@ class TestUserQuestions:
         async for event in gen:
             if (
                 isinstance(event, AgentPaused)
-                and event.prompt.questions is not None
+                and event.prompt.choices.type is ChoiceType.QUESTION
             ):
                 assert loop._pending is not None
                 break
@@ -1835,9 +1909,99 @@ class TestUserQuestions:
         assert loop._pending is None
 
     async def test_nothing_pending_is_rejected(self, loop):
-        assert loop.answer_questions("q1", [0]) is False
-        assert loop.approve_tool_call("q1") is False
-        assert loop.deny_tool_call("q1") is False
+        assert loop.answer_tool_call(
+            "q1", [PromptAnswer(choice=0)],
+        ) is False
+        assert loop.answer_tool_call("q1", None) is False
+
+
+class TestChoiceLevels:
+    """The row's level — not its title — decides the answer."""
+
+    @pytest.fixture
+    def level_registry(self) -> ToolRegistry:
+        reg = ToolRegistry()
+        reg.register(FeedbackGateTool())
+        reg.register(DenyOnlyGateTool())
+        return reg
+
+    @pytest.fixture
+    def level_executor(self, level_registry) -> ToolExecutor:
+        return ToolExecutor(level_registry)
+
+    async def test_feedback_denies_the_call_with_the_reason(
+        self, level_registry, level_executor, settings, conv_ctx,
+    ):
+        llm = MockLLMProvider(responses=[
+            _make_llm_response(
+                tool_blocks=[
+                    _make_tool_use_block(
+                        "f1", "feedback_gate", {"content": "x"},
+                    ),
+                ],
+                stop_reason="tool_use",
+            ),
+            _make_llm_response(text="Done", stop_reason="end_turn"),
+        ])
+        loop = AgentLoop(
+            llm, level_registry, level_executor, settings,
+            context=conv_ctx, permission_manager=PermissionManager(),
+        )
+
+        events = []
+        async for event in loop.run("Write", config=TEST_TURN_CONFIG):
+            events.append(event)
+            if isinstance(event, AgentPaused):
+                assert event.prompt.choices.type is ChoiceType.SINGLE
+                assert loop.answer_tool_call(
+                    event.tool_id,
+                    [PromptAnswer(
+                        choice=2, content="use the other file",
+                    )],
+                ) is True
+
+        ends = [e for e in events if isinstance(e, ToolCallEnd)]
+        assert len(ends) == 1
+        assert not ends[0].result.success
+        assert "use the other file" in ends[0].result.error
+        # The call never ran — its only success output would say "Wrote:".
+        assert ends[0].result.output == ""
+
+    async def test_approve_is_refused_without_an_approve_row(
+        self, level_registry, level_executor, settings, conv_ctx,
+    ):
+        llm = MockLLMProvider(responses=[
+            _make_llm_response(
+                tool_blocks=[
+                    _make_tool_use_block(
+                        "d1", "deny_only_gate", {"content": "x"},
+                    ),
+                ],
+                stop_reason="tool_use",
+            ),
+            _make_llm_response(text="Done", stop_reason="end_turn"),
+        ])
+        loop = AgentLoop(
+            llm, level_registry, level_executor, settings,
+            context=conv_ctx, permission_manager=PermissionManager(),
+        )
+
+        events = []
+        async for event in loop.run("Write", config=TEST_TURN_CONFIG):
+            events.append(event)
+            if isinstance(event, AgentPaused):
+                # Index 1 names no row; the only row (0) is a DENY.
+                assert loop.answer_tool_call(
+                    event.tool_id, [PromptAnswer(choice=1)],
+                ) is False
+                assert loop.answer_tool_call(
+                    event.tool_id, [PromptAnswer(choice=0)],
+                ) is True
+
+        ends = [e for e in events if isinstance(e, ToolCallEnd)]
+        assert len(ends) == 1
+        assert not ends[0].result.success
+        assert "denied" in ends[0].result.error.lower()
 
 
 def test_persona_points_at_ask_user():

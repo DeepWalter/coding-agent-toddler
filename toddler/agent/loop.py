@@ -35,9 +35,14 @@ from toddler.config.models import TurnConfig
 from toddler.llm import Message, MessageBlock, TokenUsage
 from toddler.tools.base import (
     ALLOW_CALL_TITLE,
+    DEFAULT_SINGLE_CHOICES,
+    AnswerVerdict,
+    ChoiceType,
     Decision,
     Permission,
     PermissionManager,
+    PromptAnswer,
+    PromptChoices,
     Question,
     ToolCall,
     ToolCallPrompt,
@@ -90,43 +95,46 @@ class _PendingApproval:
     a channel that is not its own — or, worse, reading one left answered
     by the call before it.
 
-    A normal call waits for approve/deny; an ask-user call carries its
-    ``questions`` and waits for an answer array.  The questions ride along
-    so :meth:`AgentLoop.answer_questions` can validate the count and every
-    choice index without trusting the caller.  One-shot: once settled, a
+    A ``SINGLE`` pause waits for one answer and a ``QUESTION`` pause for
+    an answer per question.  The choices ride along so
+    :meth:`AgentLoop.answer_tool_call` can validate those answers against
+    the pause without trusting the caller.  One-shot: once settled, a
     later answer lands nowhere.
     """
 
     def __init__(
         self,
         tool_id: str = "",
-        questions: tuple[Question, ...] | None = None,
+        choices: PromptChoices = DEFAULT_SINGLE_CHOICES,
     ) -> None:
         self.tool_id = tool_id
-        self.questions = questions
+        self.choices = choices
         self.event = asyncio.Event()
-        self.granted = False
-        self.answers: list[int] | None = None
+        self.answers: list[PromptAnswer] | None = None
         self.declined = False
 
     @property
+    def questions(self) -> tuple[Question, ...] | None:
+        """The questions, when this is a question pause; else ``None``."""
+        if self.choices.type is ChoiceType.QUESTION:
+            return self.choices.data  # type: ignore[return-value]
+        return None
+
+    @property
     def settled(self) -> bool:
-        """Whether an answer, a decline, or an approval is recorded."""
-        return self.granted or self.declined or self.answers is not None
+        """Whether answers or a decline are recorded."""
+        return self.declined or self.answers is not None
 
-    def answer(self, granted: bool) -> None:
-        """Record an approve/deny and release the waiting call."""
-        self.granted = granted
-        self.event.set()
-
-    def answer_questions(self, answers: list[int]) -> None:
-        """Record a complete answer set and release the waiting call."""
-        self.answers = list(answers)
-        self.event.set()
-
-    def decline(self) -> None:
-        """Decline the call — the terminal's Escape/EOF path."""
-        self.declined = True
+    def settle(
+        self,
+        *,
+        declined: bool = False,
+        answers: list[PromptAnswer] | None = None,
+    ) -> None:
+        """Record the outcome — answers, or a decline — and release the
+        call it is holding."""
+        self.declined = declined
+        self.answers = list(answers) if answers is not None else None
         self.event.set()
 
 
@@ -384,34 +392,23 @@ class AgentLoop:
     # Confirmation API  (called by external code, e.g. the CLI layer)
     # ==================================================================
 
-    def approve_tool_call(self, tool_id: str = "") -> bool:
-        """Approve the pending tool confirmation and unblock the loop.
+    def answer_tool_call(
+        self,
+        tool_id: str,
+        answers: list[PromptAnswer] | None,
+    ) -> bool:
+        """Answer the pending pause and unblock the loop.
 
-        Returns ``False`` when nothing is paused, when *tool_id* names a
+        *answers* is one :class:`PromptAnswer` per choice the pause asks
+        about — exactly one for a single gate, one per question for an
+        ask-user pause.  ``None`` declines the pause: a single gate is
+        refused, and an ask-user tool returns its own declined result.
+
+        Returns ``False`` when nothing is waiting, when *tool_id* names a
         different call (a stale or multi-tab answer), when the call has
-        already been settled, or when the pause is an ask-user prompt —
-        that one is answered with :meth:`answer_questions`, never
-        approved.
-        """
-        pending = self._pending
-        if pending is None:
-            return False
-        if pending.questions is not None:
-            return False
-        if tool_id and pending.tool_id and pending.tool_id != tool_id:
-            return False
-        if pending.settled:
-            return False
-        pending.answer(True)
-        return True
-
-    def deny_tool_call(self, tool_id: str = "") -> bool:
-        """Deny or decline the pending pause and unblock the loop.
-
-        For an ordinary call this is the tool gate's deny.  For an
-        ask-user call it declines the questions: the model gets a failed
-        result saying the user declined, and the turn continues.
-        Returns ``False`` for a stale or already-settled pause.
+        already been settled, or when *answers* is not a valid answer to
+        this pause — in which case the pause stays open and the caller
+        may retry with a corrected payload.
         """
         pending = self._pending
         if pending is None:
@@ -420,37 +417,12 @@ class AgentLoop:
             return False
         if pending.settled:
             return False
-        pending.decline()
-        return True
-
-    def answer_questions(self, tool_id: str, answers: list[int]) -> bool:
-        """Answer the pending ask-user call and unblock the loop.
-
-        Returns ``False`` when nothing is waiting, when the pause is an
-        ordinary approval rather than a question, when *tool_id* names a
-        different call (a stale or multi-tab answer), when the call has
-        already been settled, or when *answers* does not match the
-        questions — in which case the caller may try again with a valid
-        payload.  ``bool`` values are rejected even though they subclass
-        ``int``.
-        """
-        pending = self._pending
-        if pending is None or pending.questions is None:
+        if answers is None:
+            pending.settle(declined=True)
+            return True
+        if pending.choices.verdict(answers) is AnswerVerdict.INVALID:
             return False
-        if tool_id and pending.tool_id and pending.tool_id != tool_id:
-            return False
-        if pending.settled:
-            return False
-        if not isinstance(answers, (list, tuple)):
-            return False
-        if len(answers) != len(pending.questions):
-            return False
-        for answer, question in zip(answers, pending.questions, strict=True):
-            if not isinstance(answer, int) or isinstance(answer, bool):
-                return False
-            if not 0 <= answer < len(question.choices):
-                return False
-        pending.answer_questions(answers)
+        pending.settle(answers=answers)
         return True
 
     # ==================================================================
@@ -563,18 +535,11 @@ class AgentLoop:
                         ),
                     )
                 else:
-                    pending = _PendingApproval(
-                        call.tool_id, prompt.questions,
-                    )
+                    pending = _PendingApproval(call.tool_id, prompt.choices)
                     self._pending = pending
                     try:
                         yield AgentPaused(
                             prompt=prompt,
-                            choices=(
-                                None
-                                if prompt.questions is not None
-                                else ["approve", "deny"]
-                            ),
                             tool_id=call.tool_id,
                         )
                         result = await self._execute_with_gating(
@@ -624,14 +589,15 @@ class AgentLoop:
         For :attr:`Decision.ASK` the caller (the ``run()`` loop body) has
         already opened a :class:`_PendingApproval` and yielded
         :class:`AgentPaused`, so this method blocks on that channel until
-        the user answers it.  An ordinary call is answered with
-        approve/deny; an ask-user call with an answer array.  An answered
-        ask is then run through the executor exactly like an approved
-        call, with the answers injected as ``extra_params``; a declined
-        one returns the tool's declined result without executing.
-        :attr:`Decision.ALLOW` passes straight through, and
-        :attr:`Decision.DENY` never runs at all — it is the policy
-        answering, not a question left open.
+        the user answers it.  An ordinary call is answered with one
+        :class:`PromptAnswer` whose row's level decides the outcome; an
+        ask-user call with one answer per question.  An ask is then run
+        through the executor exactly like an approved call — even when
+        declined, because the tool owns the declined wording — with the
+        answers and the questions already parsed injected as
+        ``extra_params``.  :attr:`Decision.ALLOW` passes straight
+        through, and :attr:`Decision.DENY` never runs at all — it is the
+        policy answering, not a question left open.
 
         A call that does reach the executor takes the verdict's own answer
         about whether it mutates: that is what orders the checkpoint.
@@ -699,42 +665,40 @@ class AgentLoop:
             if self._pending is pending:
                 self._pending = None
 
-        if pending.answers is not None:
+        # A question pause is input, not permission: it runs — answered or
+        # declined — so the tool owns both wordings, with the questions
+        # the gate already parsed injected.  A single gate runs only on a
+        # grant; a deny, feedback, or decline never reaches the executor.
+        if pending.choices.type is ChoiceType.QUESTION:
             return await self._executor.execute(
                 call,
                 mutating=verdict.mutating,
-                extra_params={"answers": pending.answers},
+                extra_params={
+                    "answers": pending.answers,
+                    "parsed_questions": pending.questions,
+                },
             )
 
-        if pending.questions is not None:
-            # The ask was declined (the terminal's Escape/EOF path).  The
-            # tool owns the declined wording; a formatting bug must not
-            # take the turn down.
-            try:
-                result = tool.questions_result(pending.questions, None)
-            except Exception as exc:
-                result = ToolResult(
-                    tool_id=call.tool_id,
-                    tool_name=call.tool_name,
-                    success=False,
-                    output="",
-                    error=f"{type(exc).__name__}: {exc}",
-                )
-            result.tool_id = call.tool_id
-            result.tool_name = call.tool_name
-            return result
-
-        if not pending.granted:
-            return ToolResult(
-                tool_id=call.tool_id,
-                tool_name=call.tool_name,
-                success=False,
-                output="",
-                error="User denied permission to execute this tool.",
+        if (
+            pending.answers is not None
+            and pending.choices.verdict(pending.answers)
+            is AnswerVerdict.GRANTED
+        ):
+            return await self._executor.execute(
+                call, mutating=verdict.mutating,
             )
 
-        return await self._executor.execute(
-            call, mutating=verdict.mutating
+        error = "User denied permission to execute this tool."
+        if pending.answers and pending.answers[0].content:
+            # The chosen row took the user's words (feedback): hand them
+            # to the model so it can change the call rather than repeat it.
+            error += f" Their feedback: {pending.answers[0].content}"
+        return ToolResult(
+            tool_id=call.tool_id,
+            tool_name=call.tool_name,
+            success=False,
+            output="",
+            error=error,
         )
 
     def _decision_for(self, call: ToolCall) -> _Verdict:

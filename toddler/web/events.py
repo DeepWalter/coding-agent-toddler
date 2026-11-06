@@ -328,12 +328,14 @@ def serialize_event(event: AgentEvent, root: Path) -> dict | None:  # noqa: C901
                 ],
             }
 
-        case AgentPaused(prompt=prompt, choices=choices, tool_id=tool_id):
+        case AgentPaused(prompt=prompt, tool_id=tool_id):
+            # The prompt carries the choices, type and all: the frame has
+            # one pause shape, and the tool that built the prompt decided
+            # what it asks.
             return {
                 "type": "agent_paused",
                 "tool_id": tool_id,
                 "prompt": prompt.to_dict(),
-                "choices": choices,
             }
 
         case AgentFinished(reason=reason, usage=usage):

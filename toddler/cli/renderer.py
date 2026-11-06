@@ -50,7 +50,7 @@ from toddler.agent.events import (
     ToolUseStart,
 )
 from toddler.tools import HIDDEN_TOOL_NAMES, QuestionTool
-from toddler.tools.base import CALL_DESCRIPTION_PARAM
+from toddler.tools.base import CALL_DESCRIPTION_PARAM, ChoiceType
 from toddler.tools.plan import PlanStepStatus
 from toddler.tools.shell import Shell
 from toddler.utils.format import estimate_tokens, format_span, format_tokens
@@ -369,7 +369,12 @@ class Renderer(ABC):
 
     def on_agent_paused(self, event: AgentPaused) -> None:
         """Render a confirmation / pause prompt."""
-        choices_str = "/".join(event.choices) if event.choices else "y/n"
+        choices = event.prompt.choices
+        if choices.type is ChoiceType.SINGLE:
+            choices_str = "/".join(row.title for row in choices.data)
+        else:
+            count = len(choices.data)
+            choices_str = f"{count} question{'' if count == 1 else 's'}"
         self._console.print()
         self._console.print(
             Panel(
@@ -447,7 +452,7 @@ class Renderer(ABC):
         prompt: str,
         choices: list[str],
         *,
-        allow_feedback: bool = False,
+        feedback_index: int | None = None,
         detail: str | None = None,
     ) -> ConfirmResult:
         """Prompt the user to confirm an action.
@@ -457,12 +462,11 @@ class Renderer(ABC):
         prompt:
             Title shown above the choices.
         choices:
-            List of choice labels (e.g. ``["approve", "deny"]``).  When
-            *allow_feedback* is True, a ``"feedback"`` entry provides a
-            free-text input row.
-        allow_feedback:
-            When True, the user can type free-text feedback instead of
-            selecting a predefined choice.
+            List of choice labels (e.g. ``["Approve", "Deny"]``).
+        feedback_index:
+            Index of the one row that takes free-text input instead of a
+            selection — the choice the tool marked ``FEEDBACK``.  ``None``
+            when every row is a plain selection.
         detail:
             Optional body shown above the choices — an ask_user
             question's content, which is too long for the title.
@@ -610,6 +614,7 @@ class StreamingRenderer(Renderer):
         self._confirm_detail: str | None = None
         self._confirm_choices: list[str] = []
         self._confirm_selection: int = 0
+        self._confirm_feedback_index: int = -1
         self._confirm_buf: str = ""
         self._confirm_input_mode: bool = False
 
@@ -799,15 +804,15 @@ class StreamingRenderer(Renderer):
         prompt: str,
         choices: list[str],
         *,
-        allow_feedback: bool = False,  # noqa: ARG002
+        feedback_index: int | None = None,
         detail: str | None = None,
     ) -> ConfirmResult:
         """Display an interactive confirmation table inside the Live display.
 
         Uses raw termios I/O so the prompt stays in the alternate screen.
         Tab / Shift+Tab / arrows navigate rows; Enter selects; printable
-        characters accumulate into a feedback buffer when the Feedback row
-        is focused.
+        characters accumulate into a feedback buffer when the row the
+        caller marked as the feedback row is focused.
         """
         # -- Store confirmation state ---------------------------------
         self._confirming = True
@@ -819,14 +824,8 @@ class StreamingRenderer(Renderer):
         self._confirm_input_mode = False
 
         # -- Resolve special indices ----------------------------------
-        feedback_index = next(
-            (
-                i
-                for i, c in enumerate(choices)
-                if c.lower() == "feedback"
-            ),
-            -1,
-        )
+        feedback_row = feedback_index if feedback_index is not None else -1
+        self._confirm_feedback_index = feedback_row
         deny_index = next(
             (
                 i
@@ -851,13 +850,13 @@ class StreamingRenderer(Renderer):
             nonlocal buf, saved_buf, input_mode
             prev = self._confirm_selection
             # Save buffer when leaving Feedback row
-            if prev == feedback_index and buf:
+            if prev == feedback_row and buf:
                 saved_buf = buf
-            elif prev != feedback_index:
+            elif prev != feedback_row:
                 saved_buf = ""
             self._confirm_selection = new_index
-            # Restore buffer when arriving at Feedback row
-            if new_index == feedback_index:
+            # Restore buffer when arriving at the feedback row
+            if new_index == feedback_row:
                 buf = saved_buf
                 input_mode = bool(buf)
             else:
@@ -944,7 +943,7 @@ class StreamingRenderer(Renderer):
                 # ── Printable characters ─────────────────────────
                 if (
                     0x20 <= ord(ch) <= 0x7E
-                    and self._confirm_selection == feedback_index
+                    and self._confirm_selection == feedback_row
                 ):
                     if not input_mode:
                         input_mode = True
@@ -960,7 +959,7 @@ class StreamingRenderer(Renderer):
             sel = selected.lower()
             if cancelled:
                 return ConfirmResult(decision="deny", cancelled=True)
-            if sel == "feedback" and buf:
+            if idx == feedback_row and buf:
                 return ConfirmResult(
                     decision="feedback", feedback=buf, choice_index=idx,
                 )
@@ -1355,37 +1354,30 @@ class StreamingRenderer(Renderer):
         table = Table(show_header=False, box=box.SIMPLE, padding=(0, 2))
         table.add_column(width=40)
 
-        feedback_index = next(
-            (
-                i
-                for i, c in enumerate(self._confirm_choices)
-                if c.lower() == "feedback"
-            ),
-            -1,
-        )
+        feedback_index = self._confirm_feedback_index
 
         for i, choice in enumerate(self._confirm_choices):
             focused = i == self._confirm_selection
             style = "reverse" if focused else ""
+            # Uppercase the first letter only: the labels are the tool's
+            # own words, and str.capitalize() would lowercase the rest of
+            # a title such as "SQLite".
+            label = choice[:1].upper() + choice[1:]
 
             if i == feedback_index:
                 buf = self._confirm_buf
                 if focused and self._confirm_input_mode:
                     row_text = Text(
-                        "▸ Feedback: " + buf + "▏", style=style,
+                        f"▸ {label}: " + buf + "▏", style=style,
                     )
                 elif buf:
-                    row_text = Text("  Feedback: " + buf, style=style)
+                    row_text = Text(f"  {label}: " + buf, style=style)
                 elif focused:
-                    row_text = Text("▸ Feedback: ▏", style=style)
+                    row_text = Text(f"▸ {label}: ▏", style=style)
                 else:
-                    row_text = Text("  Feedback: ▏", style=style)
+                    row_text = Text(f"  {label}: ▏", style=style)
             else:
                 cursor = "▸ " if focused else "  "
-                # Uppercase the first letter only: the labels are the
-                # tool's own words, and str.capitalize() would lowercase
-                # the rest of a title such as "SQLite".
-                label = choice[:1].upper() + choice[1:]
                 row_text = Text(cursor + label, style=style)
 
             table.add_row(row_text)
@@ -1852,7 +1844,7 @@ class NonStreamingRenderer(Renderer):
         prompt: str,
         choices: list[str],
         *,
-        allow_feedback: bool = False,
+        feedback_index: int | None = None,
         detail: str | None = None,
     ) -> ConfirmResult:
         """Prompt the user to confirm via the main console.
@@ -1909,7 +1901,7 @@ class NonStreamingRenderer(Renderer):
             return ConfirmResult(decision="deny", cancelled=True)
 
         choice = choices[matched]
-        if choice.lower() == "feedback" and allow_feedback:
+        if matched == feedback_index:
             try:
                 fb = self._console.input("Feedback: ").strip()
             except (EOFError, KeyboardInterrupt):
@@ -2073,13 +2065,21 @@ def _question_tool_result(result: ToolResult | None) -> str:
         if not isinstance(question, dict):
             continue
         choices = question.get("choices")
+        # A stored answer is {choice, content?}; sessions written before
+        # that shape hold a bare index, and still replay.
+        index = (
+            answer.get("choice") if isinstance(answer, dict)
+            else answer
+        )
         if (
             isinstance(choices, list)
-            and isinstance(answer, int)
-            and 0 <= answer < len(choices)
-            and isinstance(choices[answer], dict)
+            and isinstance(index, int)
+            and not isinstance(index, bool)
+            and 0 <= index < len(choices)
+            and isinstance(choices[index], dict)
         ):
-            title = choices[answer].get("title")
+            chosen_answer = answer.get("content") if isinstance(answer, dict) else None
+            title = chosen_answer or choices[index].get("title")
             if title:
                 chosen.append(str(title))
     if not chosen:

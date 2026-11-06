@@ -808,13 +808,11 @@ class TestPausePromptLine:
     def test_the_one_shot_renderer_prints_the_line(self):
         buf = io.StringIO()
         renderer = NonStreamingRenderer(console=Console(file=buf, width=120))
-        renderer.on_agent_paused(AgentPaused(
-            prompt=self._display(), choices=["approve", "deny"],
-        ))
+        renderer.on_agent_paused(AgentPaused(prompt=self._display()))
 
         out = buf.getvalue()
         assert "Allow this tool call? — set -e [ -f notes.md ] && rm notes.md[/]" in out
-        assert "[approve/deny]" in out
+        assert "[Approve/Deny]" in out
 
     def test_the_streaming_title_keeps_the_brackets(self):
         """A title is markup: passed as a plain string, ``[ -f x ]`` reads
@@ -907,6 +905,31 @@ class TestQuestionConfirmation:
         assert "SQLite" in buf.getvalue()
         assert "Sqlite" not in buf.getvalue()
 
+    async def test_the_feedback_row_takes_free_text_by_index(self):
+        renderer, _ = self._renderer()
+        inputs = iter(["3", "use the other file"])
+        renderer._console.input = lambda prompt="": next(inputs)
+
+        result = await renderer.confirm(
+            "Allow this tool call?",
+            ["Approve", "Deny", "Tell me why"],
+            feedback_index=2,
+        )
+
+        assert result.decision == "feedback"
+        assert result.feedback == "use the other file"
+        assert result.choice_index == 2
+
+    def test_a_feedback_row_uses_its_own_title(self):
+        """The tool words the row; the renderer only knows its index."""
+        renderer = StreamingRenderer(console=Console(file=io.StringIO()))
+        renderer._confirm_choices = ["Allow", "Tell me why"]
+        renderer._confirm_feedback_index = 1
+        renderer._confirm_prompt = "Gate"
+        buf = io.StringIO()
+        Console(file=buf, width=120).print(renderer._build_confirm_table())
+        assert "Tell me why" in buf.getvalue()
+
 
 class TestQuestionToolRow:
     """The visible ask_user call is a normal tools-panel row: the signature
@@ -936,9 +959,53 @@ class TestQuestionToolRow:
             result=ToolResult(
                 tool_id="q1", tool_name="ask_user", success=True,
                 output="The user answered your questions:",
-                metadata={"questions": raw, "answers": [1]},
+                metadata={
+                    "questions": raw,
+                    "answers": [{"choice": 1, "content": None}],
+                },
             ),
         ))
         row = renderer._tools["q1"]
         assert row.result == "Redis"
         assert row.status == "success"
+
+    def test_a_free_text_answer_names_the_users_words(self):
+        renderer = StreamingRenderer(console=Console(file=io.StringIO()))
+        raw = [_question().to_dict()]
+        renderer.on_tool_call_start(ToolCallStart(
+            tool_id="q1", tool_name="ask_user",
+            input={"questions": raw},
+        ))
+        renderer.on_tool_call_end(ToolCallEnd(
+            tool_id="q1", tool_name="ask_user",
+            input={"questions": raw},
+            result=ToolResult(
+                tool_id="q1", tool_name="ask_user", success=True,
+                output="The user answered your questions:",
+                metadata={
+                    "questions": raw,
+                    "answers": [{"choice": 1, "content": "DuckDB"}],
+                },
+            ),
+        ))
+        assert renderer._tools["q1"].result == "DuckDB"
+
+    def test_an_old_integer_answer_still_replays(self):
+        """Sessions written before answers became objects hold a bare
+        index; the row still names what was chosen."""
+        renderer = StreamingRenderer(console=Console(file=io.StringIO()))
+        raw = [_question().to_dict()]
+        renderer.on_tool_call_start(ToolCallStart(
+            tool_id="q1", tool_name="ask_user",
+            input={"questions": raw},
+        ))
+        renderer.on_tool_call_end(ToolCallEnd(
+            tool_id="q1", tool_name="ask_user",
+            input={"questions": raw},
+            result=ToolResult(
+                tool_id="q1", tool_name="ask_user", success=True,
+                output="The user answered your questions:",
+                metadata={"questions": raw, "answers": [1]},
+            ),
+        ))
+        assert renderer._tools["q1"].result == "Redis"

@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from toddler.tools.base import Permission, QuestionValidationError
+from toddler.tools.base import (
+    ChoiceType,
+    Permission,
+    PromptAnswer,
+    QuestionValidationError,
+)
 from toddler.tools.question import (
     MAX_CHOICES,
     MAX_QUESTIONS,
@@ -185,7 +190,9 @@ class TestQuestionsResult:
 
     def test_formats_answers_and_records_metadata(self, questions):
         tool = QuestionTool()
-        result = tool.questions_result(questions, [0])
+        result = tool.questions_result(
+            questions, [PromptAnswer(choice=0)],
+        )
 
         assert result.success
         assert "The user answered your questions:" in result.output
@@ -193,14 +200,28 @@ class TestQuestionsResult:
         assert "One file, no server to run." in result.output
         assert result.metadata == {
             "questions": [question.to_dict() for question in questions],
-            "answers": [0],
+            "answers": [{"choice": 0, "content": None}],
         }
 
     def test_a_non_recommended_answer_has_no_marker(self, questions):
-        result = QuestionTool().questions_result(questions, [1])
+        result = QuestionTool().questions_result(
+            questions, [PromptAnswer(choice=1)],
+        )
         assert result.success
         assert "Redis" in result.output
         assert "(recommended)" not in result.output
+
+    def test_a_free_text_answer_reads_as_the_users_words(self, questions):
+        result = QuestionTool().questions_result(
+            questions, [PromptAnswer(choice=1, content="DuckDB")],
+        )
+        assert result.success
+        assert "1. Storage: DuckDB" in result.output
+        # The row's own explanation is replaced by what the user wrote.
+        assert "Shared storage." not in result.output
+        assert result.metadata["answers"] == [
+            {"choice": 1, "content": "DuckDB"},
+        ]
 
     def test_declined_is_a_failed_result_with_metadata(self, questions):
         result = QuestionTool().questions_result(questions, None)
@@ -218,7 +239,9 @@ class TestQuestionsResult:
     def test_rejects_an_out_of_range_or_non_integer_index(
         self, questions, answer,
     ):
-        result = QuestionTool().questions_result(questions, [answer])
+        result = QuestionTool().questions_result(
+            questions, [PromptAnswer(choice=answer)],
+        )
         assert not result.success
         assert "invalid answer" in result.error
 
@@ -234,10 +257,13 @@ class TestCallPrompt:
         prompt = QuestionTool().build_call_prompt(
             questions=[_question()],
         )
-        assert prompt.questions is not None
-        assert prompt.questions[0].title == "Storage"
-        assert prompt.questions[0].choices[0].title == "SQLite"
-        assert prompt.to_dict()["questions"] == [_question()]
+        assert prompt.choices.type is ChoiceType.QUESTION
+        assert prompt.choices.data[0].title == "Storage"
+        assert prompt.choices.data[0].choices[0].title == "SQLite"
+        assert prompt.to_dict()["choices"] == {
+            "type": "question",
+            "data": [_question()],
+        }
 
     def test_it_rejects_malformed_arguments(self):
         with pytest.raises(QuestionValidationError, match="between 1 and 5"):
@@ -252,10 +278,14 @@ class TestCallPrompt:
 class TestExecute:
 
     async def test_execute_formats_the_answers(self):
-        result = await QuestionTool().execute([_question()], [0])
+        result = await QuestionTool().execute(
+            [_question()], [PromptAnswer(choice=0)],
+        )
         assert result.success
         assert "SQLite (recommended)" in result.output
-        assert result.metadata["answers"] == [0]
+        assert result.metadata["answers"] == [
+            {"choice": 0, "content": None},
+        ]
 
     async def test_execute_with_no_answers_declines(self):
         result = await QuestionTool().execute([_question()], None)
@@ -265,3 +295,15 @@ class TestExecute:
     async def test_execute_validates_the_questions_again(self):
         with pytest.raises(QuestionValidationError):
             await QuestionTool().execute([], [])
+
+    async def test_a_paused_call_reuses_the_parsed_questions(self):
+        """The gate parsed them when it built the prompt; the loop hands
+        them back so the tool does not parse the model's arguments twice."""
+        parsed = parse_questions([_question()])
+        result = await QuestionTool().execute(
+            questions=[],  # a payload the parser would reject
+            answers=[PromptAnswer(choice=0)],
+            parsed_questions=parsed,
+        )
+        assert result.success
+        assert "SQLite (recommended)" in result.output

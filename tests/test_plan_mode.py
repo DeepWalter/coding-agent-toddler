@@ -1868,7 +1868,8 @@ class _ScriptedRenderer:
         self.calls: list[str] = []
 
     async def confirm(
-        self, prompt: str, choices: list[str], *, allow_feedback: bool = False,
+        self, prompt: str, choices: list[str], *,
+        feedback_index: int | None = None,
     ) -> ConfirmResult:
         self.calls.append("confirm")
         if self._decisions:

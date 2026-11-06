@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -483,6 +483,154 @@ ALLOW_CALL_TITLE = "Allow this tool call?"
 ONE_LINE_DETAIL_LIMIT = 200
 
 
+class ChoiceLevel(Enum):
+    """What picking a prompt choice means.
+
+    The level, not the title, decides the answer: a tool is free to word
+    its rows for its own call (``"Allow once"``, ``"Always allow"``) and
+    still get the behaviour it named.  ``APPROVE`` runs the call,
+    ``DENY`` refuses it, and ``FEEDBACK`` refuses it with the user's
+    reason attached for the model to act on.
+    """
+
+    APPROVE = "approve"
+    DENY = "deny"
+    FEEDBACK = "feedback"
+
+
+class ChoiceType(Enum):
+    """The shape of a pause's choice payload.
+
+    ``SINGLE`` is the ordinary gate: one row is selected and its
+    :class:`ChoiceLevel` decides what happens.  ``QUESTION`` is an
+    ask-user pause: the data is the questions, answered one at a time.
+    """
+
+    SINGLE = "single"
+    QUESTION = "question"
+
+
+@dataclass(frozen=True)
+class PromptChoice:
+    """One row of a single-choice pause — a title and what it does."""
+
+    title: str
+    level: ChoiceLevel
+
+    def to_dict(self) -> dict:
+        """The wire form — the title the row shows, the meaning it carries."""
+        return {"title": self.title, "level": self.level.value}
+
+
+@dataclass(frozen=True)
+class PromptAnswer:
+    """One answer to a pause's choice.
+
+    ``choice`` indexes the pause's data — the row selected in a single
+    gate, or the chosen answer for one question.  ``content`` is the
+    user's own words where the chosen row takes them: a feedback reason,
+    or the text of a future "Other" question choice.
+    """
+
+    choice: int
+    content: str | None = None
+
+    def to_dict(self) -> dict:
+        """The wire form — the index and any free text."""
+        return {"choice": self.choice, "content": self.content}
+
+
+class AnswerVerdict(Enum):
+    """What a pause's answers mean for the call they gate.
+
+    ``INVALID`` is not an answer to this pause at all (wrong count, an
+    index out of range): the pause stays open and the caller may retry.
+    ``DENIED`` is a well-formed answer that does not let the call run.
+    ``GRANTED`` runs it — a question pause is input, not a permission
+    decision, so any valid answer set grants.
+    """
+
+    INVALID = "invalid"
+    DENIED = "denied"
+    GRANTED = "granted"
+
+
+@dataclass(frozen=True)
+class PromptChoices:
+    """What a pause asks the user to choose between.
+
+    One object for both pause shapes, told apart by :attr:`type`, so a
+    front-end branches once and then reads ``data`` in the shape that
+    type promises: :class:`PromptChoice` rows for ``SINGLE``,
+    :class:`Question` objects for ``QUESTION``.
+    """
+
+    type: ChoiceType
+    data: tuple[PromptChoice, ...] | tuple[Question, ...]
+
+    def to_dict(self) -> dict:
+        """The wire form — the discriminant and its payload."""
+        return {
+            "type": self.type.value,
+            "data": [item.to_dict() for item in self.data],
+        }
+
+    def verdict(self, answers: Sequence[PromptAnswer]) -> AnswerVerdict:
+        """What *answers* mean for the call this pause gates.
+
+        A single gate takes exactly one answer, and grants only when the
+        selected row's level is :attr:`ChoiceLevel.APPROVE`.  A question
+        pause takes one answer per question, and any valid set grants:
+        that call is held for input, not for a permission decision.
+        """
+        if self.type is ChoiceType.SINGLE:
+            if len(answers) != 1 or not isinstance(
+                answers[0], PromptAnswer,
+            ):
+                return AnswerVerdict.INVALID
+            answer = answers[0]
+            if (
+                not isinstance(answer.choice, int)
+                or isinstance(answer.choice, bool)
+                or not 0 <= answer.choice < len(self.data)
+            ):
+                return AnswerVerdict.INVALID
+            row = self.data[answer.choice]
+            if not isinstance(row, PromptChoice):
+                return AnswerVerdict.INVALID
+            return (
+                AnswerVerdict.GRANTED
+                if row.level is ChoiceLevel.APPROVE
+                else AnswerVerdict.DENIED
+            )
+        questions = self.data
+        if len(answers) != len(questions):
+            return AnswerVerdict.INVALID
+        for answer, question in zip(answers, questions, strict=True):
+            if not isinstance(question, Question):
+                return AnswerVerdict.INVALID
+            if (
+                not isinstance(answer, PromptAnswer)
+                or not isinstance(answer.choice, int)
+                or isinstance(answer.choice, bool)
+                or not 0 <= answer.choice < len(question.choices)
+            ):
+                return AnswerVerdict.INVALID
+        return AnswerVerdict.GRANTED
+
+
+#: The ordinary gate's rows, and the default every prompt carries.  A tool
+#: that wants different wording or a feedback row overrides
+#: :meth:`BaseTool._prompt_choices`.
+DEFAULT_SINGLE_CHOICES = PromptChoices(
+    type=ChoiceType.SINGLE,
+    data=(
+        PromptChoice("Approve", ChoiceLevel.APPROVE),
+        PromptChoice("Deny", ChoiceLevel.DENY),
+    ),
+)
+
+
 @dataclass(frozen=True)
 class ToolCallPrompt:
     """What one call asks the user while it waits to be approved or answered.
@@ -500,29 +648,26 @@ class ToolCallPrompt:
     parameter, or the file the call names.  ``None`` is "nothing to show"
     rather than an empty string, and the wire form keeps the difference.
 
-    ``questions`` is the other kind of pause: a call that needs an answer
-    rather than an approval.  It is ``None`` for an ordinary call; an
-    ask-user tool fills it, and the front-end that sees it renders the
-    question card instead of approve/deny.  The answers are indexes into
-    each question's ``choices``, in question order.
+    ``choices`` is what the pause asks for.  An ordinary call carries the
+    approve/deny set (:data:`DEFAULT_SINGLE_CHOICES`); a tool may offer
+    rows of its own, and an ask-user tool carries questions instead.
+    ``choices.type`` is the pause's discriminant: ``SINGLE`` is answered
+    with one :class:`PromptAnswer` whose row's level decides the outcome,
+    ``QUESTION`` with one :class:`PromptAnswer` per question, in order.
     """
 
     title: str
     content: str | None = None
     description: str | None = None
-    questions: tuple[Question, ...] | None = None
+    choices: PromptChoices = DEFAULT_SINGLE_CHOICES
 
     def to_dict(self) -> dict:
-        """The wire form — all keys present, ``None`` as null."""
+        """The wire form — all keys present."""
         return {
             "title": self.title,
             "content": self.content,
             "description": self.description,
-            "questions": (
-                [question.to_dict() for question in self.questions]
-                if self.questions is not None
-                else None
-            ),
+            "choices": self.choices.to_dict(),
         }
 
     def one_line(self) -> str:
@@ -534,8 +679,8 @@ class ToolCallPrompt:
         terminal front-end asks its questions one at a time; this is only
         the summary a log or a card title would show.
         """
-        if self.questions is not None:
-            count = len(self.questions)
+        if self.choices.type is ChoiceType.QUESTION:
+            count = len(self.choices.data)
             detail = f"{count} question{'' if count == 1 else 's'}"
         else:
             detail = self.content or self.description
@@ -678,8 +823,8 @@ class BaseTool(ABC):
     #: Whether this tool asks the user a question before it can return.
     #: The loop always pauses such a call for an answer, whatever the
     #: permission mode — the pause is input, not a risk decision.  The
-    #: prompt carries the questions (see
-    #: :attr:`ToolCallPrompt.questions`); once answered, the answers are
+    #: prompt carries the questions (see :attr:`ToolCallPrompt.choices`,
+    #: whose ``type`` is ``QUESTION``); once answered, the answers are
     #: injected into :meth:`execute`.  A question tool is non-mutating and
     #: names no files.
     asks_user: bool = False
@@ -847,6 +992,16 @@ class BaseTool(ABC):
         """
         return None
 
+    def _prompt_choices(self, **kwargs) -> PromptChoices:  # noqa: ARG002
+        """The rows the pause offers, or the questions it asks.
+
+        Default: the ordinary approve/deny gate
+        (:data:`DEFAULT_SINGLE_CHOICES`).  A tool varies the wording or
+        adds a feedback row by overriding this; an ask-user tool returns a
+        ``QUESTION`` payload instead.
+        """
+        return DEFAULT_SINGLE_CHOICES
+
     def _prompt_description(self, **kwargs) -> str | None:
         """The call's own line about what it does, or ``None``.
 
@@ -892,7 +1047,7 @@ class BaseTool(ABC):
 
         Assembled from the ``_prompt_*`` helpers, so a tool with
         something to say about one part overrides that helper and leaves
-        the other two alone.
+        the others alone.
 
         A sibling of :meth:`summarize_call`, not a replacement: that one
         is still the line :func:`blocked_message` and the checkpoint
@@ -902,6 +1057,7 @@ class BaseTool(ABC):
             title=self._prompt_title(**kwargs),
             content=self._prompt_content(**kwargs),
             description=self._prompt_description(**kwargs),
+            choices=self._prompt_choices(**kwargs),
         )
 
     # ------------------------------------------------------------------
@@ -911,11 +1067,11 @@ class BaseTool(ABC):
     def questions_result(
         self,
         questions: tuple[Question, ...],
-        answers: list[int] | None,
+        answers: list[PromptAnswer] | None,
     ) -> ToolResult:
         """The tool result for *questions*, answered by *answers*.
 
-        ``answers`` indexes each question's choices in question order;
+        ``answers`` is one :class:`PromptAnswer` per question, in order;
         ``None`` means the user declined to answer.  Only a tool
         declaring :attr:`asks_user` implements this.
         """

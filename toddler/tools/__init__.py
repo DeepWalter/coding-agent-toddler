@@ -7,11 +7,17 @@ is imported for the same reason, even though it opts out of the default set.
 """
 
 from toddler.tools.base import (
+    AnswerVerdict,
     BaseTool,
+    ChoiceLevel,
+    ChoiceType,
     Decision,
     FileScope,
     FileScopePolicy,
     Permission,
+    PromptAnswer,
+    PromptChoice,
+    PromptChoices,
     Question,
     QuestionChoice,
     QuestionValidationError,
@@ -35,6 +41,12 @@ __all__ = [
     # Base
     "BaseTool",
     "ToolCallPrompt",
+    "ChoiceLevel",
+    "ChoiceType",
+    "PromptAnswer",
+    "PromptChoice",
+    "PromptChoices",
+    "AnswerVerdict",
     "Question",
     "QuestionChoice",
     "QuestionValidationError",

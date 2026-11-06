@@ -83,10 +83,10 @@ class ToolExecutor:
         taken before it runs.
 
         *extra_params* are loop-injected arguments for a tool the loop
-        paused on — today only an ask-user tool's ``answers``.  They are
-        not part of the model's schema and never appear in the call's
-        stored parameters; they are merged in next to the call's own
-        arguments just before ``execute``.
+        paused on — an ask-user tool's ``answers``, and the questions the
+        gate already parsed.  They are not part of the model's schema and
+        never appear in the call's stored parameters; they are merged in
+        next to the call's own arguments just before ``execute``.
 
         Returns a ``ToolResult`` — even for a tool the registry does not
         know, or one that raises (the result will have ``success=False`` so

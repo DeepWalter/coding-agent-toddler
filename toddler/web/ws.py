@@ -21,7 +21,7 @@ from fastapi import APIRouter, WebSocket
 
 from toddler.config.defaults import MODEL_SLOTS, REASONING_EFFORT_TIERS
 from toddler.session.lock import SessionInUseError
-from toddler.tools.base import PermissionMode
+from toddler.tools.base import PermissionMode, PromptAnswer
 from toddler.web.events import serialize_transcript
 from toddler.web.runners import (
     conversation_payload,
@@ -229,63 +229,57 @@ async def _cmd_cancel(websocket: WebSocket, state: WebAppState, raw: dict) -> No
     )
 
 
-def _tool_decision(
-    state: WebAppState, cmd: str, tool_id: str,
-) -> bool:
-    """Approve or deny the pending pause.
+def _parse_answers(raw: object) -> list[PromptAnswer] | None:
+    """Parse ``[{choice, content?}, …]`` from the wire, or ``None``.
 
-    The agent validates the live call id and the pause shape, so its
-    return value is the ``accepted`` verdict: an approve that arrives for
-    a question prompt (or a stale call) is refused, while a deny also
-    declines a question.
+    ``None`` covers every malformed payload: the loop owns the deeper
+    questions — whether the indexes fit this pause, and whether the count
+    matches — and a rejected answer leaves the card standing.
     """
-    agent = state.session_mgr.agent
-    if cmd == "approve_tool":
-        return agent.approve_tool_call(tool_id)
-    return agent.deny_tool_call(tool_id)
+    if not isinstance(raw, list):
+        return None
+    answers: list[PromptAnswer] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            return None
+        choice = item.get("choice")
+        content = item.get("content")
+        if (
+            not isinstance(choice, int)
+            or isinstance(choice, bool)
+            or (content is not None and not isinstance(content, str))
+        ):
+            return None
+        answers.append(PromptAnswer(choice=choice, content=content))
+    return answers
 
 
-async def _cmd_approve_tool(
+async def _cmd_answer_tool(
     websocket: WebSocket, state: WebAppState, raw: dict,
 ) -> None:
-    tool_id = str(raw.get("tool_id", ""))
-    await websocket.send_json(
-        _ack_frame("approve_tool", _tool_decision(state, "approve_tool", tool_id)),
-    )
+    """Answer the pending pause.
 
-
-async def _cmd_deny_tool(
-    websocket: WebSocket, state: WebAppState, raw: dict,
-) -> None:
-    tool_id = str(raw.get("tool_id", ""))
-    await websocket.send_json(
-        _ack_frame("deny_tool", _tool_decision(state, "deny_tool", tool_id)),
-    )
-
-
-async def _cmd_answer_questions(
-    websocket: WebSocket, state: WebAppState, raw: dict,
-) -> None:
-    """Answer the pending question card.
-
-    The wire shape is checked here; the loop checks the call id, the
-    answer count, and every choice index.  A rejected answer leaves the
-    card standing, so another tab or a corrected payload can still
-    answer it.
+    ``answers`` is one ``{choice, content?}`` object per choice the pause
+    asks about — one for a single gate, one per question for an ask-user
+    card — or ``null`` to decline.  The wire shape is checked here; the
+    loop checks the call id, the pause shape, the answer count, and every
+    index.  A rejected answer leaves the card standing, so another tab or
+    a corrected payload can still answer it.
     """
     tool_id = str(raw.get("tool_id", ""))
-    answers = raw.get("answers")
-    if not isinstance(answers, list) or not all(
-        isinstance(answer, int) and not isinstance(answer, bool)
-        for answer in answers
-    ):
-        await _send_error(
-            websocket, "invalid_answers",
-            "`answers` must be an array of choice indexes.",
-        )
-        return
-    accepted = state.session_mgr.agent.answer_questions(tool_id, answers)
-    await websocket.send_json(_ack_frame("answer_questions", accepted))
+    raw_answers = raw.get("answers")
+    if raw_answers is None:
+        accepted = state.session_mgr.agent.answer_tool_call(tool_id, None)
+    else:
+        answers = _parse_answers(raw_answers)
+        if answers is None:
+            await _send_error(
+                websocket, "invalid_answers",
+                "`answers` must be an array of {choice, content?} objects.",
+            )
+            return
+        accepted = state.session_mgr.agent.answer_tool_call(tool_id, answers)
+    await websocket.send_json(_ack_frame("answer_tool", accepted))
 
 
 async def _cmd_approve_plan(
@@ -344,7 +338,7 @@ async def _cmd_set_mode(
             mgr.set_permission_mode(PermissionMode.MANUAL)
     else:
         # A live gating flip — a single synchronous set read per tool
-        # approval, so no busy lock is needed (same as approve_tool).
+        # approval, so no busy lock is needed (same as answer_tool).
         # The plan workflow pins gating to manual until the plan is
         # approved: reject flips while it is explored, proposed, or
         # awaiting approval; idle and the execution phases allow them.
@@ -528,9 +522,7 @@ async def _cmd_switch_session(
 _COMMANDS: dict[str, Callable] = {
     "turn": _cmd_turn,
     "cancel": _cmd_cancel,
-    "approve_tool": _cmd_approve_tool,
-    "deny_tool": _cmd_deny_tool,
-    "answer_questions": _cmd_answer_questions,
+    "answer_tool": _cmd_answer_tool,
     "approve_plan": _cmd_approve_plan,
     "reject_plan": _cmd_reject_plan,
     "set_mode": _cmd_set_mode,

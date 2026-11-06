@@ -248,8 +248,8 @@ def ask_user_response(
     """A call to the real ``ask_user`` tool.
 
     The loop pauses with an ``AgentPaused`` prompt carrying the questions
-    until a client answers through :meth:`AgentLoop.answer_questions` (in
-    tests, via the ``answer_questions`` WebSocket command).
+    until a client answers through :meth:`AgentLoop.answer_tool_call` (in
+    tests, via the ``answer_tool`` WebSocket command).
     """
     return tool_use_response(
         "ask_user", {"questions": questions}, tool_id=tool_id,

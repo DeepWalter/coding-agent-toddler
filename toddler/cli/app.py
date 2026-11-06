@@ -29,7 +29,12 @@ from toddler.cli.input_handler import InputHandler
 from toddler.cli.renderer import create_renderer
 from toddler.config.settings import Settings
 from toddler.session.manager import SessionManager
-from toddler.tools.base import PermissionMode
+from toddler.tools.base import (
+    ChoiceLevel,
+    ChoiceType,
+    PermissionMode,
+    PromptAnswer,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -253,26 +258,14 @@ class CLIApp:
                     self._renderer.on_plan_step_update(event)
 
                 case AgentPaused():
-                    questions = event.prompt.questions
-                    if questions is None:
-                        result = await self._renderer.confirm(
-                            prompt=event.prompt.one_line(),
-                            choices=event.choices or ["approve", "deny"],
-                        )
-                        if result.decision == "approve":
-                            self._session_mgr.agent.approve_tool_call(
-                                event.tool_id,
-                            )
-                        else:
-                            self._session_mgr.agent.deny_tool_call(
-                                event.tool_id,
-                            )
-                    else:
+                    choices = event.prompt.choices
+                    if choices.type is ChoiceType.QUESTION:
                         # The terminal has no tabs: each question is a
                         # numbered prompt in the turn's own display.  A
                         # cancelled prompt declines the set rather than
                         # leaving the loop waiting forever.
-                        answers: list[int] = []
+                        questions = choices.data
+                        answers: list[PromptAnswer] = []
                         total = len(questions)
                         declined = False
                         for number, question in enumerate(questions, 1):
@@ -296,18 +289,48 @@ class CLIApp:
                             ):
                                 declined = True
                                 break
-                            answers.append(result.choice_index)
+                            answers.append(
+                                PromptAnswer(choice=result.choice_index)
+                            )
                         if (
                             declined
-                            or not self._session_mgr.agent.answer_questions(
+                            or not self._session_mgr.agent.answer_tool_call(
                                 event.tool_id, answers,
                             )
                         ):
                             # A cancelled prompt — or a stale pause that
                             # moved on — declines the set instead of
                             # parking.
-                            self._session_mgr.agent.deny_tool_call(
+                            self._session_mgr.agent.answer_tool_call(
+                                event.tool_id, None,
+                            )
+                    else:
+                        # A single-choice gate: the selected row's level
+                        # decides the answer, whatever it was titled.
+                        rows = choices.data
+                        result = await self._renderer.confirm(
+                            prompt=event.prompt.one_line(),
+                            choices=[row.title for row in rows],
+                            feedback_index=next(
+                                (
+                                    index
+                                    for index, row in enumerate(rows)
+                                    if row.level is ChoiceLevel.FEEDBACK
+                                ),
+                                None,
+                            ),
+                        )
+                        if result.cancelled or result.choice_index is None:
+                            self._session_mgr.agent.answer_tool_call(
+                                event.tool_id, None,
+                            )
+                        else:
+                            self._session_mgr.agent.answer_tool_call(
                                 event.tool_id,
+                                [PromptAnswer(
+                                    choice=result.choice_index,
+                                    content=result.feedback,
+                                )],
                             )
 
                 case AgentFinished():
@@ -343,7 +366,7 @@ class CLIApp:
                             "deny",
                             "feedback",
                         ],
-                        allow_feedback=True,
+                        feedback_index=3,
                     )
 
                     match result.decision:

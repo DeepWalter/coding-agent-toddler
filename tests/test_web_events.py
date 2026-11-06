@@ -22,6 +22,8 @@ from toddler.agent.planner import Plan, PlanStep
 from toddler.llm import TokenUsage
 from toddler.llm.messages import Message, MessageBlock
 from toddler.tools.base import (
+    ChoiceType,
+    PromptChoices,
     Question,
     QuestionChoice,
     ToolCallPrompt,
@@ -337,7 +339,6 @@ class TestSerializeEvent:
                 content="ls -la",
                 description="list the files",
             ),
-            choices=["approve", "deny"],
         ), ROOT) == {
             "type": "agent_paused",
             "tool_id": "",
@@ -345,13 +346,18 @@ class TestSerializeEvent:
                 "title": "Allow this tool call?",
                 "content": "ls -la",
                 "description": "list the files",
-                "questions": None,
+                "choices": {
+                    "type": "single",
+                    "data": [
+                        {"title": "Approve", "level": "approve"},
+                        {"title": "Deny", "level": "deny"},
+                    ],
+                },
             },
-            "choices": ["approve", "deny"],
         }
 
     def test_agent_paused_keeps_a_missing_part_null(self):
-        """The three keys are always on the frame, so the client reads one
+        """The four keys are always on the prompt, so the client reads one
         shape: a call with nothing to box sends ``null``, not no key."""
         assert serialize_event(AgentPaused(
             prompt=ToolCallPrompt(title="Allow this tool call?"),
@@ -362,22 +368,30 @@ class TestSerializeEvent:
                 "title": "Allow this tool call?",
                 "content": None,
                 "description": None,
-                "questions": None,
+                "choices": {
+                    "type": "single",
+                    "data": [
+                        {"title": "Approve", "level": "approve"},
+                        {"title": "Deny", "level": "deny"},
+                    ],
+                },
             },
-            "choices": None,
         }
 
     def test_agent_paused_with_questions(self):
-        """An ask-user prompt rides the same pause frame; the question
-        array is the discriminant and there is no approve/deny choice."""
+        """An ask-user prompt rides the same pause frame; the choices
+        object's ``type`` is the discriminant and there is no approve/deny
+        row."""
         question = _question()
         assert serialize_event(AgentPaused(
             tool_id="q1",
             prompt=ToolCallPrompt(
                 title="Answer these questions",
-                questions=(question,),
+                choices=PromptChoices(
+                    type=ChoiceType.QUESTION,
+                    data=(question,),
+                ),
             ),
-            choices=None,
         ), ROOT) == {
             "type": "agent_paused",
             "tool_id": "q1",
@@ -385,9 +399,11 @@ class TestSerializeEvent:
                 "title": "Answer these questions",
                 "content": None,
                 "description": None,
-                "questions": [question.to_dict()],
+                "choices": {
+                    "type": "question",
+                    "data": [question.to_dict()],
+                },
             },
-            "choices": None,
         }
 
     def test_ask_user_tool_frames_are_visible(self):
