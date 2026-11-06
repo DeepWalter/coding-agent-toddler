@@ -1057,22 +1057,3 @@ class BaseTool(ABC):
             description=self._prompt_description(**kwargs),
             choices=self._prompt_choices(**kwargs),
         )
-
-    # ------------------------------------------------------------------
-    # User interaction
-    # ------------------------------------------------------------------
-
-    def questions_result(
-        self,
-        questions: tuple[Question, ...],
-        answers: list[PromptAnswer] | None,
-    ) -> ToolResult:
-        """The tool result for *questions*, answered by *answers*.
-
-        ``answers`` is one :class:`PromptAnswer` per question, in order;
-        ``None`` means the user declined to answer.  Only a tool with
-        :attr:`Permission.INTERACT` implements this.
-        """
-        raise NotImplementedError(
-            f"{type(self).__name__} does not ask the user"
-        )
