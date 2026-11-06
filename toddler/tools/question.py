@@ -224,8 +224,8 @@ class QuestionTool(BaseTool):
 
     @property
     def permission(self) -> Permission:
-        """Asking is a read: it never mutates the workspace."""
-        return Permission.READ
+        """Input, not risk: the gate always pauses for an answer."""
+        return Permission.INTERACT
 
     def _prompt_title(self, **kwargs) -> str:  # noqa: ARG002
         """The pause asks for answers, not an approval."""

@@ -14,13 +14,15 @@ class Permission(Enum):
     """Permission tier for a tool.
 
     Read by the loop's gate to decide whether auto-approval is allowed or
-    user confirmation is needed.
+    user confirmation is needed.  ``INTERACT`` always pauses: it asks the
+    user for input rather than for permission.
     """
 
     READ = "read"               # side-effect-free reads (auto-approve)
     WRITE = "write"             # file mutations (confirm by default)
     SHELL_SAFE = "shell_safe"   # safe shell commands — ls, git status, etc.
     SHELL_DANGEROUS = "shell_dangerous"  # rm, sudo, curl, etc. (always confirm)  # noqa: E501
+    INTERACT = "interact"       # asks the user — input, always paused
 
     @property
     def is_mutating(self) -> bool:
@@ -28,7 +30,7 @@ class Permission(Enum):
 
         These are the tiers a checkpoint is taken before: something is
         about to be touched, and the checkpoint is what undoes it.
-        ``READ`` and ``SHELL_SAFE`` leave nothing to undo.
+        ``READ``, ``SHELL_SAFE`` and ``INTERACT`` leave nothing to undo.
         """
         return self in (Permission.WRITE, Permission.SHELL_DANGEROUS)
 
@@ -54,7 +56,8 @@ class PermissionMode(Enum):
     requires confirmation for WRITE + SHELL_DANGEROUS.  ``AUTO``
     additionally auto-approves WRITE, leaving only SHELL_DANGEROUS
     to confirm.  Both apply to workspace files alone — a call that
-    reaches outside asks, whatever the mode.
+    reaches outside asks, whatever the mode.  An ``INTERACT`` call
+    asks in both modes: the pause is input, not a risk decision.
     """
 
     MANUAL = "manual"
@@ -331,15 +334,20 @@ class PermissionManager:
         This is the **single source of truth** for the gating policy —
         no mirrored logic to keep in sync.
 
-        Scope is read first.  A restricted file is refused whatever the
-        tier and whatever the mode — ``READ`` included, ``AUTO``
-        included — and no approval lifts it: it is policy, not a
-        question.  Reaching outside the workspace is never automatic
-        either, though for a different reason: how far past the ground
-        the agent was given is the user's decision to make, and the
-        answer to an unmade decision is to ask.  Inside the workspace
-        the tiers hold, with ``AUTO`` adding ``WRITE``.
+        An ``INTERACT`` call is read first and asks whatever the mode
+        and scope: the pause is input, not a risk decision — the call
+        reads the user, not the filesystem.  Otherwise scope is read
+        first.  A restricted file is refused whatever the tier and
+        whatever the mode — ``READ`` included, ``AUTO`` included — and
+        no approval lifts it: it is policy, not a question.  Reaching
+        outside the workspace is never automatic either, though for a
+        different reason: how far past the ground the agent was given is
+        the user's decision to make, and the answer to an unmade
+        decision is to ask.  Inside the workspace the tiers hold, with
+        ``AUTO`` adding ``WRITE``.
         """
+        if perm is Permission.INTERACT:
+            return Decision.ASK
         if scope is FileScope.RESTRICTED:
             return Decision.DENY
         if scope is FileScope.EXTERNAL:

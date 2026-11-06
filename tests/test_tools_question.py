@@ -6,7 +6,11 @@ import pytest
 
 from toddler.tools.base import (
     ChoiceType,
+    Decision,
+    FileScope,
     Permission,
+    PermissionManager,
+    PermissionMode,
     PromptAnswer,
     QuestionValidationError,
 )
@@ -67,7 +71,7 @@ class TestDeclaration:
         assert tool.asks_user is True
         assert tool.visible is True
         assert tool.in_default_registry is True
-        assert tool.permission is Permission.READ
+        assert tool.permission is Permission.INTERACT
 
     def test_schema_carries_the_bounds_and_no_description_param(self):
         schema = QuestionTool().to_api_schema()["function"]
@@ -91,6 +95,26 @@ class TestDeclaration:
         assert tool.summarize_call(questions=[_question()]) == (
             "ask_user(1 question)"
         )
+
+
+# ---------------------------------------------------------------------------
+# The interact tier
+# ---------------------------------------------------------------------------
+
+
+class TestInteractTier:
+    """``INTERACT`` asks under every mode: the pause is input."""
+
+    @pytest.mark.parametrize("mode", [PermissionMode.MANUAL, PermissionMode.AUTO])
+    def test_it_always_asks(self, mode):
+        manager = PermissionManager(mode)
+        assert manager.decide(
+            Permission.INTERACT, FileScope.WORKSPACE,
+        ) is Decision.ASK
+
+    def test_it_is_not_mutating(self):
+        # No checkpoint precedes a pause that only reads the user.
+        assert Permission.INTERACT.is_mutating is False
 
 
 # ---------------------------------------------------------------------------
