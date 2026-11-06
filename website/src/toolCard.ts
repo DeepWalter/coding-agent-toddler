@@ -351,6 +351,11 @@ function questionsFor(block: ToolBlock): ToolCardQuestion[] | null {
         )
         : []
       const answer = answers[index]
+      // A stored answer is {choice, content?}; sessions written before
+      // that shape hold a bare index, and still replay.
+      const picked = answer && typeof answer === 'object' && 'choice' in answer
+        ? (answer as { choice?: unknown }).choice
+        : answer
       return {
         title: typeof item.title === 'string' ? item.title : '',
         content: typeof item.content === 'string' ? item.content : '',
@@ -358,8 +363,8 @@ function questionsFor(block: ToolBlock): ToolCardQuestion[] | null {
           title: typeof choice.title === 'string' ? choice.title : '',
           content: typeof choice.content === 'string' ? choice.content : '',
         })),
-        answer: typeof answer === 'number' && Number.isInteger(answer)
-          ? answer
+        answer: typeof picked === 'number' && Number.isInteger(picked)
+          ? picked
           : null,
       }
     })

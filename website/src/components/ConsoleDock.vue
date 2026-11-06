@@ -1,6 +1,13 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
-import type { Block, Mode, ModelSlotInfo, Paused } from '../types'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import type {
+  Block,
+  Mode,
+  ModelSlotInfo,
+  Paused,
+  PromptAnswer,
+  Question,
+} from '../types'
 import ConsoleDockInputBar from './ConsoleDockInputBar.vue'
 import ConsoleDockPausePrompt from './ConsoleDockPausePrompt.vue'
 import ConsoleDockPlanAsk from './ConsoleDockPlanAsk.vue'
@@ -10,7 +17,7 @@ import ConsoleDockQuestion from './ConsoleDockQuestion.vue'
 // gate (state.paused), a plan awaiting THIS tab's decision, or the input bar.
 // Paused first — only a live server wait is guaranteed actionable; an
 // undecided plan on a stale tab may be dead (approved elsewhere).
-defineProps<{
+const props = defineProps<{
   paused: Paused | null
   awaitingPlan: Extract<Block, { kind: 'plan' }> | null
   busy: boolean
@@ -32,12 +39,19 @@ const emit = defineEmits<{
   'set-model': [slot: string]
   'set-effort': [tier: string]
   compact: []
-  'approve-tool': []
-  'deny-tool': []
-  'answer-questions': [toolId: string, answers: number[]]
+  'answer-tool': [toolId: string, answers: PromptAnswer[] | null]
   'approve-plan': [planId: string, mode: 'manual' | 'auto']
   'reject-plan': [planId: string, feedback: string]
 }>()
+
+// The questions of an ask-user pause, [] for any other shape.  A computed
+// so the template gets a narrowed `Question[]` from the discriminated
+// `choices` payload without repeating the type test twice.
+const questions = computed<Question[]>(() =>
+  props.paused?.prompt.choices.type === 'question'
+    ? props.paused.prompt.choices.data
+    : [],
+)
 
 // The draft survives the bar being swapped out for a confirmation: the dock
 // stays mounted, so this ref outlives any ConsoleDockInputBar instance
@@ -66,20 +80,19 @@ onBeforeUnmount(() => dockObserver?.disconnect())
 <template>
   <div ref="dockEl" class="console-dock">
     <ConsoleDockQuestion
-      v-if="paused?.prompt.questions"
+      v-if="paused?.prompt.choices.type === 'question'"
       :key="paused.tool_id ?? 'questions'"
-      :questions="paused?.prompt.questions ?? []"
+      :questions="questions"
       :tool-id="paused?.tool_id ?? ''"
       :busy="busy"
-      @submit="(toolId, answers) => emit('answer-questions', toolId, answers)"
+      @submit="(toolId, answers) => emit('answer-tool', toolId, answers)"
       @cancel="emit('cancel')"
     />
     <ConsoleDockPausePrompt
       v-else-if="paused"
       :paused="paused"
       :busy="busy"
-      @approve="emit('approve-tool')"
-      @deny="emit('deny-tool')"
+      @answer="(answers) => emit('answer-tool', paused?.tool_id ?? '', answers)"
       @cancel="emit('cancel')"
     />
     <ConsoleDockPlanAsk

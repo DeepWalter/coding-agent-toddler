@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
-import type { Question } from '../types'
+import type { PromptAnswer, Question } from '../types'
 import { onChoiceKeydown } from '../choiceNav'
 
 // The ask_user card: one tab per question, one single-choice answer per
@@ -12,7 +12,7 @@ const props = defineProps<{
   busy: boolean
 }>()
 const emit = defineEmits<{
-  submit: [toolId: string, answers: number[]]
+  submit: [toolId: string, answers: PromptAnswer[]]
   cancel: []
 }>()
 
@@ -75,7 +75,7 @@ function submit() {
   emit(
     'submit',
     props.toolId,
-    answers.value.map((answer) => answer as number),
+    answers.value.map((choice) => ({ choice: choice as number })),
   )
 }
 

@@ -259,38 +259,49 @@ const QUESTION_PAUSE = {
     title: 'Answer these questions',
     content: null,
     description: null,
-    questions: [
-      {
-        title: 'Storage',
-        content: 'Where should sessions live?',
-        choices: [
-          { title: 'SQLite', content: 'One file, no server to run.' },
-          { title: 'Redis', content: 'Shared storage across processes.' },
-        ],
-      },
-      {
-        title: 'Auth',
-        content: 'How should the first sign-in be verified?',
-        choices: [
-          { title: 'Existing OAuth', content: 'Reuse the provider already wired in.' },
-          { title: 'Local password', content: 'Add a password check of our own.' },
-          { title: 'Magic link', content: 'Email a one-time link instead.' },
-        ],
-      },
-      {
-        title: 'Testing',
-        content: 'What should the new path be covered by?',
-        choices: [
-          { title: 'Unit tests', content: 'Fast, isolated, and close to the code.' },
-          { title: 'End-to-end', content: 'Slower, but exercises the whole flow.' },
-        ],
-      },
-    ],
+    choices: {
+      type: 'question',
+      data: [
+        {
+          title: 'Storage',
+          content: 'Where should sessions live?',
+          choices: [
+            { title: 'SQLite', content: 'One file, no server to run.' },
+            { title: 'Redis', content: 'Shared storage across processes.' },
+          ],
+        },
+        {
+          title: 'Auth',
+          content: 'How should the first sign-in be verified?',
+          choices: [
+            { title: 'Existing OAuth', content: 'Reuse the provider already wired in.' },
+            { title: 'Local password', content: 'Add a password check of our own.' },
+            { title: 'Magic link', content: 'Email a one-time link instead.' },
+          ],
+        },
+        {
+          title: 'Testing',
+          content: 'What should the new path be covered by?',
+          choices: [
+            { title: 'Unit tests', content: 'Fast, isolated, and close to the code.' },
+            { title: 'End-to-end', content: 'Slower, but exercises the whole flow.' },
+          ],
+        },
+      ],
+    },
   },
-  choices: null,
+}
+
+// The standard gate rows: the title a row shows and what picking it means.
+const APPROVE_DENY = {
+  type: 'single',
+  data: [
+    { title: 'Approve', level: 'approve' },
+    { title: 'Deny', level: 'deny' },
+  ],
 }
 // Held while the card waits, so a reload's hello restores it.  Cleared by
-// answer_questions and by cancel.
+// answer_tool and by cancel.
 let pendingAsk = null
 // The file turn's last call — the outside read — holds at a gate, so a test
 // can watch the card name the file, and wear the external marker, before
@@ -759,7 +770,7 @@ wss.on('connection', (ws) => {
         send({ type: 'turn_started' })
         if (ask) {
           send({ type: 'content_delta', text_delta: 'I need a decision first.\n' })
-          const questions = QUESTION_PAUSE.prompt.questions
+          const questions = QUESTION_PAUSE.prompt.choices.data
           useStart(QUESTION_TOOL_ID, 'ask_user')
           send({
             type: 'tool_call_start',
@@ -774,7 +785,7 @@ wss.on('connection', (ws) => {
           })
           pendingAsk = QUESTION_PAUSE
           send(pendingAsk)
-          break // holds for answer_questions, like the tool gate
+          break // holds for answer_tool, like the tool gate
         }
         if (planTurn) {
           send({ type: 'content_delta', text_delta: 'putting a plan together\n' })
@@ -1052,7 +1063,7 @@ wss.on('connection', (ws) => {
           // reaches the card, so its title names the file by the absolute
           // path it resolved to — and opens it read-only.  This one holds at
           // a gate, so the harness can see the card say all that while the
-          // call has not been allowed to run yet; approve_tool finishes it.
+          // call has not been allowed to run yet; answer_tool finishes it.
           pendingFileCall = {
             tool_id: FILE_GATE_ID,
             tool_name: 'read_file',
@@ -1081,9 +1092,8 @@ wss.on('connection', (ws) => {
               title: GATE_TITLES.read_file,
               content: null,
               description: OUTSIDE_DESCRIPTION,
-              questions: null,
+              choices: APPROVE_DENY,
             },
-            choices: null,
           })
           break
         }
@@ -1168,9 +1178,8 @@ wss.on('connection', (ws) => {
               title: GATE_TITLES.write_file,
               content: null,
               description: OVERWRITE_DESCRIPTION,
-              questions: null,
+              choices: APPROVE_DENY,
             },
-            choices: null,
           })
           break
         }
@@ -1221,9 +1230,8 @@ wss.on('connection', (ws) => {
               title: 'Allow edit this file?',
               content: null,
               description: EDIT_D_PATH,
-              questions: null,
+              choices: APPROVE_DENY,
             },
-            choices: null,
           })
           break
         }
@@ -1319,86 +1327,93 @@ wss.on('connection', (ws) => {
             title: GATE_TITLES.shell,
             content: pendingShellCall.command,
             description: pendingShellCall.description,
-            questions: null,
+            choices: APPROVE_DENY,
           },
-          choices: null,
         })
         break
       }
-      case 'answer_questions': {
-        const questions = pendingAsk?.prompt?.questions
-        const valid = questions
-          && msg.tool_id === pendingAsk.tool_id
-          && Array.isArray(msg.answers)
-          && msg.answers.length === questions.length
-          && msg.answers.every(
-            (answer, i) => Number.isInteger(answer)
-              && answer >= 0
-              && answer < questions[i].choices.length,
-          )
-        if (!valid) {
-          send({ type: 'ack', cmd: 'answer_questions', accepted: false })
-          break
-        }
-        const answers = [...msg.answers]
-        const input = { questions }
-        const result = {
-          success: true,
-          output: 'The user answered your questions.',
-          error: null,
-          checkpoint_id: null,
-          metadata: { questions, answers },
-        }
-        pendingAsk = null
-        send({ type: 'ack', cmd: 'answer_questions', accepted: true })
-        broadcast({
-          type: 'tool_call_end',
-          tool_id: QUESTION_TOOL_ID,
-          tool_name: 'ask_user',
-          input,
-          path: null,
-          path_abs: null,
-          path_named: null,
-          path_symlink: false,
-          path_is_file: false,
-          result,
-        })
-        // The record a reload replays: the real server pairs the stored
-        // tool use with its result metadata.
-        transcript.push({
-          role: 'tool',
-          tool_id: QUESTION_TOOL_ID,
-          tool_name: 'ask_user',
-          input,
-          path: null,
-          path_abs: null,
-          path_named: null,
-          path_symlink: false,
-          path_is_file: false,
-          result,
-        })
-        send({ type: 'content_delta', text_delta: 'thanks — continuing\n' })
-        send({ type: 'agent_finished', reason: 'completed', usage: null })
-        send({ type: 'state', busy: false })
-        break
-      }
-      case 'approve_tool':
-      case 'deny_tool':
+      case 'answer_tool': {
+        const answers = Array.isArray(msg.answers) ? msg.answers : null
+
         if (pendingAsk) {
-          // A question pause is answered with answer_questions; the
-          // question card never sends approve/deny.
-          send({ type: 'ack', cmd: msg.cmd, accepted: false })
+          const questions = pendingAsk.prompt.choices.data
+          const valid = answers
+            && msg.tool_id === pendingAsk.tool_id
+            && answers.length === questions.length
+            && answers.every(
+              (answer, i) => Number.isInteger(answer?.choice)
+                && answer.choice >= 0
+                && answer.choice < questions[i].choices.length
+                && (answer.content == null || typeof answer.content === 'string'),
+            )
+          if (!valid) {
+            send({ type: 'ack', cmd: 'answer_tool', accepted: false })
+            break
+          }
+          const input = { questions }
+          const result = {
+            success: true,
+            output: 'The user answered your questions.',
+            error: null,
+            checkpoint_id: null,
+            metadata: { questions, answers },
+          }
+          pendingAsk = null
+          send({ type: 'ack', cmd: 'answer_tool', accepted: true })
+          broadcast({
+            type: 'tool_call_end',
+            tool_id: QUESTION_TOOL_ID,
+            tool_name: 'ask_user',
+            input,
+            path: null,
+            path_abs: null,
+            path_named: null,
+            path_symlink: false,
+            path_is_file: false,
+            result,
+          })
+          // The record a reload replays: the real server pairs the stored
+          // tool use with its result metadata.
+          transcript.push({
+            role: 'tool',
+            tool_id: QUESTION_TOOL_ID,
+            tool_name: 'ask_user',
+            input,
+            path: null,
+            path_abs: null,
+            path_named: null,
+            path_symlink: false,
+            path_is_file: false,
+            result,
+          })
+          send({ type: 'content_delta', text_delta: 'thanks — continuing\n' })
+          send({ type: 'agent_finished', reason: 'completed', usage: null })
+          send({ type: 'state', busy: false })
           break
         }
-        send({ type: 'ack', cmd: msg.cmd, accepted: true })
+
+        // A tool gate: exactly one answer, naming one of the gate's rows.
+        const picked = answers && answers.length === 1 ? answers[0] : null
+        const row = picked
+          && Number.isInteger(picked.choice)
+          && picked.choice >= 0
+          && picked.choice < APPROVE_DENY.data.length
+          ? APPROVE_DENY.data[picked.choice]
+          : null
+        if (!row) {
+          send({ type: 'ack', cmd: 'answer_tool', accepted: false })
+          break
+        }
+        const denied = row.level !== 'approve'
+        send({ type: 'ack', cmd: 'answer_tool', accepted: true })
         if (pendingFileCall && msg.tool_id === pendingFileCall.tool_id) {
           // A gated file call — the outside read, the write over a file
           // that is already there, or the gated edit: either answer settles
           // it and ends its turn, a deny with the result a refusal produces.
           // An approval first applies whatever the call's effect on the
           // served files is (the gated edit rewrites its fixture).
-          if (msg.cmd !== 'deny_tool') pendingFileCall.apply?.()
-          const result = msg.cmd === 'deny_tool'
+          if (!denied) pendingFileCall.apply?.()
+          const result = denied
             ? {
                 success: false,
                 output: null,
@@ -1428,7 +1443,7 @@ wss.on('connection', (ws) => {
           tool_id: 't1',
           tool_name: 'shell',
           input: pendingShellCall,
-          result: msg.cmd === 'deny_tool'
+          result: denied
             ? {
                 success: false,
                 output: null,
@@ -1442,6 +1457,7 @@ wss.on('connection', (ws) => {
         send({ type: 'agent_finished', reason: 'completed', usage: null })
         send({ type: 'state', busy: false })
         break
+      }
       case 'approve_plan': {
         send({ type: 'ack', cmd: 'approve_plan', accepted: true })
         for (const [text, statuses] of PLAN_BEATS) {

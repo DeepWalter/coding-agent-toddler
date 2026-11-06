@@ -95,18 +95,42 @@ export interface ReplayMessage {
   result?: ToolResult | null
 }
 
+/** What picking a gate row means — the server's `ChoiceLevel`.  The
+ *  level, not the title, decides the answer, so a tool may word its rows
+ *  for its own call. */
+export type ChoiceLevel = 'approve' | 'deny' | 'feedback'
+
+/** One row of a single-choice gate: the title it shows, what it does. */
+export interface PromptChoice {
+  title: string
+  level: ChoiceLevel
+}
+
+/** One answer to a pause: the chosen row (or a question's chosen answer),
+ *  plus any words the row takes — a feedback reason, or an "Other"
+ *  answer's text. */
+export interface PromptAnswer {
+  choice: number
+  content?: string | null
+}
+
+/** What a pause asks for, discriminated by `type`: a gate's rows, or an
+ *  ask-user question set. */
+export type PromptChoices =
+  | { type: 'single'; data: PromptChoice[] }
+  | { type: 'question'; data: Question[] }
+
 /** What a gated call shows the user — the server's `ToolCallPrompt`
  *  (toddler/tools/base.py), built by the tool that was asked to run.
  *  `content` is the call's body where it has one (a shell command, whole and
  *  untruncated) and `description` the call's own line about what it does:
- *  the model's description parameter, or the file the call names. */
+ *  the model's description parameter, or the file the call names.
+ *  `choices.type` is the pause's discriminant. */
 export interface ToolCallPrompt {
   title: string
   content: string | null
   description: string | null
-  /** An ask-user prompt: the questions the pause waits on.  Null for an
-   *  ordinary approve/deny gate. */
-  questions: Question[] | null
+  choices: PromptChoices
 }
 
 /** The agent_paused frame as replayed by hello.paused. */
@@ -114,7 +138,6 @@ export interface PausedFrame {
   type: 'agent_paused'
   tool_id: string
   prompt: ToolCallPrompt
-  choices: string[] | null
 }
 
 /** One answer to a question the agent asks.  The first choice is the
@@ -261,7 +284,6 @@ export type Frame =
       type: 'agent_paused'
       tool_id: string
       prompt: ToolCallPrompt
-      choices: string[] | null
     }
   | { type: 'agent_finished'; reason: string; usage: TokenUsage | null }
   | { type: 'recoverable_error'; message: string }
@@ -285,9 +307,7 @@ export const MAX_TITLE_LENGTH = 80
 export type Command =
   | { cmd: 'turn'; input: string; force_plan?: boolean }
   | { cmd: 'cancel' }
-  | { cmd: 'approve_tool'; tool_id: string }
-  | { cmd: 'deny_tool'; tool_id: string }
-  | { cmd: 'answer_questions'; tool_id: string; answers: number[] }
+  | { cmd: 'answer_tool'; tool_id: string; answers: PromptAnswer[] | null }
   | { cmd: 'approve_plan'; plan_id: string; mode: 'manual' | 'auto' }
   | { cmd: 'reject_plan'; plan_id: string; feedback?: string }
   | { cmd: 'set_mode'; mode: Mode }
@@ -371,7 +391,6 @@ export type Block =
 /** A pending approval. tool_id is inferred from the open tool block. */
 export interface Paused {
   prompt: ToolCallPrompt
-  choices: string[] | null
   tool_id: string | null
 }
 

@@ -6,6 +6,7 @@ import type {
   Frame,
   Mode,
   PlanDecision,
+  PromptAnswer,
 } from '../types'
 
 /**
@@ -154,7 +155,6 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
       s.paused = action.busy && action.paused
         ? {
             prompt: action.paused.prompt,
-            choices: action.paused.choices,
             tool_id: action.paused.tool_id,
           }
         : null
@@ -381,15 +381,14 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
       break
     }
     case 'agent_paused':
-      // Both pause shapes arrive here: an approve/deny gate and an
-      // ask-user prompt (`prompt.questions`).  The pause holds the turn
-      // the way a tool call does, so the prose that set it up must stop
-      // reading as still streaming.
+      // Both pause shapes arrive here — a single-choice gate and an
+      // ask-user question set — told apart by `prompt.choices.type`.  The
+      // pause holds the turn the way a tool call does, so the prose that
+      // set it up must stop reading as still streaming.
       closeThinking(s)
       closeAssistant(s)
       s.paused = {
         prompt: action.prompt,
-        choices: action.choices,
         tool_id: action.tool_id,
       }
       break
@@ -457,15 +456,14 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
           }
         }
       }
+      // The tool_call_end frame clears the card on every tab; this clears
+      // the submitter's card on the accepted ack, a frame earlier.
       if (
         action.accepted
-        && ['approve_tool', 'deny_tool', 'approve_plan', 'reject_plan'].includes(action.cmd)
+        && ['answer_tool', 'approve_plan', 'reject_plan'].includes(action.cmd)
       ) {
         s.paused = null
       }
-      // The tool_call_end frame clears the card on every tab; this clears
-      // the submitter's card on the ack, a frame earlier.
-      if (action.accepted && action.cmd === 'answer_questions') s.paused = null
       break
     }
     case 'error':
@@ -541,22 +539,12 @@ export function useConsole(send: (cmd: Command) => void) {
     send({ cmd: 'cancel' })
   }
 
-  function approveTool() {
-    const toolId = state.paused?.tool_id
-    if (toolId) send({ cmd: 'approve_tool', tool_id: toolId })
-  }
-
-  function denyTool() {
-    const toolId = state.paused?.tool_id
-    if (toolId) send({ cmd: 'deny_tool', tool_id: toolId })
-  }
-
-  /** Submit a complete set of answers for the pending question card.
-   *  Nothing is marked locally: the tool_call_end frame carries the
-   *  record, and a rejected ack leaves the card standing. */
-  function answerQuestions(toolId: string, answers: number[]) {
+  /** Answer the pending pause: one entry per choice it asks about, or
+   *  null to decline.  Nothing is marked locally: the tool_call_end frame
+   *  carries the record, and a rejected ack leaves the card standing. */
+  function answerTool(toolId: string, answers: PromptAnswer[] | null) {
     if (state.paused?.tool_id !== toolId) return
-    send({ cmd: 'answer_questions', tool_id: toolId, answers })
+    send({ cmd: 'answer_tool', tool_id: toolId, answers })
   }
 
   // The shared decision path for the dock ask and the inline card: mark the
@@ -652,9 +640,7 @@ export function useConsole(send: (cmd: Command) => void) {
     sendTurn,
     sendCompact,
     cancelTurn,
-    approveTool,
-    denyTool,
-    answerQuestions,
+    answerTool,
     approvePlan,
     rejectPlan,
     setMode,

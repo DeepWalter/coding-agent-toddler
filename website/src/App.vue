@@ -25,9 +25,7 @@ const {
   sendTurn,
   sendCompact,
   cancelTurn,
-  approveTool,
-  denyTool,
-  answerQuestions,
+  answerTool,
   approvePlan,
   rejectPlan,
   setMode,
@@ -673,9 +671,7 @@ function onDividerUp(event: PointerEvent) {
           @set-model="setModel"
           @set-effort="setEffort"
           @compact="sendCompact"
-          @approve-tool="approveTool"
-          @deny-tool="denyTool"
-          @answer-questions="answerQuestions"
+          @answer-tool="answerTool"
           @approve-plan="approvePlan"
           @reject-plan="rejectPlan"
         />
