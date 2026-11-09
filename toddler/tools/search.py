@@ -6,12 +6,8 @@ import asyncio
 import os
 from pathlib import Path
 
-from toddler.tools.base import (
-    BaseTool,
-    Permission,
-    ToolResult,
-    display_path,
-)
+from toddler.tools.base import BaseTool, ToolResult
+from toddler.tools.policy import Permission, display_path
 from toddler.tools.registry import TOOL_CATALOG
 
 # Directories never worth searching — build artifacts, caches, and vendored

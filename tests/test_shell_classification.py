@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from toddler.tools.base import Permission
+from toddler.tools.policy import Permission
 from toddler.tools.shell import Shell, classify_command
 
 # ---------------------------------------------------------------------------

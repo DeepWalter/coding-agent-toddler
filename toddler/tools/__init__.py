@@ -6,15 +6,7 @@ what makes it available to :func:`create_default_registry`.  The plan tool
 is imported for the same reason, even though it opts out of the default set.
 """
 
-from toddler.tools.base import (
-    BaseTool,
-    Decision,
-    FileScope,
-    FileScopePolicy,
-    Permission,
-    ToolCall,
-    ToolResult,
-)
+from toddler.tools.base import BaseTool, ToolCall, ToolResult
 from toddler.tools.executor import (
     CheckpointCallback,
     ToolExecutor,
@@ -22,6 +14,12 @@ from toddler.tools.executor import (
 from toddler.tools.files import EditFile, ReadFile, WriteFile
 from toddler.tools.git import GitBranch, GitCommit, GitDiff, GitLog, GitStatus
 from toddler.tools.plan import PlanState, PlanUpdateTool
+from toddler.tools.policy import (
+    Decision,
+    FileScope,
+    FileScopePolicy,
+    Permission,
+)
 from toddler.tools.prompts import (
     AnswerVerdict,
     ChoiceLevel,

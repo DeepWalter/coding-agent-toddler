@@ -33,12 +33,11 @@ from toddler.agent.handler import create_handler
 from toddler.agent.stop_conditions import StopConditionChecker
 from toddler.config.models import TurnConfig
 from toddler.llm import Message, MessageBlock, TokenUsage
-from toddler.tools.base import (
+from toddler.tools.base import ToolCall, ToolResult
+from toddler.tools.policy import (
     Decision,
     Permission,
     PermissionManager,
-    ToolCall,
-    ToolResult,
     blocked_message,
 )
 from toddler.tools.prompts import (

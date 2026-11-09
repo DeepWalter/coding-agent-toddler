@@ -1,6 +1,6 @@
 """File scope — placing a path, and the tool that reports where it reaches.
 
-:class:`~toddler.tools.base.FileScopePolicy` answers the question a
+:class:`~toddler.tools.policy.FileScopePolicy` answers the question a
 permission tier cannot: *where* does this call reach.  A file inside the
 workspace is the agent's own ground, a file outside it is the user's call,
 and a restricted file is nobody's — the policy is what makes ``.env`` a
@@ -14,7 +14,8 @@ from pathlib import Path
 import pytest
 
 from toddler.tools import create_default_registry
-from toddler.tools.base import BaseTool, FileScope, FileScopePolicy, ToolResult
+from toddler.tools.base import BaseTool, ToolResult
+from toddler.tools.policy import FileScope, FileScopePolicy
 
 # ---------------------------------------------------------------------------
 # Fixtures

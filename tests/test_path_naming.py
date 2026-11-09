@@ -15,8 +15,8 @@ from pathlib import Path
 
 import pytest
 
-from toddler.tools.base import display_path
 from toddler.tools.files import ReadFile, WriteFile
+from toddler.tools.policy import display_path
 from toddler.tools.search import Grep
 
 # ---------------------------------------------------------------------------

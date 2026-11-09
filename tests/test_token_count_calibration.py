@@ -251,8 +251,8 @@ class TestAgentLoopRecordUsageIntegration:
         """After a successful LLM call, the context baseline is updated."""
         from toddler.agent.loop import AgentLoop
         from toddler.config.settings import Settings
-        from toddler.tools.base import PermissionManager
         from toddler.tools.executor import ToolExecutor
+        from toddler.tools.policy import PermissionManager
         from toddler.tools.registry import ToolRegistry
 
         # Mock LLM that returns a single text response.
@@ -296,8 +296,9 @@ class TestAgentLoopRecordUsageIntegration:
         """Each LLM response updates the baseline for incremental growth."""
         from toddler.agent.loop import AgentLoop
         from toddler.config.settings import Settings
-        from toddler.tools.base import BaseTool, Permission, PermissionManager, ToolResult
+        from toddler.tools.base import BaseTool, ToolResult
         from toddler.tools.executor import ToolExecutor
+        from toddler.tools.policy import Permission, PermissionManager
         from toddler.tools.registry import ToolRegistry
 
         # Simulates: first call tool_use → second call end_turn.

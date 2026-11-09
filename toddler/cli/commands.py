@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING
 
 from toddler.config import defaults
 from toddler.session.lock import SessionInUseError
-from toddler.tools.base import PermissionMode
+from toddler.tools.policy import PermissionMode
 
 if TYPE_CHECKING:
     from toddler.session.manager import SessionManager

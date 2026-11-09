@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from toddler.tools.base import FileScope, FileScopePolicy
+from toddler.tools.policy import FileScope, FileScopePolicy
 from toddler.tools.shell import Shell
 
 
@@ -208,7 +208,7 @@ class TestPermissionIsUnchanged:
     safe command stays safe, a dangerous one stays dangerous."""
 
     def test_classification_still_comes_from_the_command(self, shell):
-        from toddler.tools.base import Permission
+        from toddler.tools.policy import Permission
 
         assert shell.get_permission(command="ls -la") is Permission.SHELL_SAFE
         assert (

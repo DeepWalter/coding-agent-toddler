@@ -1,6 +1,6 @@
 """The ``ask_user`` tool — the agent's way to ask the user a question.
 
-The tool declares :attr:`~toddler.tools.base.Permission.INTERACT`, so
+The tool declares :attr:`~toddler.tools.policy.Permission.INTERACT`, so
 the agent loop always pauses its call and puts the questions on the
 approval prompt.  The questions reach the browser as an interactive card
 and the terminal as a sequence of prompts; the answers are injected into
@@ -10,7 +10,8 @@ result.
 
 from __future__ import annotations
 
-from toddler.tools.base import BaseTool, Permission, ToolResult
+from toddler.tools.base import BaseTool, ToolResult
+from toddler.tools.policy import Permission
 from toddler.tools.prompts import (
     ChoiceType,
     PromptAnswer,

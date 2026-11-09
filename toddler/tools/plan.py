@@ -10,12 +10,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from toddler.tools.base import (
-    BaseTool,
-    FileScopePolicy,
-    Permission,
-    ToolResult,
-)
+from toddler.tools.base import BaseTool, ToolResult
+from toddler.tools.policy import FileScopePolicy, Permission
 from toddler.tools.registry import TOOL_CATALOG
 
 if TYPE_CHECKING:

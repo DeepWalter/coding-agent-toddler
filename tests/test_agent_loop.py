@@ -36,17 +36,15 @@ from toddler.llm import (
     TokenUsage,
 )
 from toddler.llm.base import BaseLLMProvider
-from toddler.tools.base import (
-    BaseTool,
+from toddler.tools.base import BaseTool, ToolCall, ToolResult
+from toddler.tools.executor import CheckpointCallback, ToolExecutor
+from toddler.tools.policy import (
     Decision,
     FileScopePolicy,
     Permission,
     PermissionManager,
     PermissionMode,
-    ToolCall,
-    ToolResult,
 )
-from toddler.tools.executor import CheckpointCallback, ToolExecutor
 from toddler.tools.prompts import (
     ChoiceLevel,
     ChoiceType,

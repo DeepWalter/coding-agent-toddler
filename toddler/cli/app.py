@@ -29,7 +29,7 @@ from toddler.cli.input_handler import InputHandler
 from toddler.cli.renderer import create_renderer
 from toddler.config.settings import Settings
 from toddler.session.manager import SessionManager
-from toddler.tools.base import PermissionMode
+from toddler.tools.policy import PermissionMode
 from toddler.tools.prompts import ChoiceLevel, ChoiceType, PromptAnswer
 
 logger = logging.getLogger(__name__)

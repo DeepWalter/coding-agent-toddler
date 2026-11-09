@@ -19,7 +19,6 @@ from toddler.tools.base import (
     CALL_DESCRIPTION_PARAM,
     CALL_DESCRIPTION_USAGE,
     BaseTool,
-    Permission,
     ToolCall,
     ToolResult,
     execution_params,
@@ -27,6 +26,7 @@ from toddler.tools.base import (
 from toddler.tools.executor import ToolExecutor
 from toddler.tools.files import ReadFile
 from toddler.tools.plan import PLAN_UPDATE_USAGE, PlanState, PlanUpdateTool
+from toddler.tools.policy import Permission
 from toddler.tools.registry import ToolRegistry
 from toddler.tools.shell import Shell
 

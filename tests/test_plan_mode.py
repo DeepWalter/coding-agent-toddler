@@ -34,8 +34,8 @@ from toddler.cli.renderer import ConfirmResult
 from toddler.llm import LLMResponse, Message, MessageBlock, TokenUsage
 from toddler.llm.base import BaseLLMProvider
 from toddler.llm.provider import OpenAICompatibleProvider
-from toddler.tools.base import Decision, FileScope, Permission, PermissionMode
 from toddler.tools.plan import PlanState, PlanUpdateTool
+from toddler.tools.policy import Decision, FileScope, Permission, PermissionMode
 
 # ============================================================================
 # Helper — build a Plan with a generated id
@@ -1768,12 +1768,12 @@ class TestPermissionMode:
     # ------------------------------------------------------------------
 
     def test_default_is_manual(self):
-        from toddler.tools.base import PermissionManager
+        from toddler.tools.policy import PermissionManager
         mgr = PermissionManager()
         assert mgr.mode == PermissionMode.MANUAL
 
     def test_set_mode_persists(self):
-        from toddler.tools.base import PermissionManager
+        from toddler.tools.policy import PermissionManager
         mgr = PermissionManager()
         mgr.set_mode(PermissionMode.AUTO)
         assert mgr.mode == PermissionMode.AUTO
@@ -1829,7 +1829,7 @@ class TestPermissionMode:
         ],
     )
     def test_decide(self, mode, perm, scope, expected):
-        from toddler.tools.base import PermissionManager
+        from toddler.tools.policy import PermissionManager
         mgr = PermissionManager(mode)
         assert mgr.decide(perm, scope) is expected
 

@@ -10,12 +10,11 @@ from collections.abc import Iterator
 from itertools import islice
 from pathlib import Path
 
-from toddler.tools.base import (
-    BaseTool,
+from toddler.tools.base import BaseTool, ToolResult
+from toddler.tools.policy import (
     FileScope,
     FileScopePolicy,
     Permission,
-    ToolResult,
     display_path,
 )
 from toddler.tools.registry import TOOL_CATALOG

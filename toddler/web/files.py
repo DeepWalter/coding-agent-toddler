@@ -15,7 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from toddler.context.workspace import GitignoreMatcher
-from toddler.tools.base import display_path
+from toddler.tools.policy import display_path
 
 __all__ = [
     "FileApiError",

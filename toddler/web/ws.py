@@ -21,7 +21,7 @@ from fastapi import APIRouter, WebSocket
 
 from toddler.config.defaults import MODEL_SLOTS, REASONING_EFFORT_TIERS
 from toddler.session.lock import SessionInUseError
-from toddler.tools.base import PermissionMode
+from toddler.tools.policy import PermissionMode
 from toddler.tools.prompts import PromptAnswer
 from toddler.web.events import serialize_transcript
 from toddler.web.runners import (

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from toddler.tools.base import (
+from toddler.tools.policy import (
     Decision,
     FileScope,
     Permission,

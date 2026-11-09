@@ -45,7 +45,7 @@ class ToolExecutor:
     """Executes a tool call, with a checkpoint taken before a mutating one.
 
     It does not gate.  The agent loop decides whether a call may run — over
-    the shared :class:`~toddler.tools.base.PermissionManager` and its pause
+    the shared :class:`~toddler.tools.policy.PermissionManager` and its pause
     channel — and hands the answer down; the executor runs what the gate
     cleared.  A direct caller therefore gets exactly what it passes: this
     is fail-open for permissions, and gating is the caller's job.
@@ -78,7 +78,7 @@ class ToolExecutor:
 
         *mutating* is the caller's classification of the call — what it read
         from the tool's tier, via
-        :attr:`~toddler.tools.base.Permission.is_mutating` — and it orders
+        :attr:`~toddler.tools.policy.Permission.is_mutating` — and it orders
         the checkpoint only: a call that changes state gets its snapshot
         taken before it runs.
 

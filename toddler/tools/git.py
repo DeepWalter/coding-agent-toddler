@@ -11,7 +11,8 @@ import asyncio
 import os
 from pathlib import Path
 
-from toddler.tools.base import BaseTool, Permission, ToolResult
+from toddler.tools.base import BaseTool, ToolResult
+from toddler.tools.policy import Permission
 from toddler.tools.registry import TOOL_CATALOG
 
 # ---------------------------------------------------------------------------
