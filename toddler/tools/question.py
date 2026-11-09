@@ -10,16 +10,14 @@ result.
 
 from __future__ import annotations
 
-from toddler.tools.base import (
-    BaseTool,
+from toddler.tools.base import BaseTool, Permission, ToolResult
+from toddler.tools.prompts import (
     ChoiceType,
-    Permission,
     PromptAnswer,
     PromptChoices,
     Question,
     QuestionChoice,
     QuestionValidationError,
-    ToolResult,
 )
 from toddler.tools.registry import TOOL_CATALOG
 

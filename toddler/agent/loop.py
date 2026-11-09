@@ -34,20 +34,22 @@ from toddler.agent.stop_conditions import StopConditionChecker
 from toddler.config.models import TurnConfig
 from toddler.llm import Message, MessageBlock, TokenUsage
 from toddler.tools.base import (
+    Decision,
+    Permission,
+    PermissionManager,
+    ToolCall,
+    ToolResult,
+    blocked_message,
+)
+from toddler.tools.prompts import (
     ALLOW_CALL_TITLE,
     DEFAULT_SINGLE_CHOICES,
     AnswerVerdict,
     ChoiceType,
-    Decision,
-    Permission,
-    PermissionManager,
     PromptAnswer,
     PromptChoices,
     Question,
-    ToolCall,
     ToolCallPrompt,
-    ToolResult,
-    blocked_message,
 )
 
 if TYPE_CHECKING:

@@ -17,7 +17,7 @@ from toddler.agent.events import AgentFinished, AgentPaused
 from toddler.cli.app import CLIApp
 from toddler.cli.renderer import ConfirmResult
 from toddler.config.settings import Settings
-from toddler.tools.base import (
+from toddler.tools.prompts import (
     ChoiceLevel,
     ChoiceType,
     PromptAnswer,

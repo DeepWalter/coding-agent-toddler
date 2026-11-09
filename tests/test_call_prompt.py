@@ -18,12 +18,14 @@ from pathlib import Path
 
 import pytest
 
-from toddler.tools.base import (
+from toddler.tools.base import BaseTool, ToolResult
+from toddler.tools.files import EditFile, ReadFile, WriteFile
+from toddler.tools.git import GitCommit
+from toddler.tools.prompts import (
     ALLOW_CALL_TITLE,
     DEFAULT_SINGLE_CHOICES,
     ONE_LINE_DETAIL_LIMIT,
     AnswerVerdict,
-    BaseTool,
     ChoiceLevel,
     ChoiceType,
     PromptAnswer,
@@ -32,10 +34,7 @@ from toddler.tools.base import (
     Question,
     QuestionChoice,
     ToolCallPrompt,
-    ToolResult,
 )
-from toddler.tools.files import EditFile, ReadFile, WriteFile
-from toddler.tools.git import GitCommit
 from toddler.tools.search import Grep
 from toddler.tools.shell import Shell
 

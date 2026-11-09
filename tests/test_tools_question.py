@@ -5,12 +5,14 @@ from __future__ import annotations
 import pytest
 
 from toddler.tools.base import (
-    ChoiceType,
     Decision,
     FileScope,
     Permission,
     PermissionManager,
     PermissionMode,
+)
+from toddler.tools.prompts import (
+    ChoiceType,
     PromptAnswer,
     QuestionValidationError,
 )

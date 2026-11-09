@@ -21,15 +21,15 @@ from toddler.agent.events import (
 from toddler.agent.planner import Plan, PlanStep
 from toddler.llm import TokenUsage
 from toddler.llm.messages import Message, MessageBlock
-from toddler.tools.base import (
+from toddler.tools.base import ToolResult
+from toddler.tools.plan import PlanStepStatus
+from toddler.tools.prompts import (
     ChoiceType,
     PromptChoices,
     Question,
     QuestionChoice,
     ToolCallPrompt,
-    ToolResult,
 )
-from toddler.tools.plan import PlanStepStatus
 from toddler.web.events import (
     serialize_event,
     serialize_plan,

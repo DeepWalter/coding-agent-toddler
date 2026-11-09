@@ -50,8 +50,9 @@ from toddler.agent.events import (
     ToolUseStart,
 )
 from toddler.tools import HIDDEN_TOOL_NAMES, QuestionTool
-from toddler.tools.base import CALL_DESCRIPTION_PARAM, ChoiceType
+from toddler.tools.base import CALL_DESCRIPTION_PARAM
 from toddler.tools.plan import PlanStepStatus
+from toddler.tools.prompts import ChoiceType
 from toddler.tools.shell import Shell
 from toddler.utils.format import estimate_tokens, format_span, format_tokens
 

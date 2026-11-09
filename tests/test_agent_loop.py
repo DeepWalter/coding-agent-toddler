@@ -38,20 +38,22 @@ from toddler.llm import (
 from toddler.llm.base import BaseLLMProvider
 from toddler.tools.base import (
     BaseTool,
-    ChoiceLevel,
-    ChoiceType,
     Decision,
     FileScopePolicy,
     Permission,
     PermissionManager,
     PermissionMode,
-    PromptAnswer,
-    PromptChoice,
-    PromptChoices,
     ToolCall,
     ToolResult,
 )
 from toddler.tools.executor import CheckpointCallback, ToolExecutor
+from toddler.tools.prompts import (
+    ChoiceLevel,
+    ChoiceType,
+    PromptAnswer,
+    PromptChoice,
+    PromptChoices,
+)
 from toddler.tools.question import QuestionTool
 from toddler.tools.registry import ToolRegistry
 

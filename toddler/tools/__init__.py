@@ -7,22 +7,12 @@ is imported for the same reason, even though it opts out of the default set.
 """
 
 from toddler.tools.base import (
-    AnswerVerdict,
     BaseTool,
-    ChoiceLevel,
-    ChoiceType,
     Decision,
     FileScope,
     FileScopePolicy,
     Permission,
-    PromptAnswer,
-    PromptChoice,
-    PromptChoices,
-    Question,
-    QuestionChoice,
-    QuestionValidationError,
     ToolCall,
-    ToolCallPrompt,
     ToolResult,
 )
 from toddler.tools.executor import (
@@ -32,6 +22,18 @@ from toddler.tools.executor import (
 from toddler.tools.files import EditFile, ReadFile, WriteFile
 from toddler.tools.git import GitBranch, GitCommit, GitDiff, GitLog, GitStatus
 from toddler.tools.plan import PlanState, PlanUpdateTool
+from toddler.tools.prompts import (
+    AnswerVerdict,
+    ChoiceLevel,
+    ChoiceType,
+    PromptAnswer,
+    PromptChoice,
+    PromptChoices,
+    Question,
+    QuestionChoice,
+    QuestionValidationError,
+    ToolCallPrompt,
+)
 from toddler.tools.question import QuestionTool
 from toddler.tools.registry import TOOL_CATALOG, ToolRegistry
 from toddler.tools.search import Glob, Grep

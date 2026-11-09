@@ -28,12 +28,8 @@ from toddler.cli.renderer import (
     StreamingRenderer,
 )
 from toddler.llm.responses import TokenUsage
-from toddler.tools.base import (
-    Question,
-    QuestionChoice,
-    ToolCallPrompt,
-    ToolResult,
-)
+from toddler.tools.base import ToolResult
+from toddler.tools.prompts import Question, QuestionChoice, ToolCallPrompt
 
 
 class _FakeClock:
