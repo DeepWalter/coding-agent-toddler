@@ -51,6 +51,7 @@ onFrame((frame) => {
     if (path) writtenFile.value = { path, nonce: ++writeNonce }
   } else if (
     frame.type === 'agent_finished' ||
+    frame.type === 'agent_cancelled' ||
     frame.type === 'fatal_error' ||
     frame.type === 'turn_cancelled'
   ) {

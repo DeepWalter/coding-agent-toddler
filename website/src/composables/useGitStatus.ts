@@ -57,7 +57,10 @@ export function useGitStatus() {
 
   /** Frame hook — App.vue routes every WS frame through here. */
   function onFrame(frame: Frame) {
-    if (frame.type === 'agent_finished') {
+    if (
+      frame.type === 'agent_finished' ||
+      frame.type === 'agent_cancelled'
+    ) {
       // Catch-all: shell-tool writes, git add/mv/commit, everything.
       void refresh()
     } else if (

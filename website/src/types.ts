@@ -285,7 +285,19 @@ export type Frame =
       tool_id: string
       prompt: ToolCallPrompt
     }
-  | { type: 'agent_finished'; reason: string; usage: TokenUsage | null }
+  | {
+      type: 'agent_finished'
+      reason: string
+      usage: TokenUsage | null
+      /** True when the user ended the turn (every call was denied). */
+      stopped: boolean
+    }
+  | {
+      type: 'agent_cancelled'
+      tool_id: string
+      tool_name: string
+      usage: TokenUsage | null
+    }
   | { type: 'recoverable_error'; message: string }
   | { type: 'notice'; message: string }
   | { type: 'session_info'; session: SessionInfo; conversation: ConversationInfo }

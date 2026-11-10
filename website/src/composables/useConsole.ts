@@ -401,6 +401,15 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
       closeOpenTools(s)
       s.paused = null
       break
+    case 'agent_cancelled':
+      // The user cancelled a paused call; the turn is over.  Like a
+      // finished turn it needs no marker: the cancelled call's card
+      // replays from the stored tool result, so live and reload agree.
+      closeThinking(s)
+      closeAssistant(s)
+      closeOpenTools(s)
+      s.paused = null
+      break
     case 'recoverable_error':
       // The turn continues, but the text before the error cannot: the
       // notice below it is the last block now, so any later content_delta
