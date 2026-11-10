@@ -36,6 +36,7 @@ from rich.text import Text
 from rich.tree import Tree
 
 from toddler.agent.events import (
+    AgentCancelled,
     AgentError,
     AgentFinished,
     AgentPaused,
@@ -49,6 +50,7 @@ from toddler.agent.events import (
     ToolCallStart,
     ToolUseStart,
 )
+from toddler.llm import TokenUsage
 from toddler.tools import HIDDEN_TOOL_NAMES, QuestionTool
 from toddler.tools.base import CALL_DESCRIPTION_PARAM
 from toddler.tools.plan import PlanStepStatus
@@ -390,19 +392,35 @@ class Renderer(ABC):
         )
 
     def on_agent_finished(self, event: AgentFinished) -> None:
-        """Render the final completion message."""
+        """Render the final completion message.
+
+        A ``stopped`` finish is the user's doing (every call was
+        denied), so it reads as an ending rather than a completion.
+        """
         self._console.print()
-        if event.usage:
-            line = (
-                f"Tokens: {event.usage.input_tokens:,} in / "
-                f"{event.usage.output_tokens:,} out"
-            )
-            if event.usage.reasoning_tokens:
-                # A subset of output_tokens, itemized by the API — and
-                # absent (0 or None) when the model produced no reasoning.
-                line += f" ({event.usage.reasoning_tokens:,} reasoning)"
-            self.info(line)
-        self.success(f"Done — {event.reason}")
+        self._print_usage(event.usage)
+        verb = "Stopped" if event.stopped else "Done"
+        self.success(f"{verb} — {event.reason}")
+
+    def on_agent_cancelled(self, event: AgentCancelled) -> None:
+        """Render the user's cancellation of the turn."""
+        self._console.print()
+        self._print_usage(event.usage)
+        self.info("Cancelled — the turn ended at your request.")
+
+    def _print_usage(self, usage: TokenUsage | None) -> None:
+        """Print a turn's token totals when the provider reported them."""
+        if not usage:
+            return
+        line = (
+            f"Tokens: {usage.input_tokens:,} in / "
+            f"{usage.output_tokens:,} out"
+        )
+        if usage.reasoning_tokens:
+            # A subset of output_tokens, itemized by the API — and
+            # absent (0 or None) when the model produced no reasoning.
+            line += f" ({usage.reasoning_tokens:,} reasoning)"
+        self.info(line)
 
     def on_agent_error(self, event: AgentError) -> None:
         """Render a recoverable or fatal error."""
@@ -1823,6 +1841,16 @@ class NonStreamingRenderer(Renderer):
         """
         self._flush_folded_snapshot()
         super().on_agent_finished(event)
+
+    def on_agent_cancelled(self, event: AgentCancelled) -> None:
+        """Print the turn's terminal plan picture before the cancellation.
+
+        The cancellation is terminal like a finish: a folded snapshot
+        not yet shown is the turn's last word and must not surface in a
+        later turn's summary.
+        """
+        self._flush_folded_snapshot()
+        super().on_agent_cancelled(event)
 
     def on_agent_error(self, event: AgentError) -> None:
         """Flush the terminal plan picture before a fatal error.

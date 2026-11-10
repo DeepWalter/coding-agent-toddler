@@ -147,9 +147,33 @@ class AgentPaused(AgentEvent):
 
 @dataclass
 class AgentFinished(AgentEvent):
-    """The agent has completed the task."""
+    """The agent's turn has ended.
+
+    ``stopped`` marks a turn the user ended rather than one the agent
+    completed or a limit stopped: today, every tool call in the message
+    was denied.  The remaining reason strings report completion and
+    limits.
+    """
 
     reason: str
+    usage: TokenUsage | None = None
+    stopped: bool = False
+
+
+@dataclass
+class AgentCancelled(AgentEvent):
+    """The user cancelled a paused call — the turn ends at their request.
+
+    Distinct from :class:`AgentFinished` and :class:`AgentError`:
+    nothing completed and nothing failed.  The pause was cancelled (the
+    terminal's Escape or the browser's dismiss), the call it held did not
+    run, and the calls after it in the same message were not run either.
+    ``tool_name`` names the call that held the pause, for a front-end
+    that wants to say what was cancelled.
+    """
+
+    tool_id: str = ""
+    tool_name: str = ""
     usage: TokenUsage | None = None
 
 

@@ -25,6 +25,13 @@ from toddler.llm import BaseLLMProvider, Message, MessageBlock, TokenUsage
 
 logger = logging.getLogger(__name__)
 
+#: The result a cancelled turn's repair answers a dangling tool call with.
+#: Shared with the session layer, which reports the same text on the live
+#: stream — a cancelled card must read the same before and after a reload.
+CANCELLED_TOOL_RESULT = (
+    "The tool call was cancelled by the user before it could run."
+)
+
 
 # ======================================================================
 # Result dataclasses
@@ -451,7 +458,7 @@ class ContextManager:
         """
         self._baseline_count = len(self._messages)
 
-    def mark_turn_cancelled(self) -> None:
+    def mark_turn_cancelled(self) -> list[MessageBlock]:
         """Repair the in-memory context after a cancelled turn.
 
         The accumulated messages stay — the next turn continues from
@@ -464,25 +471,63 @@ class ContextManager:
         finished.  Both are persisted immediately by the session
         layer's ``cancel_turn()`` — they survive a restart, not just
         the next turn's ``save()``.
+
+        Returns the dangling ``tool_use`` blocks it answered (empty when
+        none was), so the caller can put the same cancelled results on a
+        live stream that a reloaded transcript replays.
+        A call whose result was already persisted — the turn was
+        cancelled after it ran but before its batch finished — is left
+        alone and not reported: only the calls that never returned are
+        recorded as cancelled.
         """
-        if self._messages and self._messages[-1].role == "assistant":
-            tool_uses = [
-                b for b in self._messages[-1].blocks
-                if b.type == "tool_use" and b.tool_id
-            ]
-            if tool_uses:
-                self._messages.append(Message.tool([
-                    MessageBlock.tool_result_block(
-                        b.tool_id,
-                        "The tool call was cancelled by the user before "
-                        "it could run.",
-                        is_error=True,
-                    )
-                    for b in tool_uses
-                ]))
+        dangling = self._dangling_tool_uses()
+        if dangling:
+            self._messages.append(Message.tool([
+                MessageBlock.tool_result_block(
+                    b.tool_id or "",
+                    CANCELLED_TOOL_RESULT,
+                    is_error=True,
+                )
+                for b in dangling
+            ]))
         self._messages.append(Message.user(
             "[The previous turn was cancelled by the user.]"
         ))
+        return dangling
+
+    def _dangling_tool_uses(self) -> list[MessageBlock]:
+        """The ``tool_use`` blocks of the last tool-calling assistant
+        message that no later ``tool_result`` answers.
+
+        A cancel can land mid-batch, after some calls of one assistant
+        message have run and their results were appended: those are
+        answered already, and only the rest are dangling.  A message
+        with no tool calls — the usual text reply — leaves nothing to
+        answer.
+        """
+        for index in range(len(self._messages) - 1, -1, -1):
+            msg = self._messages[index]
+            if msg.role == "user":
+                # Reached the turn's own input with no assistant reply
+                # between: nothing was requested.
+                return []
+            if msg.role != "assistant":
+                continue
+            uses = [
+                b for b in msg.blocks
+                if b.type == "tool_use" and b.tool_id
+            ]
+            if not uses:
+                return []
+            answered = {
+                b.tool_id
+                for later in self._messages[index + 1:]
+                if later.role == "tool"
+                for b in later.blocks
+                if b.type == "tool_result" and b.tool_id
+            }
+            return [b for b in uses if b.tool_id not in answered]
+        return []
 
     # ------------------------------------------------------------------
     # Internal helpers

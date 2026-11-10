@@ -248,10 +248,12 @@ class TestQuestionsResult:
             {"choice": 1, "content": "DuckDB"},
         ]
 
-    def test_declined_is_a_failed_result_with_metadata(self, questions):
+    def test_cancelled_is_a_failed_result_with_metadata(self, questions):
         result = QuestionTool().questions_result(questions, None)
         assert not result.success
-        assert "declined" in result.error.lower()
+        assert "cancelled" in result.error.lower()
+        # Cancelling ends the turn — the model must not be told to guess.
+        assert "best judgment" not in result.error.lower()
         assert result.metadata["declined"] is True
         assert "answers" not in result.metadata
 

@@ -13,6 +13,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from toddler.agent.events import (
+    AgentCancelled,
     AgentEvent,
     AgentFinished,
     FatalAgentError,
@@ -31,12 +32,17 @@ from toddler.checkpoint.models import (
 )
 from toddler.config.models import TurnConfig, resolve_slot
 from toddler.config.settings import Settings
-from toddler.context.manager import CompactionResult, ContextManager
+from toddler.context.manager import (
+    CANCELLED_TOOL_RESULT,
+    CompactionResult,
+    ContextManager,
+)
 from toddler.llm import BaseLLMProvider, Message, TokenUsage
 from toddler.session.lock import SessionLock, SessionLockManager
 from toddler.session.models import MAX_TITLE_LENGTH, Conversation, Session
 from toddler.session.storage import StorageManager
 from toddler.tools import create_default_registry
+from toddler.tools.base import ToolResult
 from toddler.tools.executor import ToolExecutor
 from toddler.tools.plan import PlanState, PlanUpdateTool
 from toddler.tools.policy import (
@@ -449,10 +455,10 @@ class SessionManager:
         for the plan loop (explore → propose → wait), then executed.
 
         Yields :class:`AgentEvent` objects for the CLI to render.  A plan
-        turn always ends with a terminal event (:class:`AgentFinished` or
-        :class:`FatalAgentError`) — the CLI stops the streaming renderer
-        on those, so ending otherwise would strand the terminal in the
-        alternate screen.
+        turn always ends with a terminal event (:class:`AgentFinished`,
+        :class:`AgentCancelled`, or :class:`FatalAgentError`) — the CLI
+        stops the streaming renderer on those, so ending otherwise would
+        strand the terminal in the alternate screen.
         """
         # --- Resolve the turn's model and effort ---
         # Read once, here, and threaded down as a parameter: every request
@@ -482,8 +488,8 @@ class SessionManager:
         # --- Plan path ---
         # Track whether the plan loop emitted a terminal event.  The CLI
         # stops the streaming renderer (exiting the alt screen) only on
-        # AgentFinished / FatalAgentError, so a plan turn must never
-        # end without one.
+        # AgentFinished / AgentCancelled / FatalAgentError, so a plan
+        # turn must never end without one.
         terminal_event_seen = False
         if self._sm.is_plan_exploring:
             # Every plan cycle starts from the safe baseline — the
@@ -493,9 +499,11 @@ class SessionManager:
             self.set_permission_mode(PermissionMode.MANUAL)
 
             async for event in self.planner.run(user_input, config=config):
-                if isinstance(event, (AgentFinished, FatalAgentError)):
+                if isinstance(event, (
+                    AgentFinished, AgentCancelled, FatalAgentError,
+                )):
                     terminal_event_seen = True
-                if isinstance(event, AgentFinished):
+                if isinstance(event, (AgentFinished, AgentCancelled)):
                     await self._maybe_persist_phase(event)
                 yield event
 
@@ -547,7 +555,7 @@ class SessionManager:
             yield event
         self._sm.mark_finished()
 
-    async def cancel_turn(self) -> None:
+    async def cancel_turn(self) -> list[ToolCallEnd]:
         """Record a cancelled turn, repair state, and persist it.
 
         Resets the state machine to IDLE — a cancelled turn leaves it
@@ -561,12 +569,35 @@ class SessionManager:
         restart instead of waiting for the next turn's ``save()``.
         Observers are notified like a transition so the web UI
         unfreezes.
+
+        Returns one :class:`ToolCallEnd` per dangling call the repair
+        answered — the same cancelled result the saved transcript
+        replays.  A live front-end broadcasts them so its cards settle
+        like a reloaded transcript's instead of showing no output.
         """
-        if self._ctx is not None:
+        repaired = (
             self._ctx.mark_turn_cancelled()
+            if self._ctx is not None
+            else []
+        )
         await self.save()
         self._sm.reset()
         self._sm.notify_observers()
+        return [
+            ToolCallEnd(
+                tool_id=block.tool_id or "",
+                tool_name=block.tool_name or "",
+                input=block.tool_input or {},
+                result=ToolResult(
+                    tool_id=block.tool_id or "",
+                    tool_name=block.tool_name or "",
+                    success=False,
+                    output="",
+                    error=CANCELLED_TOOL_RESULT,
+                ),
+            )
+            for block in repaired
+        ]
 
     def set_permission_mode(self, mode: PermissionMode) -> None:
         """Set the permission gating mode — the loop's gate reads the
@@ -724,8 +755,9 @@ class SessionManager:
     ) -> AsyncIterator[AgentEvent]:
         """Run one agent-loop phase and persist afterward.
 
-        Extracts token usage from :class:`AgentFinished` events and
-        accumulates it into the session totals.
+        Extracts token usage from the terminal event — :class:`AgentFinished`
+        or :class:`AgentCancelled` — and accumulates it into the session
+        totals.
         """
         stream = self._settings.streaming_enabled
         gen = self.agent.run(
@@ -739,7 +771,7 @@ class SessionManager:
         usage: TokenUsage | None = None
 
         async for event in gen:
-            if isinstance(event, AgentFinished):
+            if isinstance(event, (AgentFinished, AgentCancelled)):
                 usage = event.usage
             yield event
 
@@ -747,16 +779,17 @@ class SessionManager:
         await self._maybe_persist_phase(usage)
 
     async def _maybe_persist_phase(
-        self, event_or_usage: AgentFinished | TokenUsage | None,
+        self,
+        event_or_usage: AgentFinished | AgentCancelled | TokenUsage | None,
     ) -> None:
         """Persist token usage and context after a phase completes.
 
-        Accepts an :class:`AgentFinished` event (used when iterating over
-        Planner events) or a plain :class:`TokenUsage` (used by
-        :meth:`_run_phase`).
+        Accepts a terminal event — :class:`AgentFinished` or
+        :class:`AgentCancelled`, used when iterating over Planner events
+        — or a plain :class:`TokenUsage` (used by :meth:`_run_phase`).
         """
         usage: TokenUsage | None
-        if isinstance(event_or_usage, AgentFinished):
+        if isinstance(event_or_usage, (AgentFinished, AgentCancelled)):
             usage = event_or_usage.usage
         else:
             usage = event_or_usage
@@ -786,7 +819,7 @@ class SessionManager:
         rebuild an O(steps) snapshot for nothing.  Every mutation
         emits as its own full-list ``PlanStepUpdate`` (no trigger
         filter), so nothing is ever held back and no phase-end flush is
-        needed: each change lands before :class:`AgentFinished`, which
+        needed: each change lands before the turn's terminal event, which
         streaming mode stops its Live display on.
         """
         try:

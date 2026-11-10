@@ -661,29 +661,54 @@ class TestQuestions:
 
 class TestCancel:
     def test_cancel_mid_turn(self, tmp_path):
+        """Cancelling a paused call settles its card live with the same
+        cancelled result a reloaded transcript replays — the live card
+        must not be the one place the OUT row is missing."""
         llm = make_mock_llm(pause_on_write(str(tmp_path / "out.txt")))
         app = _app(tmp_path, llm)
-        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
-            ws.receive_json()  # hello
-            ws.send_json({"cmd": "turn", "input": "write"})
-            _wait_for(ws, "agent_paused")
+        with TestClient(app) as client:
+            with client.websocket_connect("/ws") as ws:
+                ws.receive_json()  # hello
+                ws.send_json({"cmd": "turn", "input": "write"})
+                _wait_for(ws, "agent_paused")
 
-            ws.send_json({"cmd": "cancel"})
-            # Exactly four frames, in any task order: the ack, the
-            # turn_cancelled broadcast, the reset's session_info (the
-            # machine is back to IDLE — pill unfrozen), and the busy
-            # reset.
-            frames = [ws.receive_json() for _ in range(4)]
-            assert {"type": "ack", "cmd": "cancel", "accepted": True} in frames
-            assert "turn_cancelled" in [f["type"] for f in frames]
-            states = [f for f in frames if f["type"] == "state"]
-            assert any(f["busy"] is False for f in states)
-            infos = [f for f in frames if f["type"] == "session_info"]
-            assert any(
-                f["session"]["mode_label"] == "MANUAL"
-                and f["session"]["gating_editable"] is True
-                for f in infos
-            )
+                ws.send_json({"cmd": "cancel"})
+                # Five frames, in any task order: the ack; the repaired
+                # card's tool_call_end (the cancellation result the saved
+                # transcript replays, so a reload matches the live card);
+                # the turn_cancelled broadcast; the reset's session_info
+                # (the machine is back to IDLE — pill unfrozen); and the
+                # busy reset.
+                frames = [ws.receive_json() for _ in range(5)]
+                assert {
+                    "type": "ack", "cmd": "cancel", "accepted": True,
+                } in frames
+                ends = [f for f in frames if f["type"] == "tool_call_end"]
+                assert len(ends) == 1
+                assert ends[0]["tool_id"] == "call_write"
+                assert ends[0]["result"]["success"] is False
+                assert "cancelled" in ends[0]["result"]["error"].lower()
+                live_error = ends[0]["result"]["error"]
+                assert "turn_cancelled" in [f["type"] for f in frames]
+                states = [f for f in frames if f["type"] == "state"]
+                assert any(f["busy"] is False for f in states)
+                infos = [f for f in frames if f["type"] == "session_info"]
+                assert any(
+                    f["session"]["mode_label"] == "MANUAL"
+                    and f["session"]["gating_editable"] is True
+                    for f in infos
+                )
+
+            # The reload replay carries the identical result.
+            with client.websocket_connect("/ws") as ws:
+                hello = ws.receive_json()
+                tools = [
+                    m for m in hello["messages"] if m["role"] == "tool"
+                ]
+                assert len(tools) == 1
+                assert tools[0]["tool_id"] == "call_write"
+                assert tools[0]["result"]["success"] is False
+                assert tools[0]["result"]["error"] == live_error
 
     def test_paused_turn_auto_cancels_when_last_watcher_leaves(self, tmp_path):
         llm = make_mock_llm(pause_on_write(str(tmp_path / "out.txt")))
@@ -912,13 +937,22 @@ class TestPlanFlow:
             _wait_for(ws, "plan_proposed")
 
             ws.send_json({"cmd": "cancel"})
-            _wait_for(ws, "ack")
-            _wait_for(ws, "turn_cancelled")
-            # The cancel resets the machine — the pill unfreezes.
-            info = _wait_for(ws, "session_info")
-            assert info["session"]["mode_label"] == "MANUAL"
-            assert info["session"]["gating_editable"] is True
-            assert _wait_for(ws, "state")["busy"] is False
+            # Any order: the ack, the reset's session_info (the machine
+            # is back to IDLE — pill unfrozen), the turn_cancelled
+            # broadcast, and the busy reset.
+            frames = []
+            for _ in range(6):
+                frame = ws.receive_json()
+                frames.append(frame)
+                if frame["type"] == "state" and frame["busy"] is False:
+                    break
+            assert "turn_cancelled" in [f["type"] for f in frames]
+            infos = [f for f in frames if f["type"] == "session_info"]
+            assert any(
+                f["session"]["mode_label"] == "MANUAL"
+                and f["session"]["gating_editable"] is True
+                for f in infos
+            )
 
     def test_cancel_appends_marker_to_next_turn_context(self, tmp_path):
         """A cancelled turn leaves a marker in the context — the next

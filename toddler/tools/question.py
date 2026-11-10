@@ -251,8 +251,10 @@ class QuestionTool(BaseTool):
         """Format the answers as the call's tool result.
 
         ``answers`` is one :class:`PromptAnswer` per question, in order;
-        ``None`` when the user declined (the terminal's Escape/EOF path),
-        in which case the model is told to proceed on its own.
+        ``None`` when the user cancelled the pause (Escape, EOF, or a
+        dismissed card).  A cancellation ends the turn — the user will
+        decide what to do next — so the result must not send the model
+        guessing on its own.
         """
         if answers is None:
             return ToolResult(
@@ -261,9 +263,8 @@ class QuestionTool(BaseTool):
                 success=False,
                 output="",
                 error=(
-                    "The user declined to answer these questions. Proceed "
-                    "with your best judgment, or explain what you need in "
-                    "plain text."
+                    "The user cancelled these questions. No answers were "
+                    "given; they will decide what to do next."
                 ),
                 metadata={
                     "questions": [q.to_dict() for q in questions],
@@ -346,7 +347,8 @@ class QuestionTool(BaseTool):
 
         ``answers`` is injected by the loop after the pause — it is not a
         model argument and never appears in the schema or the transcript.
-        ``None`` means the user declined: the terminal's Escape/EOF path.
+        ``None`` means the user cancelled the pause (Escape/EOF); the
+        loop then ends the turn.
 
         ``parsed_questions`` is injected alongside them when the call ran
         through a pause: the gate parsed and validated the questions

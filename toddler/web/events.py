@@ -15,6 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from toddler.agent.events import (
+    AgentCancelled,
     AgentEvent,
     AgentFinished,
     AgentPaused,
@@ -338,10 +339,24 @@ def serialize_event(event: AgentEvent, root: Path) -> dict | None:  # noqa: C901
                 "prompt": prompt.to_dict(),
             }
 
-        case AgentFinished(reason=reason, usage=usage):
+        case AgentFinished(reason=reason, usage=usage, stopped=stopped):
             return {
                 "type": "agent_finished",
                 "reason": reason,
+                "usage": serialize_token_usage(usage),
+                "stopped": stopped,
+            }
+
+        case AgentCancelled(
+            tool_id=tool_id, tool_name=tool_name, usage=usage,
+        ):
+            # The user cancelled the pause: the turn is over, but it was
+            # neither a completion nor an error.  The frame carries the
+            # cancelled call so a front-end can name what was cancelled.
+            return {
+                "type": "agent_cancelled",
+                "tool_id": tool_id,
+                "tool_name": tool_name,
                 "usage": serialize_token_usage(usage),
             }
 

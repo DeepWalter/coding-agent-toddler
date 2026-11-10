@@ -13,6 +13,7 @@ import pytest
 
 from tests.mocks import TEST_TURN_CONFIG
 from toddler.agent.events import (
+    AgentCancelled,
     AgentError,
     AgentFinished,
     PlanProposed,
@@ -1420,6 +1421,16 @@ class MockAgentLoop:
         )
 
 
+class _StoppingAgentLoop:
+    """Mock AgentLoop that yields one pre-built terminal event."""
+
+    def __init__(self, event) -> None:
+        self._event = event
+
+    async def run(self, user_input: str, **kwargs) -> AsyncIterator:  # noqa: ARG002
+        yield self._event
+
+
 class MockContextManager:
     """Minimal mock of ContextManager for Planner tests."""
 
@@ -1499,6 +1510,49 @@ class TestPlanner:
         assert len(plan_events) == 1
         assert plan_events[0].plan.title == "Mock Plan"
         assert planner._sm.current_mode == AgentMode.PLAN_WAITING
+
+    @pytest.mark.asyncio
+    async def test_a_cancelled_exploration_ends_the_plan_turn(
+        self, settings, llm, ctx,
+    ):
+        """A cancelled pause during exploration must not propose a plan —
+        the user stopped the turn, and the same rule applies here."""
+        event = AgentCancelled(tool_id="c1", tool_name="shell")
+        planner = self._make_planner(
+            settings, llm, ctx, _StoppingAgentLoop(event),
+        )
+
+        events = await self._collect(
+            planner.run("refactor the database layer", config=TEST_TURN_CONFIG),
+        )
+
+        assert events[-1] is event
+        assert not [e for e in events if isinstance(e, PlanProposed)]
+        assert planner.plan is None
+        assert planner._sm.current_mode == AgentMode.PLAN_EXPLORING
+
+    @pytest.mark.asyncio
+    async def test_an_all_denied_exploration_ends_the_plan_turn(
+        self, settings, llm, ctx,
+    ):
+        """A stopped finish is the user's doing, so exploration ends
+        instead of proposing a plan from partial research."""
+        event = AgentFinished(
+            reason="All tool calls were denied by the user.",
+            stopped=True,
+        )
+        planner = self._make_planner(
+            settings, llm, ctx, _StoppingAgentLoop(event),
+        )
+
+        events = await self._collect(
+            planner.run("refactor the database layer", config=TEST_TURN_CONFIG),
+        )
+
+        assert events[-1] is event
+        assert not [e for e in events if isinstance(e, PlanProposed)]
+        assert planner.plan is None
+        assert planner._sm.current_mode == AgentMode.PLAN_EXPLORING
 
     @pytest.mark.asyncio
     async def test_approve_plan(self, settings, llm, agent_loop, ctx):

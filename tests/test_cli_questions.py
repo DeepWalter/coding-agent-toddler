@@ -235,8 +235,8 @@ class TestCLIQuestions:
         ]
 
     async def test_empty_feedback_sends_the_row_without_text(self, tmp_path):
-        """The loop decides a feedback row with no words is a denial; the
-        CLI's job is only to report the row the user picked."""
+        """The row's level makes it a feedback redirect whether or not the
+        user typed anything; the CLI only reports the row they picked."""
         pause = _gate(rows=(
             PromptChoice("Approve", ChoiceLevel.APPROVE),
             PromptChoice("Tell me why", ChoiceLevel.FEEDBACK),

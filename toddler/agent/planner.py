@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from toddler.agent.events import (
+    AgentCancelled,
     AgentEvent,
     AgentFinished,
     FatalAgentError,
@@ -516,12 +517,25 @@ class Planner:
             current_mode = self._sm.current_mode
 
             if current_mode == AgentMode.PLAN_EXPLORING:
+                # A turn the user stopped — a cancelled pause, or a
+                # message whose calls were all denied — must not turn
+                # into a plan proposal: the same rule the loop applies to
+                # execution applies to exploration.  The event rides
+                # through to the caller, which ends the turn.
+                stopped = False
                 async for event in self._agent_loop.run(
                     explore_input,
                     config=config,
                     mode=self._sm.get_mode_hint(),
                 ):
+                    if isinstance(event, AgentCancelled) or (
+                        isinstance(event, AgentFinished)
+                        and event.stopped
+                    ):
+                        stopped = True
                     yield event
+                if stopped:
+                    return
                 self._sm.transition(AgentMode.PLAN_PROPOSING)
                 continue
 

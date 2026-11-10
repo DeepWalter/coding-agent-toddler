@@ -26,6 +26,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 from toddler.agent.events import (
+    AgentCancelled,
     AgentEvent,
     AgentFinished,
     AgentPaused,
@@ -245,9 +246,10 @@ class TurnRunner:
     def cancel(self) -> bool:
         """Cancel the running turn.
 
-        The ``turn_cancelled`` broadcast, generator close, snapshot clear,
-        and ``state {busy: false}`` all happen inside the task itself
-        (see :meth:`_run`).  Returns ``True`` when a turn was in flight.
+        The repair's ``tool_call_end`` frames, the ``turn_cancelled``
+        broadcast, generator close, snapshot clear, and
+        ``state {busy: false}`` all happen inside the task itself (see
+        :meth:`_run`).  Returns ``True`` when a turn was in flight.
         """
         if self._task is None or self._task.done():
             return False
@@ -311,9 +313,11 @@ class TurnRunner:
         """Consume the ``process_turn`` generator and broadcast its events.
 
         The generator is stored on the runner so cancellation can close
-        it explicitly; the frame sequence contract for a cancelled turn is
-        ``turn_cancelled`` then ``state {busy: false}``, matching the
-        natural ``agent_finished`` → ``state`` order of a completed turn.
+        it explicitly; the frame sequence contract for a cancelled turn
+        is ``tool_call_end`` (one per dangling call the repair answered),
+        then ``turn_cancelled``, then ``state {busy: false}`` — the
+        natural ``agent_finished`` → ``state`` order of a completed turn,
+        with the repaired cards settled first.
         """
         self.broadcast({"type": "turn_started"})
         self.broadcast({"type": "state", "busy": True})
@@ -344,12 +348,13 @@ class TurnRunner:
                 elif isinstance(event, PlanStepUpdate):
                     if self._plan_snapshot is not None:
                         self._plan_snapshot["steps"] = frame["steps"]
-                elif isinstance(event, (AgentFinished, FatalAgentError)):
+                elif isinstance(event, (
+                    AgentFinished, AgentCancelled, FatalAgentError,
+                )):
                     self._paused_snapshot = None
                     self._plan_snapshot = None
                 self.broadcast(frame)
         except asyncio.CancelledError:
-            self.broadcast({"type": "turn_cancelled"})
             # A cancelled turn leaves the machine mid-plan (exploring,
             # awaiting approval, …).  The agent loop already preserved
             # any partial output in the context; cancel_turn() resets
@@ -359,7 +364,16 @@ class TurnRunner:
             # storage so it survives a restart, and pushes the
             # unfrozen session_info (mode_label back to the gate) to
             # every tab.
-            await self._session_mgr.cancel_turn()
+            repaired = await self._session_mgr.cancel_turn()
+            # Put the repair on the live stream before the turn ends: a
+            # card cancelled mid-call must show the same cancelled OUT
+            # row the saved transcript replays on reload, rather than
+            # staying blank until then.
+            for event in repaired:
+                frame = serialize_event(event, Path(self._cwd))
+                if frame is not None:
+                    self.broadcast(frame)
+            self.broadcast({"type": "turn_cancelled"})
             raise
         except Exception as exc:
             # A bug must not silently kill the task: surface it to the

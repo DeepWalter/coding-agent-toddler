@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from toddler.agent.events import (
+    AgentCancelled,
     AgentEvent,
     AgentFinished,
     AgentPaused,
@@ -451,6 +452,7 @@ class TestSerializeEvent:
                 "cache_creation_tokens": 2,
                 "reasoning_tokens": 0,
             },
+            "stopped": False,
         }
 
     def test_agent_finished_without_usage(self):
@@ -458,6 +460,32 @@ class TestSerializeEvent:
             reason="Plan rejected by user.",
         ), ROOT)
         assert frame["usage"] is None
+        assert frame["stopped"] is False
+
+    def test_agent_finished_stopped(self):
+        frame = serialize_event(AgentFinished(
+            reason="All tool calls were denied by the user.",
+            stopped=True,
+        ), ROOT)
+        assert frame["stopped"] is True
+
+    def test_agent_cancelled(self):
+        usage = TokenUsage(input_tokens=10, output_tokens=5)
+        frame = serialize_event(AgentCancelled(
+            tool_id="c1", tool_name="shell", usage=usage,
+        ), ROOT)
+        assert frame == {
+            "type": "agent_cancelled",
+            "tool_id": "c1",
+            "tool_name": "shell",
+            "usage": {
+                "input_tokens": 10,
+                "output_tokens": 5,
+                "cache_read_tokens": 0,
+                "cache_creation_tokens": 0,
+                "reasoning_tokens": 0,
+            },
+        }
 
     def test_recoverable_error(self):
         assert serialize_event(RecoverableAgentError(

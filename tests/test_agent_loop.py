@@ -15,6 +15,7 @@ import pytest
 
 from tests.mocks import TEST_TURN_CONFIG, SlowStreamLLM
 from toddler.agent.events import (
+    AgentCancelled,
     AgentError,
     AgentFinished,
     AgentPaused,
@@ -25,7 +26,7 @@ from toddler.agent.events import (
     ToolUseStart,
 )
 from toddler.agent.handler import NonStreamHandler, StreamHandler
-from toddler.agent.loop import AgentLoop, _Verdict
+from toddler.agent.loop import AgentLoop, _CallEffect, _Verdict
 from toddler.config.settings import Settings
 from toddler.context.manager import ContextManager
 from toddler.llm import (
@@ -617,8 +618,15 @@ class TestPermissionGating:
         assert ends[0].result.success
         assert "Wrote:" in ends[0].result.output
 
-    async def test_deny_write_tool(self, registry, executor, settings, conv_ctx):
-        """Denying a WRITE tool produces an error result."""
+    async def test_cancel_write_tool_ends_the_turn(
+        self, registry, executor, settings, conv_ctx,
+    ):
+        """Cancelling a pause ends the turn with a cancelled result.
+
+        Cancelling is not denying: the user withdrew the question
+        itself, so the model must not get the result fed back within the
+        turn.  It waits for the next user input instead.
+        """
         llm = MockLLMProvider(
             responses=[
                 _make_llm_response(
@@ -644,7 +652,14 @@ class TestPermissionGating:
         ends = [e for e in events if isinstance(e, ToolCallEnd)]
         assert len(ends) == 1
         assert not ends[0].result.success
-        assert "denied" in ends[0].result.error.lower()
+        assert "cancelled" in ends[0].result.error.lower()
+
+        cancelled = [e for e in events if isinstance(e, AgentCancelled)]
+        assert len(cancelled) == 1
+        assert cancelled[0].tool_id == "c1"
+        assert not [e for e in events if isinstance(e, AgentFinished)]
+        # The turn ended at the pause — the model never got a second call.
+        assert llm.call_count == 1
 
     async def test_read_tool_auto_approves(self, registry, executor, settings, conv_ctx):
         """READ tools should not trigger AgentPaused."""
@@ -1177,7 +1192,11 @@ class TestApprovalChannel:
                         event.tool_id, [PromptAnswer(choice=0)],
                     )
                 else:
-                    loop.answer_tool_call(event.tool_id, None)
+                    # Deny the second: the first ran, so the turn goes on
+                    # and the model sees both results.
+                    loop.answer_tool_call(
+                        event.tool_id, [PromptAnswer(choice=1)],
+                    )
 
         assert pauses == 2      # the second call was asked about on its own
         ends = [e for e in events if isinstance(e, ToolCallEnd)]
@@ -1202,7 +1221,7 @@ class TestApprovalChannel:
         # An answered call's leftovers, if any, must not reach this one.
         loop.answer_tool_call("", [PromptAnswer(choice=0)])
 
-        result = await loop._execute_with_gating(
+        result, effect = await loop._execute_with_gating(
             ToolCall(
                 tool_id="c1",
                 tool_name="write_stuff",
@@ -1213,6 +1232,8 @@ class TestApprovalChannel:
 
         assert not result.success
         assert "Internal error" in result.error
+        # The policy is not the user: a broken channel does not end turns.
+        assert effect is _CallEffect.CONTINUE
 
 
 # ============================================================================
@@ -1306,7 +1327,16 @@ class TestContextManager:
             MessageBlock.tool_use_block("t2", "grep", {"pattern": "foo"}),
         ]))
 
-        conv_ctx.mark_turn_cancelled()
+        repaired = conv_ctx.mark_turn_cancelled()
+
+        # The answered tool_use blocks come back so the live stream can
+        # report the same results the transcript replays.
+        assert [(b.tool_id, b.tool_name) for b in repaired] == [
+            ("t1", "read_file"), ("t2", "grep"),
+        ]
+        assert [b.tool_input for b in repaired] == [
+            {"path": "x.py"}, {"pattern": "foo"},
+        ]
 
         msgs = conv_ctx.messages
         assert [m.role for m in msgs] == [
@@ -1324,6 +1354,55 @@ class TestContextManager:
         assert all("cancelled" in b.tool_result_content for b in msgs[3].blocks)
         assert msgs[-1].content == "[The previous turn was cancelled by the user.]"
 
+    async def test_mark_turn_cancelled_skips_calls_that_already_answered(
+        self, conv_ctx,
+    ):
+        """A cancel can land after some calls of one assistant message ran:
+        only the calls with no result yet are answered, so a finished call
+        is never recorded as cancelled."""
+        await conv_ctx.prepare_turn("refactor thing")
+        conv_ctx.append(Message.assistant([
+            MessageBlock.tool_use_block("t1", "read_file", {"path": "x.py"}),
+            MessageBlock.tool_use_block("t2", "read_file", {"path": "y.py"}),
+            MessageBlock.tool_use_block("t3", "grep", {"pattern": "foo"}),
+        ]))
+        # The first call ran before the cancel; its result is persisted.
+        conv_ctx.append(Message.tool([
+            MessageBlock.tool_result_block("t1", "x.py contents"),
+        ]))
+
+        repaired = conv_ctx.mark_turn_cancelled()
+
+        assert [b.tool_id for b in repaired] == ["t2", "t3"]
+        msgs = conv_ctx.messages
+        assert [m.role for m in msgs] == [
+            "system", "user", "assistant", "tool", "tool", "user",
+        ]
+        # The first result is untouched; the repair answers only the rest.
+        assert msgs[3].blocks[0].tool_result_content == "x.py contents"
+        assert [b.tool_id for b in msgs[4].blocks] == ["t2", "t3"]
+        assert all(b.is_error for b in msgs[4].blocks)
+
+    async def test_mark_turn_cancelled_answers_nothing_after_a_full_batch(
+        self, conv_ctx,
+    ):
+        """Every call answered means nothing is dangling, even though the
+        tool-calling assistant message is still the last one there."""
+        await conv_ctx.prepare_turn("refactor thing")
+        conv_ctx.append(Message.assistant([
+            MessageBlock.tool_use_block("t1", "read_file", {"path": "x.py"}),
+        ]))
+        conv_ctx.append(Message.tool([
+            MessageBlock.tool_result_block("t1", "x.py contents"),
+        ]))
+
+        repaired = conv_ctx.mark_turn_cancelled()
+
+        assert repaired == []
+        assert [m.role for m in conv_ctx.messages] == [
+            "system", "user", "assistant", "tool", "user",
+        ]
+
     async def test_mark_turn_cancelled_keeps_complete_messages(self, conv_ctx):
         """A cancel mid-stream keeps the partial history — the next turn
         continues from it; only the marker is added."""
@@ -1332,7 +1411,10 @@ class TestContextManager:
             MessageBlock.content_block("Sure — I'll start by looking at"),
         ]))
 
-        conv_ctx.mark_turn_cancelled()
+        repaired = conv_ctx.mark_turn_cancelled()
+
+        # Nothing was dangling, so there is nothing to report live.
+        assert repaired == []
 
         msgs = conv_ctx.messages
         assert [m.role for m in msgs] == ["system", "user", "assistant", "user"]
@@ -1812,9 +1894,11 @@ class TestUserQuestions:
                 "q1", [PromptAnswer(choice=1)],
             ) is False
 
-    async def test_deny_declines_the_questions_and_continues(
+    async def test_cancelling_the_questions_ends_the_turn(
         self, question_registry, question_executor, settings, conv_ctx,
     ):
+        """A cancelled question set is the user deciding not to answer —
+        the turn ends there, so the model cannot guess in-turn."""
         llm = MockLLMProvider(responses=[
             _make_llm_response(
                 tool_blocks=[
@@ -1843,7 +1927,15 @@ class TestUserQuestions:
         ends = [e for e in events if isinstance(e, ToolCallEnd)]
         assert len(ends) == 1
         assert not ends[0].result.success
-        assert "declined" in ends[0].result.error.lower()
+        assert "cancelled" in ends[0].result.error.lower()
+
+        cancelled = [e for e in events if isinstance(e, AgentCancelled)]
+        assert len(cancelled) == 1
+        assert cancelled[0].tool_name == "ask_user"
+        assert not [e for e in events if isinstance(e, AgentFinished)]
+        # The tool ran (it owns the cancelled wording), but the model
+        # never got a second call.
+        assert llm.call_count == 1
 
     async def test_two_asks_in_one_response_pause_twice(
         self, question_registry, question_executor, settings, conv_ctx,
@@ -1929,9 +2021,11 @@ class TestChoiceLevels:
     def level_executor(self, level_registry) -> ToolExecutor:
         return ToolExecutor(level_registry)
 
-    async def test_feedback_denies_the_call_with_the_reason(
+    async def test_feedback_refuses_the_call_and_continues(
         self, level_registry, level_executor, settings, conv_ctx,
     ):
+        """Feedback is a redirect, not a deny: the call does not run, its
+        words reach the model, and the turn keeps going."""
         llm = MockLLMProvider(responses=[
             _make_llm_response(
                 tool_blocks=[
@@ -1967,9 +2061,17 @@ class TestChoiceLevels:
         # The call never ran — its only success output would say "Wrote:".
         assert ends[0].result.output == ""
 
+        # The turn continued: the model was called again and finished.
+        assert llm.call_count == 2
+        finished = [e for e in events if isinstance(e, AgentFinished)]
+        assert len(finished) == 1
+        assert not finished[0].stopped
+
     async def test_approve_is_refused_without_an_approve_row(
         self, level_registry, level_executor, settings, conv_ctx,
     ):
+        """A deny-only gate denies one call, which is the whole message —
+        so the turn ends with the denial result waiting for the user."""
         llm = MockLLMProvider(responses=[
             _make_llm_response(
                 tool_blocks=[
@@ -2002,6 +2104,246 @@ class TestChoiceLevels:
         assert len(ends) == 1
         assert not ends[0].result.success
         assert "denied" in ends[0].result.error.lower()
+
+        finished = [e for e in events if isinstance(e, AgentFinished)]
+        assert len(finished) == 1
+        assert finished[0].stopped
+        assert llm.call_count == 1
+        assert not [e for e in events if isinstance(e, AgentCancelled)]
+
+
+class TestTurnStopping:
+    """Deny and cancel rules across a whole assistant message."""
+
+    @pytest.fixture
+    def stop_registry(self) -> ToolRegistry:
+        reg = ToolRegistry()
+        reg.register(FeedbackGateTool())
+        reg.register(DenyOnlyGateTool())
+        return reg
+
+    @pytest.fixture
+    def stop_executor(self, stop_registry) -> ToolExecutor:
+        return ToolExecutor(stop_registry)
+
+    def _loop(self, llm, registry, executor, settings, conv_ctx):
+        return AgentLoop(
+            llm, registry, executor, settings,
+            context=conv_ctx, permission_manager=PermissionManager(),
+        )
+
+    @staticmethod
+    def _tool_message(conv_ctx) -> Message:
+        tools = [m for m in conv_ctx.messages if m.role == "tool"]
+        assert len(tools) == 1
+        return tools[0]
+
+    async def test_every_call_denied_ends_the_turn(
+        self, stop_registry, stop_executor, settings, conv_ctx,
+    ):
+        llm = MockLLMProvider(responses=[
+            _make_llm_response(
+                tool_blocks=[
+                    _make_tool_use_block("d1", "deny_only_gate", {"content": "a"}),
+                    _make_tool_use_block("d2", "deny_only_gate", {"content": "b"}),
+                ],
+                stop_reason="tool_use",
+            ),
+            _make_llm_response(text="Done", stop_reason="end_turn"),
+        ])
+        loop = self._loop(
+            llm, stop_registry, stop_executor, settings, conv_ctx,
+        )
+
+        events = []
+        async for event in loop.run("Write", config=TEST_TURN_CONFIG):
+            events.append(event)
+            if isinstance(event, AgentPaused):
+                assert loop.answer_tool_call(
+                    event.tool_id, [PromptAnswer(choice=0)],
+                ) is True
+
+        ends = [e for e in events if isinstance(e, ToolCallEnd)]
+        assert len(ends) == 2          # both were asked, not short-circuited
+        assert not any(end.result.success for end in ends)
+
+        finished = [e for e in events if isinstance(e, AgentFinished)]
+        assert len(finished) == 1
+        assert finished[0].stopped
+        assert llm.call_count == 1
+
+        # Every tool_call_id is answered, so the next request is valid.
+        blocks = self._tool_message(conv_ctx).blocks
+        assert [b.tool_id for b in blocks] == ["d1", "d2"]
+        assert all(b.is_error for b in blocks)
+
+    async def test_one_approved_call_keeps_the_turn_alive(
+        self, stop_registry, stop_executor, settings, conv_ctx,
+    ):
+        """Deny does not short-circuit: an approval elsewhere in the
+        message means the turn continues with both results."""
+        llm = MockLLMProvider(responses=[
+            _make_llm_response(
+                tool_blocks=[
+                    _make_tool_use_block("d1", "deny_only_gate", {"content": "a"}),
+                    _make_tool_use_block("f1", "feedback_gate", {"content": "b"}),
+                ],
+                stop_reason="tool_use",
+            ),
+            _make_llm_response(text="Done", stop_reason="end_turn"),
+        ])
+        loop = self._loop(
+            llm, stop_registry, stop_executor, settings, conv_ctx,
+        )
+
+        events = []
+        async for event in loop.run("Write", config=TEST_TURN_CONFIG):
+            events.append(event)
+            if isinstance(event, AgentPaused):
+                if event.tool_id == "d1":
+                    loop.answer_tool_call(
+                        event.tool_id, [PromptAnswer(choice=0)],
+                    )
+                else:
+                    loop.answer_tool_call(
+                        event.tool_id, [PromptAnswer(choice=0)],
+                    )
+
+        ends = [e for e in events if isinstance(e, ToolCallEnd)]
+        assert [end.result.success for end in ends] == [False, True]
+
+        finished = [e for e in events if isinstance(e, AgentFinished)]
+        assert len(finished) == 1
+        assert not finished[0].stopped
+        assert llm.call_count == 2
+
+    async def test_cancel_mid_batch_skips_the_rest(
+        self, stop_registry, stop_executor, settings, conv_ctx,
+    ):
+        """Approving one call and cancelling the next ends the turn at
+        the cancel; the untouched calls are answered, never asked."""
+        llm = MockLLMProvider(responses=[
+            _make_llm_response(
+                tool_blocks=[
+                    _make_tool_use_block("f1", "feedback_gate", {"content": "a"}),
+                    _make_tool_use_block("f2", "feedback_gate", {"content": "b"}),
+                    _make_tool_use_block("d3", "deny_only_gate", {"content": "c"}),
+                ],
+                stop_reason="tool_use",
+            ),
+            _make_llm_response(text="Done", stop_reason="end_turn"),
+        ])
+        loop = self._loop(
+            llm, stop_registry, stop_executor, settings, conv_ctx,
+        )
+
+        pauses = 0
+        events = []
+        async for event in loop.run("Write", config=TEST_TURN_CONFIG):
+            events.append(event)
+            if not isinstance(event, AgentPaused):
+                continue
+            pauses += 1
+            if pauses == 1:
+                loop.answer_tool_call(
+                    event.tool_id, [PromptAnswer(choice=0)],
+                )
+            else:
+                loop.answer_tool_call(event.tool_id, None)
+
+        # The third call was never asked about.
+        assert pauses == 2
+        ends = [e for e in events if isinstance(e, ToolCallEnd)]
+        assert [end.result.success for end in ends] == [True, False, False]
+        assert "cancelled" in ends[1].result.error.lower()
+        assert "not executed" in ends[2].result.error.lower()
+        assert "cancelled" in ends[2].result.error.lower()
+
+        cancelled = [e for e in events if isinstance(e, AgentCancelled)]
+        assert len(cancelled) == 1
+        assert cancelled[0].tool_id == "f2"
+        assert not [e for e in events if isinstance(e, AgentFinished)]
+        assert llm.call_count == 1
+
+        blocks = self._tool_message(conv_ctx).blocks
+        assert [b.tool_id for b in blocks] == ["f1", "f2", "d3"]
+        assert blocks[0].is_error is False
+        assert blocks[1].is_error and blocks[2].is_error
+
+    async def test_turn_cancel_mid_batch_keeps_finished_results(
+        self, stop_registry, stop_executor, settings, conv_ctx,
+    ):
+        """A turn cancelled mid-batch keeps the results that already
+        landed; the cancel repair then answers only the calls that did
+        not, so nothing that ran is rewritten as cancelled."""
+        llm = MockLLMProvider(responses=[
+            _make_llm_response(
+                tool_blocks=[
+                    _make_tool_use_block("c1", "feedback_gate", {"content": "a"}),
+                    _make_tool_use_block("c2", "feedback_gate", {"content": "b"}),
+                    _make_tool_use_block("c3", "feedback_gate", {"content": "c"}),
+                ],
+                stop_reason="tool_use",
+            ),
+        ])
+        loop = self._loop(
+            llm, stop_registry, stop_executor, settings, conv_ctx,
+        )
+
+        gen = loop.run("Write", config=TEST_TURN_CONFIG)
+        pauses = 0
+        async for event in gen:
+            if not isinstance(event, AgentPaused):
+                continue
+            pauses += 1
+            if pauses == 1:
+                assert loop.answer_tool_call(
+                    event.tool_id, [PromptAnswer(choice=0)],
+                ) is True
+            else:
+                break
+        # The turn is cancelled while the second call waits: the loop is
+        # closed mid-batch instead of finishing it.
+        await gen.aclose()
+
+        # The call that ran is on the record; the paused one and the
+        # untouched one are not.
+        tools = [m for m in conv_ctx.messages if m.role == "tool"]
+        assert len(tools) == 1
+        assert [b.tool_id for b in tools[0].blocks] == ["c1"]
+        assert tools[0].blocks[0].is_error is False
+
+        # The session's cancel repair fills in exactly the missing calls.
+        repaired = conv_ctx.mark_turn_cancelled()
+        assert [b.tool_id for b in repaired] == ["c2", "c3"]
+
+        tools = [m for m in conv_ctx.messages if m.role == "tool"]
+        assert [b.tool_id for m in tools for b in m.blocks] == [
+            "c1", "c2", "c3",
+        ]
+        assert [b.is_error for m in tools for b in m.blocks] == [
+            False, True, True,
+        ]
+
+    async def test_policy_denial_does_not_end_the_turn(
+        self, stop_registry, stop_executor, settings, conv_ctx,
+    ):
+        """A blocked restricted call is the policy speaking, not the
+        user — it never counts toward an all-denied stop."""
+        loop = self._loop(
+            MockLLMProvider(), stop_registry, stop_executor,
+            settings, conv_ctx,
+        )
+        result, effect = await loop._execute_with_gating(
+            ToolCall(
+                tool_id="p1",
+                tool_name="feedback_gate",
+                parameters={"content": "x"},
+            ),
+            _Verdict(Permission.WRITE, Decision.DENY),
+        )
+        assert not result.success
+        assert effect is _CallEffect.CONTINUE
 
 
 def test_persona_points_at_ask_user():

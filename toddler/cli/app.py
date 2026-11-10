@@ -12,6 +12,7 @@ from pathlib import Path
 from rich.markdown import Markdown
 
 from toddler.agent.events import (
+    AgentCancelled,
     AgentFinished,
     AgentPaused,
     ContentDelta,
@@ -333,6 +334,11 @@ class CLIApp:
                     self._renderer.stop()
                     self._renderer.flush_to_console()
                     self._renderer.on_agent_finished(event)
+
+                case AgentCancelled():
+                    self._renderer.stop()
+                    self._renderer.flush_to_console()
+                    self._renderer.on_agent_cancelled(event)
 
                 case RecoverableAgentError():
                     # Accumulate error for inline display during

@@ -18,10 +18,12 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import aclosing
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import Enum
 from typing import TYPE_CHECKING
 
 from toddler.agent.events import (
+    AgentCancelled,
     AgentEvent,
     AgentFinished,
     AgentPaused,
@@ -160,6 +162,46 @@ class _Verdict:
         checkpoint it may not have needed.
         """
         return self.permission is None or self.permission.is_mutating
+
+
+class _CallEffect(Enum):
+    """What one call's outcome means for the rest of the turn.
+
+    ``CONTINUE`` covers everything that does not end the turn — a call
+    that ran, one refused by policy, one the model must fix, a feedback
+    redirect, and answers to a question.  ``DENIED`` is the user saying
+    no to this call at the gate; the turn continues unless every call in
+    the message ends this way.  ``CANCELLED`` is the user pulling the
+    pause itself, which ends the turn immediately.
+    """
+
+    CONTINUE = "continue"
+    DENIED = "denied"
+    CANCELLED = "cancelled"
+
+
+@dataclass
+class _BatchOutcome:
+    """What one assistant message's tool calls mean for the turn.
+
+    Filled in while the calls run.  A cancellation ends the turn at
+    once and names the call that held the pause; an all-denied message
+    ends it once the batch is complete.  Any other outcome — an
+    execution, a feedback redirect, an answered question, a policy
+    refusal — keeps the turn running.
+    """
+
+    effects: list[_CallEffect] = field(default_factory=list)
+    cancelled: bool = False
+    cancelled_tool_id: str = ""
+    cancelled_tool_name: str = ""
+
+    @property
+    def all_denied(self) -> bool:
+        """Whether every call in the message was denied by the user."""
+        return bool(self.effects) and all(
+            effect is _CallEffect.DENIED for effect in self.effects
+        )
 
 
 class AgentLoop:
@@ -356,17 +398,48 @@ class AgentLoop:
                     return
 
                 tool_result_blocks: list[MessageBlock] = []
+                batch = _BatchOutcome()
                 # aclosing so a turn cancelled while a question waits
                 # closes the inner generator now, running its finally and
                 # releasing the answer channel — rather than whenever the
                 # async-generator finalizer gets around to it.
-                async with aclosing(self._execute_tool_calls(
-                    tool_calls, tool_result_blocks,
-                )) as executions:
-                    async for event in executions:
-                        yield event
+                try:
+                    async with aclosing(self._execute_tool_calls(
+                        tool_calls, tool_result_blocks, batch,
+                    )) as executions:
+                        async for event in executions:
+                            yield event
+                finally:
+                    # The results land even when the turn is cancelled
+                    # mid-batch: a call that already ran must not be
+                    # recorded as never having run, or the model may
+                    # repeat its effect next turn.  The calls that never
+                    # finished are answered by the session's cancel
+                    # repair.
+                    if tool_result_blocks:
+                        self._ctx.append(Message.tool(tool_result_blocks))
 
-                self._ctx.append(Message.tool(tool_result_blocks))
+                # The user cancelled the pause: stop immediately.  The
+                # calls after the cancelled one never ran and were
+                # answered as such above.
+                if batch.cancelled:
+                    yield AgentCancelled(
+                        tool_id=batch.cancelled_tool_id,
+                        tool_name=batch.cancelled_tool_name,
+                        usage=usage,
+                    )
+                    return
+
+                # Every call in the message was denied: the user refused
+                # the whole line of action, so the turn ends with the
+                # denial results waiting for the next user input.
+                if batch.all_denied:
+                    yield AgentFinished(
+                        reason="All tool calls were denied by the user.",
+                        usage=usage,
+                        stopped=True,
+                    )
+                    return
 
                 if stop_checker.is_exhausted:
                     extra = stop_checker.increment()
@@ -402,8 +475,10 @@ class AgentLoop:
 
         *answers* is one :class:`PromptAnswer` per choice the pause asks
         about — exactly one for a single gate, one per question for an
-        ask-user pause.  ``None`` declines the pause: a single gate is
-        refused, and an ask-user tool returns its own declined result.
+        ask-user pause.  ``None`` cancels the pause: nothing it held runs,
+        the run of calls ends, and the turn finishes with
+        :class:`~toddler.agent.events.AgentCancelled`.  An ask-user tool
+        still executes, so it owns the cancelled wording in its result.
 
         Returns ``False`` when nothing is waiting, when *tool_id* names a
         different call (a stale or multi-tab answer), when the call has
@@ -470,6 +545,7 @@ class AgentLoop:
     async def _execute_tool_calls(
         self, tool_calls: list[ToolCall],
         tool_result_blocks: list[MessageBlock],
+        batch: _BatchOutcome,
     ) -> AsyncIterator[AgentEvent]:
         """Execute *tool_calls* with permission gating, yielding events.
 
@@ -478,11 +554,19 @@ class AgentLoop:
         approve/deny card or an ask-user prompt), and :class:`ToolCallEnd`
         for each call.  Appends a :class:`MessageBlock` to
         *tool_result_blocks* for each completed call — the caller then
-        feeds them back to the LLM.
+        feeds them back to the LLM — and records each call's effect on
+        *batch* for the caller's stop decision.
+
+        A cancelled pause ends the run of calls: the remaining calls are
+        not asked about or executed, but each still gets a
+        :class:`ToolCallEnd` and a tool-result block, because the next
+        request must answer every ``tool_call_id`` the assistant message
+        carried.
         """
         tool_result_blocks.clear()
+        batch.effects.clear()
 
-        for call in tool_calls:
+        for index, call in enumerate(tool_calls):
             yield ToolCallStart(
                 tool_id=call.tool_id,
                 tool_name=call.tool_name,
@@ -505,6 +589,7 @@ class AgentLoop:
             # immediately has somewhere to land.  A denial never pauses:
             # there is nothing to ask.
             result: ToolResult
+            effect: _CallEffect
             if verdict.decision is Decision.ASK:
                 try:
                     # The tool builds the card the user answers from.  The
@@ -535,6 +620,7 @@ class AgentLoop:
                             "Fix the arguments and call it again."
                         ),
                     )
+                    effect = _CallEffect.CONTINUE
                 else:
                     pending = _PendingApproval(call.tool_id, prompt.choices)
                     self._pending = pending
@@ -543,7 +629,7 @@ class AgentLoop:
                             prompt=prompt,
                             tool_id=call.tool_id,
                         )
-                        result = await self._execute_with_gating(
+                        result, effect = await self._execute_with_gating(
                             call, verdict,
                         )
                     finally:
@@ -552,7 +638,9 @@ class AgentLoop:
                         if self._pending is pending:
                             self._pending = None
             else:
-                result = await self._execute_with_gating(call, verdict)
+                result, effect = await self._execute_with_gating(
+                    call, verdict,
+                )
 
             yield ToolCallEnd(
                 tool_id=call.tool_id,
@@ -577,6 +665,43 @@ class AgentLoop:
                     metadata=result.metadata,
                 )
             )
+            batch.effects.append(effect)
+
+            if effect is not _CallEffect.CANCELLED:
+                continue
+
+            # The user cancelled this pause: nothing after it runs.  The
+            # skipped calls still need results and end events — the
+            # assistant message named them, and the streaming front-end
+            # already opened a row for each at the provider phase.
+            batch.cancelled = True
+            batch.cancelled_tool_id = call.tool_id
+            batch.cancelled_tool_name = call.tool_name
+            for skipped in tool_calls[index + 1:]:
+                skipped_error = (
+                    "Not executed: the user cancelled the turn."
+                )
+                skipped_result = ToolResult(
+                    tool_id=skipped.tool_id,
+                    tool_name=skipped.tool_name,
+                    success=False,
+                    output="",
+                    error=skipped_error,
+                )
+                yield ToolCallEnd(
+                    tool_id=skipped.tool_id,
+                    tool_name=skipped.tool_name,
+                    input=skipped.parameters,
+                    result=skipped_result,
+                )
+                tool_result_blocks.append(
+                    MessageBlock.tool_result_block(
+                        skipped.tool_id,
+                        skipped_error,
+                        is_error=True,
+                    )
+                )
+            return
 
     # ==================================================================
     # Internal helpers
@@ -584,8 +709,8 @@ class AgentLoop:
 
     async def _execute_with_gating(
         self, call: ToolCall, verdict: _Verdict
-    ) -> ToolResult:
-        """Execute *call* under *verdict*.
+    ) -> tuple[ToolResult, _CallEffect]:
+        """Execute *call* under *verdict* and say what it means for the turn.
 
         For :attr:`Decision.ASK` the caller (the ``run()`` loop body) has
         already opened a :class:`_PendingApproval` and yielded
@@ -594,11 +719,18 @@ class AgentLoop:
         :class:`PromptAnswer` whose row's level decides the outcome; an
         ask-user call with one answer per question.  An ask is then run
         through the executor exactly like an approved call — even when
-        declined, because the tool owns the declined wording — with the
+        cancelled, because the tool owns the cancelled wording — with the
         answers and the questions already parsed injected as
         ``extra_params``.  :attr:`Decision.ALLOW` passes straight
         through, and :attr:`Decision.DENY` never runs at all — it is the
         policy answering, not a question left open.
+
+        The row's level — never its title, and never whether the answer
+        carries text — decides a single gate: ``APPROVE`` runs the call,
+        ``FEEDBACK`` returns the user's words for the model to act on,
+        and ``DENY`` refuses it.  A declined pause is a cancellation, not
+        a denial.  Policy refusals continue the turn: the user did not
+        speak.
 
         A call that does reach the executor takes the verdict's own answer
         about whether it mutates: that is what orders the checkpoint.
@@ -614,7 +746,7 @@ class AgentLoop:
                 success=False,
                 output="",
                 error=f"Unknown tool: '{call.tool_name}'",
-            )
+            ), _CallEffect.CONTINUE
 
         if decision is Decision.DENY:
             logger.warning(
@@ -626,13 +758,13 @@ class AgentLoop:
                 success=False,
                 output="",
                 error=blocked_message(tool, call.parameters),
-            )
+            ), _CallEffect.CONTINUE
 
         # Nothing to ask — go straight to execution.
         if decision is Decision.ALLOW:
             return await self._executor.execute(
                 call, mutating=verdict.mutating
-            )
+            ), _CallEffect.CONTINUE
 
         # The channel the pause opened.  It stays on the loop until the
         # answer has arrived: a front-end answers on a task of its own,
@@ -655,7 +787,7 @@ class AgentLoop:
                     "Internal error: this call was gated but never asked "
                     "about. It was not executed — nothing was approved."
                 ),
-            )
+            ), _CallEffect.CONTINUE
 
         try:
             await pending.event.wait()
@@ -667,11 +799,11 @@ class AgentLoop:
                 self._pending = None
 
         # A question pause is input, not permission: it runs — answered or
-        # declined — so the tool owns both wordings, with the questions
-        # the gate already parsed injected.  A single gate runs only on a
-        # grant; a deny, feedback, or decline never reaches the executor.
+        # cancelled — so the tool owns both wordings, with the questions
+        # the gate already parsed injected.  A cancellation still ends the
+        # turn afterwards; the caller reads that from the returned effect.
         if pending.choices.type is ChoiceType.QUESTION:
-            return await self._executor.execute(
+            result = await self._executor.execute(
                 call,
                 mutating=verdict.mutating,
                 extra_params={
@@ -679,28 +811,75 @@ class AgentLoop:
                     "parsed_questions": pending.questions,
                 },
             )
+            effect = (
+                _CallEffect.CANCELLED
+                if pending.declined
+                else _CallEffect.CONTINUE
+            )
+            return result, effect
 
-        if (
-            pending.answers is not None
-            and pending.choices.verdict(pending.answers)
-            is AnswerVerdict.GRANTED
-        ):
+        meaning = (
+            pending.choices.verdict(pending.answers)
+            if pending.answers is not None
+            else None
+        )
+        if meaning is AnswerVerdict.GRANTED:
             return await self._executor.execute(
                 call, mutating=verdict.mutating,
-            )
+            ), _CallEffect.CONTINUE
 
-        error = "User denied permission to execute this tool."
-        if pending.answers and pending.answers[0].content:
-            # The chosen row took the user's words (feedback): hand them
-            # to the model so it can change the call rather than repeat it.
-            error += f" Their feedback: {pending.answers[0].content}"
+        return self._refusal(call, pending, meaning)
+
+    def _refusal(
+        self, call: ToolCall, pending: _PendingApproval,
+        meaning: AnswerVerdict | None,
+    ) -> tuple[ToolResult, _CallEffect]:
+        """The outcome of a single gate the user did not approve.
+
+        A cancelled pause (Escape, a dismissed card) is not a denial:
+        the user withdrew the question itself, so the whole turn ends.
+        A feedback row refuses the call but keeps the turn going — the
+        user's words are the correction the model should act on.  A
+        denial refuses the call and lets the caller decide from the
+        batch whether the turn survives.
+        """
+        if pending.declined:
+            return ToolResult(
+                tool_id=call.tool_id,
+                tool_name=call.tool_name,
+                success=False,
+                output="",
+                error=(
+                    "The user cancelled this tool call. It was not executed."
+                ),
+            ), _CallEffect.CANCELLED
+
+        # A granted answer ran above and an invalid one never settles,
+        # so the verdict here is FEEDBACK or DENIED.
+        if meaning is AnswerVerdict.FEEDBACK:
+            error = "The user did not approve this call; it was not executed."
+            content = (
+                pending.answers[0].content
+                if pending.answers and pending.answers[0].content
+                else None
+            )
+            if content:
+                error += f" They asked you to change it: {content}"
+            return ToolResult(
+                tool_id=call.tool_id,
+                tool_name=call.tool_name,
+                success=False,
+                output="",
+                error=error,
+            ), _CallEffect.CONTINUE
+
         return ToolResult(
             tool_id=call.tool_id,
             tool_name=call.tool_name,
             success=False,
             output="",
-            error=error,
-        )
+            error="User denied permission to execute this tool.",
+        ), _CallEffect.DENIED
 
     def _decision_for(self, call: ToolCall) -> _Verdict:
         """The gate's verdict on *call*, with the tier it was read from.
