@@ -301,17 +301,22 @@ class TestAnswerVerdict:
             ),
         )
 
-    def test_a_single_gate_grants_only_on_an_approve_row(self):
+    def test_a_single_gate_reports_the_selected_rows_level(self):
         gate = self._gate()
         assert gate.verdict([PromptAnswer(choice=0)]) is AnswerVerdict.GRANTED
         assert gate.verdict([PromptAnswer(choice=1)]) is AnswerVerdict.DENIED
-        assert gate.verdict([PromptAnswer(choice=2)]) is AnswerVerdict.DENIED
+        assert gate.verdict([PromptAnswer(choice=2)]) is AnswerVerdict.FEEDBACK
 
-    def test_feedback_text_does_not_change_the_verdict(self):
+    def test_feedback_is_feedback_with_or_without_words(self):
+        """The row's level, not the text on the answer, makes it a
+        redirect — an empty feedback box is still a feedback row."""
         gate = self._gate()
         assert gate.verdict([
             PromptAnswer(choice=2, content="use the other file"),
-        ]) is AnswerVerdict.DENIED
+        ]) is AnswerVerdict.FEEDBACK
+        assert gate.verdict([
+            PromptAnswer(choice=2),
+        ]) is AnswerVerdict.FEEDBACK
 
     def test_a_single_gate_rejects_a_malformed_answer(self):
         gate = self._gate()

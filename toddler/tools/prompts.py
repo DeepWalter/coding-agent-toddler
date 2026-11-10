@@ -109,12 +109,15 @@ class AnswerVerdict(Enum):
     ``INVALID`` is not an answer to this pause at all (wrong count, an
     index out of range): the pause stays open and the caller may retry.
     ``DENIED`` is a well-formed answer that does not let the call run.
-    ``GRANTED`` runs it — a question pause is input, not a permission
-    decision, so any valid answer set grants.
+    ``FEEDBACK`` also refuses the call, but the user's words ride along
+    as the correction the model should act on.  ``GRANTED`` runs it — a
+    question pause is input, not a permission decision, so any valid
+    answer set grants.
     """
 
     INVALID = "invalid"
     DENIED = "denied"
+    FEEDBACK = "feedback"
     GRANTED = "granted"
 
 
@@ -141,31 +144,15 @@ class PromptChoices:
     def verdict(self, answers: Sequence[PromptAnswer]) -> AnswerVerdict:
         """What *answers* mean for the call this pause gates.
 
-        A single gate takes exactly one answer, and grants only when the
-        selected row's level is :attr:`ChoiceLevel.APPROVE`.  A question
-        pause takes one answer per question, and any valid set grants:
-        that call is held for input, not for a permission decision.
+        A single gate takes exactly one answer; the selected row's level
+        decides it — the row's title never does.  ``APPROVE`` grants,
+        ``FEEDBACK`` refuses with the user's words attached, and
+        ``DENY`` refuses.  A question pause takes one answer per
+        question, and any valid set grants: that call is held for input,
+        not for a permission decision.
         """
         if self.type is ChoiceType.SINGLE:
-            if len(answers) != 1 or not isinstance(
-                answers[0], PromptAnswer,
-            ):
-                return AnswerVerdict.INVALID
-            answer = answers[0]
-            if (
-                not isinstance(answer.choice, int)
-                or isinstance(answer.choice, bool)
-                or not 0 <= answer.choice < len(self.data)
-            ):
-                return AnswerVerdict.INVALID
-            row = self.data[answer.choice]
-            if not isinstance(row, PromptChoice):
-                return AnswerVerdict.INVALID
-            return (
-                AnswerVerdict.GRANTED
-                if row.level is ChoiceLevel.APPROVE
-                else AnswerVerdict.DENIED
-            )
+            return self._single_verdict(answers)
         questions = self.data
         if len(answers) != len(questions):
             return AnswerVerdict.INVALID
@@ -180,6 +167,30 @@ class PromptChoices:
             ):
                 return AnswerVerdict.INVALID
         return AnswerVerdict.GRANTED
+
+    def _single_verdict(
+        self, answers: Sequence[PromptAnswer],
+    ) -> AnswerVerdict:
+        """What one answer to a single gate means, by its row's level."""
+        if len(answers) != 1 or not isinstance(
+            answers[0], PromptAnswer,
+        ):
+            return AnswerVerdict.INVALID
+        answer = answers[0]
+        if (
+            not isinstance(answer.choice, int)
+            or isinstance(answer.choice, bool)
+            or not 0 <= answer.choice < len(self.data)
+        ):
+            return AnswerVerdict.INVALID
+        row = self.data[answer.choice]
+        if not isinstance(row, PromptChoice):
+            return AnswerVerdict.INVALID
+        if row.level is ChoiceLevel.APPROVE:
+            return AnswerVerdict.GRANTED
+        if row.level is ChoiceLevel.FEEDBACK:
+            return AnswerVerdict.FEEDBACK
+        return AnswerVerdict.DENIED
 
 
 #: The ordinary gate's rows, and the default every prompt carries.  A tool
