@@ -70,12 +70,14 @@ class _ScriptedRenderer:
         *,
         feedback_index: int | None = None,
         detail: str | None = None,
+        input_label: str = "Feedback",
     ) -> ConfirmResult:
         self.confirms.append({
             "prompt": prompt,
             "choices": choices,
             "feedback_index": feedback_index,
             "detail": detail,
+            "input_label": input_label,
         })
         return self._results.pop(0)
 
@@ -97,6 +99,7 @@ def _questions() -> tuple[Question, Question]:
             choices=(
                 QuestionChoice("SQLite", "One file, no server."),
                 QuestionChoice("Redis", "Shared storage."),
+                QuestionChoice("Other", "", takes_input=True),
             ),
         ),
         Question(
@@ -105,6 +108,7 @@ def _questions() -> tuple[Question, Question]:
             choices=(
                 QuestionChoice("OAuth", "Reuse the provider."),
                 QuestionChoice("Password", "Add our own check."),
+                QuestionChoice("Other", "", takes_input=True),
             ),
         ),
     )
@@ -283,10 +287,62 @@ class TestCLIQuestions:
         assert first["choices"] == [
             "1. SQLite — One file, no server.",
             "2. Redis — Shared storage.",
+            "3. Other",
         ]
+        assert first["feedback_index"] == 2
+        assert first["input_label"] == "Your answer"
         assert second["prompt"] == "Question 2/2: Auth"
         assert session.agent.answers == [
             ("q1", [PromptAnswer(choice=1), PromptAnswer(choice=0)]),
+        ]
+
+    async def test_an_other_answer_carries_the_users_text(self, tmp_path):
+        pause = _pause()
+        app, session = _app(tmp_path, [pause])
+        renderer = _ScriptedRenderer([
+            ConfirmResult(
+                decision="feedback", feedback="DuckDB", choice_index=2,
+            ),
+            ConfirmResult(decision="deny", choice_index=0),
+        ])
+        app._renderer = renderer  # type: ignore[assignment]
+
+        await app._run_agent_turn("ask")
+
+        assert [call["feedback_index"] for call in renderer.confirms] == [2, 2]
+        assert session.agent.answers == [
+            ("q1", [
+                PromptAnswer(choice=2, content="DuckDB"),
+                PromptAnswer(choice=0),
+            ]),
+        ]
+
+    async def test_an_empty_other_reasks_the_question(self, tmp_path):
+        """An Other row with nothing typed is not an answer the loop
+        would accept; the terminal asks the same question again."""
+        pause = _pause()
+        app, session = _app(tmp_path, [pause])
+        renderer = _ScriptedRenderer([
+            ConfirmResult(decision="deny", choice_index=2),
+            ConfirmResult(
+                decision="feedback", feedback="DuckDB", choice_index=2,
+            ),
+            ConfirmResult(decision="deny", choice_index=0),
+        ])
+        app._renderer = renderer  # type: ignore[assignment]
+
+        await app._run_agent_turn("ask")
+
+        assert [call["prompt"] for call in renderer.confirms] == [
+            "Question 1/2: Storage",
+            "Question 1/2: Storage",
+            "Question 2/2: Auth",
+        ]
+        assert session.agent.answers == [
+            ("q1", [
+                PromptAnswer(choice=2, content="DuckDB"),
+                PromptAnswer(choice=0),
+            ]),
         ]
 
     async def test_a_cancelled_prompt_declines_the_set(self, tmp_path):

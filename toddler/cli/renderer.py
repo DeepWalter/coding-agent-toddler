@@ -473,6 +473,7 @@ class Renderer(ABC):
         *,
         feedback_index: int | None = None,
         detail: str | None = None,
+        input_label: str = "Feedback",
     ) -> ConfirmResult:
         """Prompt the user to confirm an action.
 
@@ -484,11 +485,16 @@ class Renderer(ABC):
             List of choice labels (e.g. ``["Approve", "Deny"]``).
         feedback_index:
             Index of the one row that takes free-text input instead of a
-            selection — the choice the tool marked ``FEEDBACK``.  ``None``
-            when every row is a plain selection.
+            selection — the choice the tool marked ``FEEDBACK``, or an
+            ask_user question's "Other" row.  ``None`` when every row is
+            a plain selection.
         detail:
             Optional body shown above the choices — an ask_user
             question's content, which is too long for the title.
+        input_label:
+            What a non-streaming prompt calls the free-text answer
+            (``"Feedback"`` for a gate, ``"Your answer"`` for a
+            question).  The streaming renderer names the row instead.
         """
 
     # ------------------------------------------------------------------
@@ -825,6 +831,7 @@ class StreamingRenderer(Renderer):
         *,
         feedback_index: int | None = None,
         detail: str | None = None,
+        input_label: str = "Feedback",  # noqa: ARG002
     ) -> ConfirmResult:
         """Display an interactive confirmation table inside the Live display.
 
@@ -1875,6 +1882,7 @@ class NonStreamingRenderer(Renderer):
         *,
         feedback_index: int | None = None,
         detail: str | None = None,
+        input_label: str = "Feedback",
     ) -> ConfirmResult:
         """Prompt the user to confirm via the main console.
 
@@ -1932,7 +1940,7 @@ class NonStreamingRenderer(Renderer):
         choice = choices[matched]
         if matched == feedback_index:
             try:
-                fb = self._console.input("Feedback: ").strip()
+                fb = self._console.input(f"{input_label}: ").strip()
             except (EOFError, KeyboardInterrupt):
                 return ConfirmResult(decision="deny", cancelled=True)
             if fb:

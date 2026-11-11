@@ -266,29 +266,66 @@ class CLIApp:
                         total = len(questions)
                         declined = False
                         for number, question in enumerate(questions, 1):
-                            result = await self._renderer.confirm(
-                                prompt=(
-                                    f"Question {number}/{total}: "
-                                    f"{question.title}"
-                                ),
-                                detail=" ".join(question.content.split()),
-                                choices=[
-                                    f"{index}. {choice.title} — "
-                                    f"{choice.content}"
+                            other_index = next(
+                                (
+                                    index
                                     for index, choice in enumerate(
-                                        question.choices, 1,
+                                        question.choices,
                                     )
-                                ],
+                                    if choice.takes_input
+                                ),
+                                None,
                             )
-                            if (
-                                result.cancelled
-                                or result.choice_index is None
-                            ):
-                                declined = True
+                            while True:
+                                result = await self._renderer.confirm(
+                                    prompt=(
+                                        f"Question {number}/{total}: "
+                                        f"{question.title}"
+                                    ),
+                                    detail=" ".join(
+                                        question.content.split(),
+                                    ),
+                                    choices=[
+                                        f"{index}. {choice.title}"
+                                        + (
+                                            f" — {choice.content}"
+                                            if choice.content
+                                            else ""
+                                        )
+                                        for index, choice in enumerate(
+                                            question.choices, 1,
+                                        )
+                                    ],
+                                    feedback_index=other_index,
+                                    input_label="Your answer",
+                                )
+                                if (
+                                    result.cancelled
+                                    or result.choice_index is None
+                                ):
+                                    declined = True
+                                    break
+                                chosen = question.choices[
+                                    result.choice_index
+                                ]
+                                text = (
+                                    (result.feedback or "").strip()
+                                    if chosen.takes_input
+                                    else None
+                                )
+                                if chosen.takes_input and not text:
+                                    # Nothing typed: ask again rather than
+                                    # send an answer the loop would reject.
+                                    continue
+                                answers.append(
+                                    PromptAnswer(
+                                        choice=result.choice_index,
+                                        content=text,
+                                    )
+                                )
                                 break
-                            answers.append(
-                                PromptAnswer(choice=result.choice_index)
-                            )
+                            if declined:
+                                break
                         if (
                             declined
                             or not self._session_mgr.agent.answer_tool_call(

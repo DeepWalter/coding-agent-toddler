@@ -916,6 +916,27 @@ class TestQuestionConfirmation:
         assert result.feedback == "use the other file"
         assert result.choice_index == 2
 
+    async def test_the_input_label_names_the_free_text_prompt(self):
+        renderer, _ = self._renderer()
+        prompts: list[str] = []
+        inputs = iter(["3", "DuckDB"])
+
+        def fake_input(prompt=""):
+            prompts.append(prompt)
+            return next(inputs)
+
+        renderer._console.input = fake_input
+        result = await renderer.confirm(
+            "Question 1/2: Storage",
+            ["1. SQLite — One file.", "2. Redis — Shared.", "3. Other"],
+            feedback_index=2,
+            input_label="Your answer",
+        )
+
+        assert prompts == ["> ", "Your answer: "]
+        assert result.feedback == "DuckDB"
+        assert result.choice_index == 2
+
     def test_a_feedback_row_uses_its_own_title(self):
         """The tool words the row; the renderer only knows its index."""
         renderer = StreamingRenderer(console=Console(file=io.StringIO()))
