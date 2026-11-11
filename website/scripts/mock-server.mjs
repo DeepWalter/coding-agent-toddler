@@ -293,11 +293,14 @@ const QUESTION_PAUSE = {
 }
 
 // The standard gate rows: the title a row shows and what picking it means.
-const APPROVE_DENY = {
+// The feedback row renders as a text box in the card, so its title is the
+// box's placeholder there.
+const GATE_CHOICES = {
   type: 'single',
   data: [
     { title: 'Approve', level: 'approve' },
     { title: 'Deny', level: 'deny' },
+    { title: 'Tell Toddler what to do instead', level: 'feedback' },
   ],
 }
 // Held while the card waits, so a reload's hello restores it.  Cleared by
@@ -1092,7 +1095,7 @@ wss.on('connection', (ws) => {
               title: GATE_TITLES.read_file,
               content: null,
               description: OUTSIDE_DESCRIPTION,
-              choices: APPROVE_DENY,
+              choices: GATE_CHOICES,
             },
           })
           break
@@ -1178,7 +1181,7 @@ wss.on('connection', (ws) => {
               title: GATE_TITLES.write_file,
               content: null,
               description: OVERWRITE_DESCRIPTION,
-              choices: APPROVE_DENY,
+              choices: GATE_CHOICES,
             },
           })
           break
@@ -1230,7 +1233,7 @@ wss.on('connection', (ws) => {
               title: 'Allow edit this file?',
               content: null,
               description: EDIT_D_PATH,
-              choices: APPROVE_DENY,
+              choices: GATE_CHOICES,
             },
           })
           break
@@ -1327,7 +1330,7 @@ wss.on('connection', (ws) => {
             title: GATE_TITLES.shell,
             content: pendingShellCall.command,
             description: pendingShellCall.description,
-            choices: APPROVE_DENY,
+            choices: GATE_CHOICES,
           },
         })
         break
@@ -1397,14 +1400,23 @@ wss.on('connection', (ws) => {
         const row = picked
           && Number.isInteger(picked.choice)
           && picked.choice >= 0
-          && picked.choice < APPROVE_DENY.data.length
-          ? APPROVE_DENY.data[picked.choice]
+          && picked.choice < GATE_CHOICES.data.length
+          && (picked.content == null || typeof picked.content === 'string')
+          ? GATE_CHOICES.data[picked.choice]
           : null
         if (!row) {
           send({ type: 'ack', cmd: 'answer_tool', accepted: false })
           break
         }
         const denied = row.level !== 'approve'
+        // The feedback row is a box in the card; what the user typed is
+        // the refusal's reason, the way the real loop carries it back.
+        const feedback = row.level === 'feedback'
+          ? (picked.content ?? '').trim()
+          : ''
+        const deniedError = feedback
+          ? `the user denied the call: ${feedback}`
+          : 'the user denied the call'
         send({ type: 'ack', cmd: 'answer_tool', accepted: true })
         if (pendingFileCall && msg.tool_id === pendingFileCall.tool_id) {
           // A gated file call — the outside read, the write over a file
@@ -1417,7 +1429,7 @@ wss.on('connection', (ws) => {
             ? {
                 success: false,
                 output: null,
-                error: 'the user denied the call',
+                error: deniedError,
                 checkpoint_id: null,
                 metadata: null,
               }
@@ -1437,7 +1449,7 @@ wss.on('connection', (ws) => {
         }
         // Either answer settles the shell gate: a denial reads as one, the
         // way the file gates' denials do, so a test can tell which row was
-        // answered.
+        // answered — and a feedback answer carries the typed correction.
         send({
           type: 'tool_call_end',
           tool_id: 't1',
@@ -1447,7 +1459,7 @@ wss.on('connection', (ws) => {
             ? {
                 success: false,
                 output: null,
-                error: 'the user denied the call',
+                error: deniedError,
                 checkpoint_id: null,
                 metadata: null,
               }

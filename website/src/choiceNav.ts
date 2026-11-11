@@ -2,9 +2,9 @@
  * Arrow-key (up/down) roving over an ask card's choice rows (tool gate,
  * plan ask).  Bind as a keydown handler on the card's root element — the
  * same handler serves every card (decision rows, feedback rows).  Rows are
- * the buttons nested in a .*-actions block (the head's ✕ close is not a
- * choice); they stay plain buttons, so Tab still walks them one by one —
- * this only adds the up/down moves on top.
+ * the buttons and the gate's feedback input nested in a .*-actions block
+ * (the head's ✕ close is not a choice); they stay ordinary controls, so Tab
+ * still walks them one by one — this only adds the up/down moves on top.
  *
  * The arrows are the card's only while the card has the focus: click the
  * console and ↑/↓ scroll the transcript again, which is what a click there
@@ -18,16 +18,20 @@
  * card's own body is focusable (a click lands there), and a card wearing
  * the edge that says the keys are its own has to do something with them.
  *
- * Keys pressed inside an editable element (the plan ask's feedback
- * textarea) are left alone, so the caret keeps its own arrow behavior.
+ * Keys pressed inside a multi-line editor (the plan ask's feedback
+ * textarea) are left alone, so the caret keeps its own arrow behavior —
+ * and Enter there is the field's own.  A single-line input has no vertical
+ * caret motion, so the gate's feedback box still roves with ↑/↓; its Enter
+ * belongs to the field (it submits the correction).
  * When every row is disabled the arrows fall through to their default
  * (scrolling) — nothing on the card is actionable anyway.
  */
 
 /** Where the choice rows live inside an ask card — each alternative is a
- * complete selector (a comma never shares a descendant part). */
+ * complete selector (a comma never shares a descendant part).  The gate's
+ * feedback row is a text input, not a button, and still a row. */
 const ROW_SELECTOR =
-  '.pause-prompt-actions button, .plan-ask-actions button, .question-choices .question-choice'
+  '.pause-prompt-actions button, .pause-prompt-actions input, .plan-ask-actions button, .question-choices .question-choice'
 
 /** The mark on the row the card would answer with.  Worn by one row at a
  * time, and kept while the focus is elsewhere. */
@@ -37,16 +41,25 @@ export function onChoiceKeydown(event: KeyboardEvent) {
   const key = event.key
   if (key !== 'ArrowDown' && key !== 'ArrowUp' && key !== 'Enter') return
   const target = event.target
-  if (target instanceof HTMLElement && target.closest('textarea, input, select, [contenteditable]')) {
-    return
+  if (target instanceof HTMLElement) {
+    // A multi-line editor (or a select) keeps every key — the plan ask's
+    // textarea is where its caret lives.  A single-line input keeps only
+    // Enter: ↑/↓ move the rove out of the gate's feedback box, and Enter
+    // there submits the correction the field is holding.
+    if (target.closest('textarea, select, [contenteditable]')) return
+    if (key === 'Enter' && target.closest('input')) return
   }
   const host = event.currentTarget as HTMLElement | null
   if (!host) return
-  const rows = [...host.querySelectorAll<HTMLButtonElement>(ROW_SELECTOR)].filter(
-    (row) => !row.disabled,
-  )
+  const rows = [
+    ...host.querySelectorAll<HTMLButtonElement | HTMLInputElement>(
+      ROW_SELECTOR,
+    ),
+  ].filter((row) => !row.disabled)
   if (!rows.length) return
-  const focused = rows.indexOf(document.activeElement as HTMLButtonElement)
+  const focused = rows.indexOf(
+    document.activeElement as HTMLButtonElement | HTMLInputElement,
+  )
   // From a row, the move is from that row.  From anywhere else in the card
   // — its own body, where a click landed, or the ✕ while busy — it
   // continues from the row the card has marked, so leaving and coming back
@@ -88,7 +101,12 @@ export function onChoiceFocus(event: FocusEvent): void {
   const host = event.currentTarget
   if (!(host instanceof HTMLElement)) return
   const target = event.target
-  const row = target instanceof HTMLElement ? target.closest('button') : null
+  // A choice is a button, or the gate's feedback box — the input carries
+  // the mark too, so leaving the cursor there and coming back to the card
+  // does not answer with a button the user thought they had left.
+  const row = target instanceof HTMLElement
+    ? target.closest('button, input')
+    : null
   // Only a choice moves the mark.  The head's ✕ is a button too, and not
   // one: tabbing to it, or clicking it, leaves the card standing where it
   // was — and the cancel it fires is about the turn, not the selection.

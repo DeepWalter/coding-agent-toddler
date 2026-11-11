@@ -204,7 +204,13 @@ if (!ok1) fails++
 // --- Phase 1.5: gate rows rove with ↑/↓ (wrap both ways) ---
 // Focus lands on Approve when the card mounts; every move is a real
 // keydown on the focused row, and Enter resolves the gate keyboard-only.
-const rowText = () => page.evaluate(() => document.activeElement?.textContent?.trim() ?? '')
+// The feedback row is an input, so it names itself by its placeholder.
+const FEEDBACK_ROW = 'Tell Toddler what to do instead'
+const rowText = () => page.evaluate(() => {
+  const el = document.activeElement
+  if (el instanceof HTMLInputElement) return el.placeholder
+  return el?.textContent?.trim() ?? ''
+})
 const step = async (key, want) => {
   await page.keyboard.press(key)
   const got = await rowText()
@@ -218,9 +224,11 @@ const step = async (key, want) => {
   console.log(`phase1.5 gate focus -> ${JSON.stringify(got)} ${ok ? 'PASS' : 'FAIL (want "Approve")'}`)
   if (!ok) fails++
   await step('ArrowDown', 'Deny')
+  await step('ArrowDown', FEEDBACK_ROW)
   await step('ArrowDown', 'Approve') // wraps at the end
+  await step('ArrowUp', FEEDBACK_ROW) // wraps at the start
   await step('ArrowUp', 'Deny')
-  await step('ArrowUp', 'Approve') // wraps at the start
+  await step('ArrowUp', 'Approve')
   await page.keyboard.press('Enter')
 }
 
@@ -4138,6 +4146,44 @@ const waitFoldable = (count) =>
     replayed.chosen[0].includes('Redis')
   console.log(`phase24 record replays after reload -> ${JSON.stringify(replayed.chosen)} ${okReplay ? 'PASS' : 'FAIL'}`)
   if (!okReplay) fails++
+  await page.waitForTimeout(300)
+}
+
+// --- Phase 25: the gate's feedback row is a box, not a button ---
+// The default gate carries a feedback row; in the card it renders as a
+// text input whose placeholder is the row's own title.  Typing a correction
+// and pressing Enter answers with it, and the refusal reaches the tool card
+// with the user's words.
+{
+  await page.fill('textarea.input-bar-textarea', 'gate: feedback box')
+  await page.click('button:has-text("Send")')
+  await page.waitForSelector('.pause-prompt-feedback-input', { timeout: 15000 })
+
+  const box = await page.locator('.pause-prompt-feedback-input').evaluate((el) => ({
+    tag: el.tagName,
+    placeholder: el.getAttribute('placeholder'),
+    disabled: el.disabled,
+    buttons: [...el.closest('.pause-prompt-actions').querySelectorAll('button')]
+      .map((button) => button.textContent.trim()),
+  }))
+  const okBox =
+    box.tag === 'INPUT' &&
+    box.placeholder === 'Tell Toddler what to do instead' &&
+    !box.disabled &&
+    box.buttons.length === 2 &&
+    box.buttons[0] === 'Approve' &&
+    box.buttons[1] === 'Deny'
+  console.log(`phase25 feedback row is a box -> ${JSON.stringify(box)} ${okBox ? 'PASS' : 'FAIL'}`)
+  if (!okBox) fails++
+
+  await page.fill('.pause-prompt-feedback-input', 'use the other file')
+  await page.keyboard.press('Enter')
+  await page.waitForSelector('.pause-prompt', { state: 'detached', timeout: 8000 })
+
+  const out = await page.locator('.tool-call').last().evaluate((el) => el.innerText)
+  const okOut = out.includes('use the other file')
+  console.log(`phase25 feedback reaches the result ${okOut ? 'PASS' : 'FAIL'}`)
+  if (!okOut) fails++
   await page.waitForTimeout(300)
 }
 

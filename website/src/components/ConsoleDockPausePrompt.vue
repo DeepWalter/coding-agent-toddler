@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, reactive, ref, watch } from 'vue'
 import type {
   ChoiceLevel,
   Paused,
@@ -15,10 +15,8 @@ const emit = defineEmits<{
 }>()
 
 const pending = ref(false)
-const feedbackOpen = ref(false)
-const feedbackText = ref('')
-/** The row whose free text the box is collecting, when open. */
-const feedbackChoice = ref<number | null>(null)
+/** One text box per feedback row, keyed by the row's index. */
+const feedbackTexts = reactive<Record<number, string>>({})
 
 // The gate's rows.  An ask-user pause never reaches this card (the dock
 // renders ConsoleDockQuestion for it), but the type test keeps the payload
@@ -29,46 +27,33 @@ const rows = computed<PromptChoice[]>(() => {
 })
 
 const actionsEl = ref<HTMLElement | null>(null)
-const feedbackEl = ref<HTMLTextAreaElement | null>(null)
 
-/** The row at *level* — where the keyboard lands, and where it goes back
- *  after a mode change.  A gate may omit a level entirely. */
-function rowAt(level: ChoiceLevel): HTMLButtonElement | undefined {
-  const selector = `.pause-prompt-actions button[data-level="${level}"]`
-  return actionsEl.value?.querySelector<HTMLButtonElement>(selector) ?? undefined
+/** The control at *level* — where the keyboard lands, and where it goes
+ *  back after a mode change.  A gate may omit a level entirely. */
+function controlAt(level: ChoiceLevel): HTMLElement | undefined {
+  const selector = `.pause-prompt-actions [data-level="${level}"]`
+  return actionsEl.value?.querySelector<HTMLElement>(selector) ?? undefined
 }
 
 function focusChoice() {
   if (!props.paused.tool_id) return
-  ;(rowAt('approve') ?? rowAt('deny') ?? rowAt('feedback'))?.focus()
+  ;(
+    controlAt('approve') ?? controlAt('deny') ?? controlAt('feedback')
+  )?.focus()
 }
 
-function choose(row: PromptChoice, index: number) {
+function choose(index: number) {
   if (pending.value || !props.paused.tool_id) return
-  if (row.level === 'feedback') {
-    // The free-text row is not an answer by itself: open the box and let
-    // the user say what the model should do instead.
-    feedbackChoice.value = index
-    feedbackOpen.value = true
-    nextTick(() => feedbackEl.value?.focus())
-    return
-  }
   pending.value = true
   emit('answer', [{ choice: index }])
 }
 
-function submitFeedback() {
-  if (
-    pending.value
-    || !props.paused.tool_id
-    || feedbackChoice.value === null
-  ) {
-    return
-  }
-  const text = feedbackText.value.trim()
+function submitFeedback(index: number) {
+  if (pending.value || !props.paused.tool_id) return
+  const text = (feedbackTexts[index] ?? '').trim()
   if (!text) return
   pending.value = true
-  emit('answer', [{ choice: feedbackChoice.value, content: text }])
+  emit('answer', [{ choice: index, content: text }])
 }
 
 // Keyboard focus follows the card: land on the first actionable row at
@@ -83,9 +68,9 @@ function submitFeedback() {
 // the id; a replay (`tool_id: null`) asks nothing and takes nothing.
 watch(() => props.paused?.tool_id, () => {
   pending.value = false
-  feedbackOpen.value = false
-  feedbackText.value = ''
-  feedbackChoice.value = null
+  for (const index of Object.keys(feedbackTexts)) {
+    delete feedbackTexts[Number(index)]
+  }
   nextTick(focusChoice)
 })
 
@@ -136,40 +121,38 @@ nextTick(focusChoice)
       (tool call not in view — reload or cancel)
     </span>
     <div ref="actionsEl" class="pause-prompt-actions">
-      <button
-        v-for="(row, index) in rows"
-        :key="`${row.level}-${index}`"
-        type="button"
-        class="btn"
-        :class="{
-          primary: row.level === 'approve',
-          danger: row.level === 'deny',
-        }"
-        :data-level="row.level"
-        :disabled="pending || !paused.tool_id"
-        @click="choose(row, index)"
-      >
-        {{ row.title }}
-      </button>
-    </div>
-    <div v-if="feedbackOpen" class="pause-prompt-feedback">
-      <textarea
-        ref="feedbackEl"
-        v-model="feedbackText"
-        class="pause-prompt-feedback-input"
-        rows="2"
-        placeholder="Tell the model what to do instead…"
-        :disabled="pending || !paused.tool_id"
-        @keydown.enter.exact.prevent="submitFeedback"
-      ></textarea>
-      <button
-        type="button"
-        class="btn"
-        :disabled="pending || !paused.tool_id || !feedbackText.trim()"
-        @click="submitFeedback"
-      >
-        Send feedback
-      </button>
+      <template v-for="(row, index) in rows" :key="`${row.level}-${index}`">
+        <!-- A feedback row is its own box: there is no separate row to
+             pick first, so the correction is typed straight into the
+             choice and Enter answers with it.  The row's own title is
+             the hint — the tool worded it for this call. -->
+        <input
+          v-if="row.level === 'feedback'"
+          v-model="feedbackTexts[index]"
+          type="text"
+          class="pause-prompt-feedback-input"
+          :data-level="row.level"
+          :placeholder="row.title"
+          :aria-label="row.title"
+          autocomplete="off"
+          :disabled="pending || !paused.tool_id"
+          @keydown.enter.exact.prevent="submitFeedback(index)"
+        />
+        <button
+          v-else
+          type="button"
+          class="btn"
+          :class="{
+            primary: row.level === 'approve',
+            danger: row.level === 'deny',
+          }"
+          :data-level="row.level"
+          :disabled="pending || !paused.tool_id"
+          @click="choose(index)"
+        >
+          {{ row.title }}
+        </button>
+      </template>
     </div>
   </div>
 </template>

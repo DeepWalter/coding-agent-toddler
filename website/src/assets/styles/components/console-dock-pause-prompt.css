@@ -85,3 +85,33 @@
   gap: 6px;
   margin-top: 6px;
 }
+
+/* The feedback row is a box, not a button: typing the correction is how
+   the user picks it, and Enter answers with it.  Styled like the input
+   bar's textarea — it is the same thing, text the user writes — but full
+   width so it reads as one more row of the stack. */
+.pause-prompt-feedback-input {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  background: var(--editor-bg);
+  color: var(--text);
+  border: 1px solid var(--editor-border);
+  border-radius: 6px;
+  font: inherit;
+  outline: none;
+}
+
+.pause-prompt-feedback-input::placeholder {
+  color: var(--text-muted);
+}
+
+/* The rove's mark, drawn as a border here: the box's editor background is
+   already a fill, and tinting it again would read as a second surface. */
+.pause-prompt-feedback-input.is-selected:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.pause-prompt-feedback-input:disabled {
+  opacity: 0.55;
+}
