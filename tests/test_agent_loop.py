@@ -610,7 +610,11 @@ class TestPermissionGating:
         assert paused[0].prompt.choices.type is ChoiceType.SINGLE
         assert [
             row.level for row in paused[0].prompt.choices.data
-        ] == [ChoiceLevel.APPROVE, ChoiceLevel.DENY]
+        ] == [
+            ChoiceLevel.APPROVE,
+            ChoiceLevel.DENY,
+            ChoiceLevel.FEEDBACK,
+        ]
 
         # Tool should have executed after approval.
         ends = [e for e in events if isinstance(e, ToolCallEnd)]

@@ -287,6 +287,10 @@ class TestBusyRejection:
                     "data": [
                         {"title": "Approve", "level": "approve"},
                         {"title": "Deny", "level": "deny"},
+                        {
+                            "title": "Tell Toddler what to do instead",
+                            "level": "feedback",
+                        },
                     ],
                 },
             }
@@ -326,6 +330,7 @@ class TestToolApproval:
                 "data": [
                     {"title": "Approve", "level": "approve"},
                     {"title": "Deny", "level": "deny"},
+                    {"title": "Tell Toddler what to do instead", "level": "feedback"},
                 ],
             }
 

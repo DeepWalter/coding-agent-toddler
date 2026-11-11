@@ -102,6 +102,7 @@ class TestToolCallPrompt:
                 "data": [
                     {"title": "Approve", "level": "approve"},
                     {"title": "Deny", "level": "deny"},
+                    {"title": "Tell Toddler what to do instead", "level": "feedback"},
                 ],
             },
         }
@@ -184,6 +185,16 @@ class TestPromptParts:
         assert _BareTool()._prompt_title() == ALLOW_CALL_TITLE
         assert _BareTool()._prompt_content(command="ls -la") is None
         assert _BareTool()._prompt_choices() is DEFAULT_SINGLE_CHOICES
+
+    def test_the_default_gate_offers_a_feedback_row(self):
+        assert [row.level for row in DEFAULT_SINGLE_CHOICES.data] == [
+            ChoiceLevel.APPROVE,
+            ChoiceLevel.DENY,
+            ChoiceLevel.FEEDBACK,
+        ]
+        assert [row.title for row in DEFAULT_SINGLE_CHOICES.data] == [
+            "Approve", "Deny", "Tell Toddler what to do instead",
+        ]
 
     def test_one_override_leaves_the_others_answered(self):
         prompt = _TitledTool().build_call_prompt(anything="at all")

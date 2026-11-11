@@ -352,6 +352,10 @@ class TestSerializeEvent:
                     "data": [
                         {"title": "Approve", "level": "approve"},
                         {"title": "Deny", "level": "deny"},
+                        {
+                            "title": "Tell Toddler what to do instead",
+                            "level": "feedback",
+                        },
                     ],
                 },
             },
@@ -374,6 +378,10 @@ class TestSerializeEvent:
                     "data": [
                         {"title": "Approve", "level": "approve"},
                         {"title": "Deny", "level": "deny"},
+                        {
+                            "title": "Tell Toddler what to do instead",
+                            "level": "feedback",
+                        },
                     ],
                 },
             },

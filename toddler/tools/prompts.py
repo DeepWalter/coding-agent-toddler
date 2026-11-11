@@ -193,14 +193,17 @@ class PromptChoices:
         return AnswerVerdict.DENIED
 
 
-#: The ordinary gate's rows, and the default every prompt carries.  A tool
-#: that wants different wording or a feedback row overrides
+#: The ordinary gate's rows, and the default every prompt carries.  A
+#: tool that wants different wording or fewer rows overrides
 #: :meth:`~toddler.tools.base.BaseTool._prompt_choices`.
 DEFAULT_SINGLE_CHOICES = PromptChoices(
     type=ChoiceType.SINGLE,
     data=(
         PromptChoice("Approve", ChoiceLevel.APPROVE),
         PromptChoice("Deny", ChoiceLevel.DENY),
+        PromptChoice(
+            "Tell Toddler what to do instead", ChoiceLevel.FEEDBACK,
+        ),
     ),
 )
 
@@ -223,8 +226,9 @@ class ToolCallPrompt:
     rather than an empty string, and the wire form keeps the difference.
 
     ``choices`` is what the pause asks for.  An ordinary call carries the
-    approve/deny set (:data:`DEFAULT_SINGLE_CHOICES`); a tool may offer
-    rows of its own, and an ask-user tool carries questions instead.
+    approve/deny/feedback set (:data:`DEFAULT_SINGLE_CHOICES`); a tool
+    may offer rows of its own, and an ask-user tool carries questions
+    instead.
     ``choices.type`` is the pause's discriminant: ``SINGLE`` is answered
     with one :class:`PromptAnswer` whose row's level decides the outcome,
     ``QUESTION`` with one :class:`PromptAnswer` per question, in order.

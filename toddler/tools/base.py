@@ -359,9 +359,9 @@ class BaseTool(ABC):
     def _prompt_choices(self, **kwargs) -> PromptChoices:  # noqa: ARG002
         """The rows the pause offers, or the questions it asks.
 
-        Default: the ordinary approve/deny gate
+        Default: the ordinary approve/deny/feedback gate
         (:data:`DEFAULT_SINGLE_CHOICES`).  A tool varies the wording or
-        adds a feedback row by overriding this; an ask-user tool returns a
+        drops a row by overriding this; an ask-user tool returns a
         ``QUESTION`` payload instead.
         """
         return DEFAULT_SINGLE_CHOICES

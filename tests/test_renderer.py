@@ -808,7 +808,7 @@ class TestPausePromptLine:
 
         out = buf.getvalue()
         assert "Allow this tool call? — set -e [ -f notes.md ] && rm notes.md[/]" in out
-        assert "[Approve/Deny]" in out
+        assert "[Approve/Deny/Tell Toddler what to do instead]" in out
 
     def test_the_streaming_title_keeps_the_brackets(self):
         """A title is markup: passed as a plain string, ``[ -f x ]`` reads
