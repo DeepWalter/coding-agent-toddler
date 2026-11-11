@@ -518,6 +518,25 @@ export interface GitDiffPayload {
   hunks: DiffHunk[]
 }
 
+// ---------------------------------------------------------------------------
+// Git baseline (GET /api/git/baseline)
+// ---------------------------------------------------------------------------
+
+/** Wire payload of GET /api/git/baseline — the HEAD side of one file for
+ * the editor's live diff decorations.  `available: false` means git cannot
+ * read the repository at all; `exists: false` means git could be read but
+ * HEAD has no blob at the path (untracked or newly added), which the editor
+ * shows as every line added.  Binary and unmerged HEAD content carries no
+ * diffable text, so `content` is empty. */
+export interface GitBaselinePayload {
+  path: string
+  available: boolean
+  exists: boolean
+  binary: boolean
+  unmerged: boolean
+  content: string
+}
+
 /** The text a tool card asks the editor to reveal, and — when the call
  *  recorded it — the exact 1-based line and 0-based column where it starts.
  *  The position is what disambiguates a replacement that also occurs

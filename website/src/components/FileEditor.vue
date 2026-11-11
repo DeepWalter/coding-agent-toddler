@@ -8,6 +8,8 @@ import type { Language } from '@codemirror/language'
 import { api } from '../api'
 import { foldingExtensions } from '../editor/folding'
 import { languageForName, languageForPath } from '../editor/languages'
+import { computeScmChanges, scmExtensions, setScmChanges } from '../editor/scm'
+import type { ScmLineChange } from '../editor/lineDiff'
 import { editorTheme, highlightExt } from '../editor/theme'
 import { gitBadgeClass } from '../gitStatus'
 import type { GitStatusState, RevealRequest, TabEntry } from '../types'
@@ -37,7 +39,12 @@ import FileEditorDocView from './FileEditorDocView.vue'
  * blocks for the stream and plain-text buffers.  Tabs refetch from disk on activation, on the end
  * frame of a write tool that names their file, and once more when a turn
  * ends (the catch-all for shell/formatter changes) — unless they have
- * unsaved edits, which always win.
+ * unsaved edits, which always win.  SCM decorations (green/blue gutter
+ * bars, a red deletion triangle, and an overview ruler) are diffed live
+ * against the file's HEAD baseline from `/api/git/baseline`: edits schedule
+ * a debounced recompute, tab activation and every git-status refresh
+ * refetch the baseline, and the marks live in the tab's EditorState so a
+ * switch carries them along.
  */
 
 const props = defineProps<{
@@ -74,6 +81,12 @@ interface EditorTab {
   // never be wrapped in Vue proxies.  null until the first load succeeds.
   state: EditorState | null
   dirty: boolean // unsaved edits — set by the update listener, cleared on load/save
+  // HEAD side for the live SCM decorations: '' when HEAD has no blob at
+  // the path (untracked/new — every line is added), null when git cannot
+  // provide a baseline (non-repo, binary, unmerged).  `baselineFetched`
+  // tells "not asked yet" apart from "asked, no baseline".
+  baseline: string | null
+  baselineFetched: boolean
   totalLines: number
   loading: boolean
   loadError: string | null
@@ -145,6 +158,17 @@ function beginFetch(path: string): number {
 function isStale(path: string, seq: number): boolean {
   return fetchTokens.get(path) !== seq
 }
+
+// Per-path HEAD-baseline fetch tokens — a newer activation or git-status
+// refresh must win over an older in-flight response (same idea as the
+// document fetch tokens above).
+let baselineSeq = 0
+const baselineTokens = new Map<string, number>()
+
+// Live-diff debounce timers, one per path.  The recompute reads the
+// current buffer synchronously; a timer firing after a tab switch finds
+// the tab by path and applies to the right state.
+const scmTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 // A tool card's reveal is one-shot: it names a string to select in the file
 // the tab is opening.  It waits for the tab's fetch or refresh to land — the
@@ -228,6 +252,86 @@ function applyPendingReveal() {
   // about reading it, selection or not.
   view.focus()
   pendingReveal = null
+}
+
+// ---------------------------------------------------------------------------
+// Live SCM diff decorations
+// ---------------------------------------------------------------------------
+
+function clearScmTimer(path: string) {
+  const timer = scmTimers.get(path)
+  if (timer !== undefined) {
+    clearTimeout(timer)
+    scmTimers.delete(path)
+  }
+}
+
+/** Debounced recompute of a tab's diff marks.  Typing only schedules;
+ *  the actual diff reads the buffer when the timer fires. */
+function scheduleScm(path: string, delay = 250) {
+  const tab = tabs.value[path]
+  if (!tab || tab.kind !== 'file' || isExternal(path)) return
+  clearScmTimer(path)
+  scmTimers.set(path, setTimeout(() => {
+    scmTimers.delete(path)
+    recomputeScm(path)
+  }, delay))
+}
+
+/** Diff the buffer against its HEAD baseline and update the state field.
+ *  A missing baseline (git unavailable, binary, conflict) clears the
+ *  marks; no state yet means the load will schedule this itself. */
+function recomputeScm(path: string) {
+  const tab = tabs.value[path]
+  if (!tab || tab.kind !== 'file' || !tab.baselineFetched) return
+  if (tab.baseline === null) {
+    applyScm(path, [])
+    return
+  }
+  const state = currentKey === path && view ? view.state : tab.state
+  if (!state) return
+  applyScm(path, computeScmChanges(tab.baseline, state.doc.toString()))
+}
+
+/** Apply an effects-only change set: the displayed view dispatches it,
+ *  an inactive tab updates its stored state in place.  Neither touches the
+ *  document, undo history, or the dirty flag. */
+function applyScm(path: string, changes: ScmLineChange[]) {
+  const tab = tabs.value[path]
+  if (!tab) return
+  if (currentKey === path && view) {
+    view.dispatch({ effects: setScmChanges.of(changes) })
+  } else if (tab.state) {
+    tab.state = markRaw(tab.state.update({ effects: setScmChanges.of(changes) }).state)
+  }
+}
+
+/** Fetch the HEAD side for a file tab.  The baseline is independent of the
+ *  worktree, so a dirty buffer still gets live marks; a failed or
+ *  unavailable baseline simply leaves the tab undecorated. */
+async function fetchBaseline(path: string, tab: EditorTab) {
+  if (tab.kind !== 'file' || isExternal(path)) {
+    tab.baselineFetched = true
+    tab.baseline = null
+    return
+  }
+  const seq = ++baselineSeq
+  baselineTokens.set(path, seq)
+  try {
+    const payload = await api.gitBaseline(path)
+    if (baselineTokens.get(path) !== seq || tabs.value[path] !== tab) return
+    tab.baselineFetched = true
+    tab.baseline =
+      payload.available && !payload.binary && !payload.unmerged
+        ? (payload.exists ? payload.content : '')
+        : null
+    scheduleScm(path, 0)
+  } catch {
+    if (baselineTokens.get(path) !== seq || tabs.value[path] !== tab) return
+    tab.baselineFetched = true
+    tab.baseline = null
+    scheduleScm(path, 0)
+  }
 }
 
 /** The record key a tab's buffer lives under, or null for a kind that owns
@@ -319,9 +423,10 @@ function ensureTab(key: string, kind: 'file' | 'text'): EditorTab {
   tabs.value[key] = {
     kind,
     readOnly: kind === 'text' || isExternal(key),
-    state: null, dirty: false, totalLines: 0,
-    loading: false, loadError: null, saving: false, saveError: null,
-    saved: false, flashTimer: null, scrollTop: 0,
+    state: null, dirty: false, baseline: null, baselineFetched: false,
+    totalLines: 0, loading: false, loadError: null,
+    saving: false, saveError: null, saved: false,
+    flashTimer: null, scrollTop: 0,
   }
   // Re-read: the store wraps the literal in a reactive proxy on get, and
   // callers must mutate the proxy — writes to the raw literal would not
@@ -336,6 +441,8 @@ function buildExtensions(
   tab: EditorTab,
   language: Language | null,
   readOnly = false,
+  scm = false,
+  onDocChange?: () => void,
 ): Extension[] {
   // A read-only buffer keeps every reader's affordance — selection, copy,
   // scrolling, highlighting, the line numbers — and drops the ones that
@@ -360,13 +467,19 @@ function buildExtensions(
           ...historyKeymap,
         ]),
         EditorView.updateListener.of((update) => {
-          if (update.docChanged) tab.dirty = true
+          if (!update.docChanged) return
+          tab.dirty = true
+          onDocChange?.()
         }),
       ]
 
   return [
     ...editing,
     drawSelection(),
+    // The SCM column is leftmost, before the line numbers it sits beside;
+    // the ruler plugin rides along in the same bundle.  Text tabs and
+    // external files pass `scm: false`.
+    ...(scm ? [scmExtensions] : []),
     lineNumbers(),
     // After the line numbers, so the fold column sits to their right; shared
     // by every buffer, read-only ones included.
@@ -383,10 +496,12 @@ function buildState(
   doc: string,
   language: Language | null,
   readOnly = false,
+  scm = false,
+  onDocChange?: () => void,
 ): EditorState {
   return EditorState.create({
     doc,
-    extensions: buildExtensions(tab, language, readOnly),
+    extensions: buildExtensions(tab, language, readOnly, scm, onDocChange),
   })
 }
 
@@ -396,9 +511,10 @@ function buildState(
 const noopTab: EditorTab = {
   kind: 'file',
   readOnly: false,
-  state: null, dirty: false, totalLines: 0,
-  loading: false, loadError: null, saving: false, saveError: null,
-  saved: false, flashTimer: null, scrollTop: 0,
+  state: null, dirty: false, baseline: null, baselineFetched: false,
+  totalLines: 0, loading: false, loadError: null,
+  saving: false, saveError: null, saved: false,
+  flashTimer: null, scrollTop: 0,
 }
 const emptyState = markRaw(EditorState.create({ doc: '', extensions: buildExtensions(noopTab, null) }))
 
@@ -422,6 +538,11 @@ function switchToTab(path: string) {
   const tab = tabs.value[path]
   if (tab?.state) {
     showTab(tab, path, true)
+    // HEAD may have moved while the tab was in the background (commit,
+    // checkout), so refresh the baseline on activation; the current
+    // buffer keeps its marks until that response lands.
+    void fetchBaseline(path, tab)
+    scheduleScm(path, 0)
     if (!tab.dirty) void refreshTab(path) // disk may have moved under us
     else applyPendingReveal() // no refresh will run to apply it
   } else {
@@ -479,9 +600,13 @@ async function loadTab(path: string, focusOnLoad = false) {
     if (isStale(path, seq) || !tabs.value[path]) return // superseded or closed
     const language = languageForPath(path)
     tab.totalLines = res.total_lines
-    tab.state = markRaw(buildState(tab, res.content, language, tab.readOnly))
+    tab.state = markRaw(buildState(
+      tab, res.content, language, tab.readOnly,
+      !tab.readOnly, () => scheduleScm(path),
+    ))
     tab.dirty = false
     tab.loading = false
+    void fetchBaseline(path, tab)
     if (props.active?.kind === 'file' && props.active.path === path && view) {
       showTab(tab, path, focusOnLoad)
       if (language) {
@@ -533,8 +658,14 @@ async function refreshTab(path: string) {
       // anchor logic can nudge the scroll).
       return
     }
-    tab.state = markRaw(buildState(tab, res.content, language, tab.readOnly))
+    tab.state = markRaw(buildState(
+      tab, res.content, language, tab.readOnly,
+      !tab.readOnly, () => scheduleScm(path),
+    ))
     tab.dirty = false
+    // The rebuilt state starts with no decorations; its stored baseline
+    // (if fetched) is enough to repaint them without another request.
+    scheduleScm(path, 0)
     if (currentKey === path && view) {
       // Live swap while the user looks at the tab — keep their scroll,
       // unless a reveal owns it (its selection scrolls itself into view).
@@ -579,6 +710,9 @@ async function save() {
         ? view.state.doc.toString()
         : (tab.state?.doc.toString() ?? text)
     tab.dirty = now !== text
+    // Settle any pending debounce against the just-saved buffer; HEAD did
+    // not move, so the baseline is unchanged.
+    scheduleScm(path, 0)
     tab.saved = true
     if (tab.flashTimer) clearTimeout(tab.flashTimer)
     tab.flashTimer = setTimeout(() => {
@@ -610,6 +744,8 @@ function removeTab(key: string) {
   const tab = tabs.value[key]
   if (tab?.flashTimer) clearTimeout(tab.flashTimer)
   fetchTokens.delete(key) // any in-flight fetch for it is now stale
+  baselineTokens.delete(key)
+  clearScmTimer(key)
   delete tabs.value[key]
 }
 
@@ -660,6 +796,8 @@ onUnmounted(() => {
   for (const tab of Object.values(tabs.value)) {
     if (tab.flashTimer) clearTimeout(tab.flashTimer)
   }
+  for (const timer of scmTimers.values()) clearTimeout(timer)
+  scmTimers.clear()
 })
 
 // A write tool's end frame names the file it changed: refresh that tab now.
@@ -685,6 +823,23 @@ watch(() => props.refreshAll, (token, previous) => {
     }
   }
 })
+
+// A git-status refresh can move HEAD under the active file even when its
+// badge letter or the branch name did not change (a commit of another
+// staged path, a checkout to a branch with the same letter).  useGitStatus
+// replaces `files` wholesale on every refresh, so its identity is the
+// signal; refetching is cheap and the recompute that follows either clears
+// committed marks or picks up the new HEAD.
+watch(
+  () => props.git.files,
+  () => {
+    if (props.active?.kind !== 'file') return
+    const path = props.active.path
+    const tab = tabs.value[path]
+    if (!tab || tab.kind !== 'file' || isExternal(path)) return
+    void fetchBaseline(path, tab)
+  },
+)
 
 // A card's reveal arrives with (or just before) the active-tab change that
 // opens its file.  This watcher is created first so it can mark the request

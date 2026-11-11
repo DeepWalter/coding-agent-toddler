@@ -1,4 +1,4 @@
-import type { GitCommitRequest, GitDiffPayload, GitFileRequest, GitStatusPayload, HunkApplyRequest, ReplayMessage, SessionSummary, TreeEntry } from './types'
+import type { GitBaselinePayload, GitCommitRequest, GitDiffPayload, GitFileRequest, GitStatusPayload, HunkApplyRequest, ReplayMessage, SessionSummary, TreeEntry } from './types'
 
 /**
  * Thin client for the /api REST endpoints.  Paths are relative so the
@@ -59,6 +59,14 @@ export const api = {
     return request(`/api/git/diff?path=${encodeURIComponent(path)}&staged=${staged ? 1 : 0}`, {
       cache: 'no-store',
     }) as Promise<GitDiffPayload>
+  },
+
+  gitBaseline(path: string): Promise<GitBaselinePayload> {
+    // no-store: HEAD moves under a tab (commit/checkout), and this is the
+    // baseline its live decorations diff against.
+    return request(`/api/git/baseline?path=${encodeURIComponent(path)}`, {
+      cache: 'no-store',
+    }) as Promise<GitBaselinePayload>
   },
 
   gitApplyHunk(body: HunkApplyRequest): Promise<{ ok: boolean }> {

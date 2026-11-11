@@ -150,6 +150,66 @@ export const editorTheme = EditorView.theme({
     backgroundColor: 'var(--editor-surface-3)',
     color: 'var(--accent-hover)',
   },
+  // SCM diff gutter: a narrow rail left of the line numbers.  Added and
+  // modified lines draw a full-height bar; a deletion draws a triangle
+  // via ::after so it can coexist with a bar on a clamped EOF line.
+  '.cm-scmGutter': {
+    width: '6px',
+    flexShrink: '0',
+  },
+  '.cm-scmGutter .cm-gutterElement': {
+    padding: '0',
+    position: 'relative',
+  },
+  '.cm-scmGutter .cm-gutterElement.cm-scm-add::before': {
+    content: '""',
+    position: 'absolute',
+    left: '1px',
+    top: '0',
+    bottom: '0',
+    width: '3px',
+    background: 'var(--success)',
+  },
+  '.cm-scmGutter .cm-gutterElement.cm-scm-mod::before': {
+    content: '""',
+    position: 'absolute',
+    left: '1px',
+    top: '0',
+    bottom: '0',
+    width: '3px',
+    background: 'var(--accent)',
+  },
+  '.cm-scmGutter .cm-gutterElement.cm-scm-del::after': {
+    content: '""',
+    position: 'absolute',
+    left: '1px',
+    top: '50%',
+    transform: 'translateY(-50%)',
+    width: '0',
+    height: '0',
+    borderTop: '4px solid transparent',
+    borderBottom: '4px solid transparent',
+    borderLeft: '5px solid var(--error)',
+  },
+  // Overview ruler: absolutely positioned beside the native scrollbar,
+  // mirroring the gutter kinds as vertical ticks.
+  '.cm-scmRuler': {
+    position: 'absolute',
+    top: '0',
+    right: '0',
+    width: '10px',
+    pointerEvents: 'none',
+    zIndex: '250',
+  },
+  '.cm-scmRuler .cm-scmTick': {
+    position: 'absolute',
+    left: '2px',
+    width: '6px',
+    borderRadius: '1px',
+  },
+  '.cm-scmRuler .cm-scmTick.add': { background: 'var(--success)' },
+  '.cm-scmRuler .cm-scmTick.mod': { background: 'var(--accent)' },
+  '.cm-scmRuler .cm-scmTick.del': { background: 'var(--error)' },
   '.cm-activeLine': {
     backgroundColor: 'var(--active-line)',
   },
