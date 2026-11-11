@@ -4346,6 +4346,8 @@ const waitFoldable = (count) =>
     return {
       gutter: !!document.querySelector('.cm-scmGutter'),
       ruler: !!document.querySelector('.cm-scmRuler'),
+      order: [...document.querySelectorAll('.cm-gutters-before > .cm-gutter')]
+        .map((el) => el.className),
       add: markerTops('add'),
       mod: markerTops('mod'),
       del: markerTops('del'),
@@ -4359,8 +4361,11 @@ const waitFoldable = (count) =>
   })
   const near = (a, b) =>
     typeof a === 'number' && typeof b === 'number' && Math.abs(a - b) < 2
+  const idx = (name) => scm.order.findIndex((cls) => cls.includes(name))
   const okInitial =
     scm.gutter && scm.ruler
+    && idx('cm-lineNumbers') < idx('cm-scmGutter')
+    && idx('cm-scmGutter') < idx('cm-foldGutter')
     && scm.add.length === 1 && scm.mod.length === 1 && scm.del.length === 1
     && near(scm.mod[0], scm.line2)
     && near(scm.del[0], scm.line10)

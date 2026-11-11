@@ -476,13 +476,13 @@ function buildExtensions(
   return [
     ...editing,
     drawSelection(),
-    // The SCM column is leftmost, before the line numbers it sits beside;
-    // the ruler plugin rides along in the same bundle.  Text tabs and
-    // external files pass `scm: false`.
-    ...(scm ? [scmExtensions] : []),
     lineNumbers(),
-    // After the line numbers, so the fold column sits to their right; shared
-    // by every buffer, read-only ones included.
+    // The SCM column sits between the numbers and the fold column; the
+    // ruler plugin rides along in the same bundle.  Text tabs and external
+    // files pass `scm: false`.
+    ...(scm ? [scmExtensions] : []),
+    // After the line numbers and SCM rail, so the fold column stays on the
+    // right; shared by every buffer, read-only ones included.
     ...foldingExtensions(language),
     EditorView.lineWrapping,
     editorTheme,

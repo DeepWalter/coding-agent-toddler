@@ -113,8 +113,10 @@ One module-level extension bundle, reused by every SCM-enabled state:
     `elementClass` is `cm-scm-add` / `cm-scm-mod` / `cm-scm-del`; one entry per
     range (`from = doc.line(first).from`, `to = doc.line(last).to`), deletion
     entries being points.
-- `scmGutter = gutter({ class: 'cm-scmGutter', markers: … })`, spread **before**
-  `lineNumbers()` in `buildExtensions`, so the SCM column is leftmost.
+- `scmGutter = gutter({ class: 'cm-scmGutter', markers: … })`, spread after
+  `lineNumbers()` and before `foldingExtensions(language)` in
+  `buildExtensions`, so the SCM column sits between the numbers and the fold
+  column.
 - `scmRuler` is a `ViewPlugin`:
   - appends `<div class="cm-scmRuler" aria-hidden="true">` to `view.dom`
     (`.cm-editor` is `position: relative`) and removes it in `destroy()`;

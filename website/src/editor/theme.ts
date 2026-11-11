@@ -150,9 +150,10 @@ export const editorTheme = EditorView.theme({
     backgroundColor: 'var(--editor-surface-3)',
     color: 'var(--accent-hover)',
   },
-  // SCM diff gutter: a narrow rail left of the line numbers.  Added and
-  // modified lines draw a full-height bar; a deletion draws a triangle
-  // via ::after so it can coexist with a bar on a clamped EOF line.
+  // SCM diff gutter: a narrow rail between the line numbers and the fold
+  // column.  Added and modified lines draw a full-height bar; a deletion
+  // draws a triangle via ::after so it can coexist with a bar on a clamped
+  // EOF line.
   '.cm-scmGutter': {
     width: '6px',
     flexShrink: '0',
