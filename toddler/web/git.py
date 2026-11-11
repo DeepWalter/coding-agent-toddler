@@ -28,6 +28,7 @@ __all__ = [
     "DiffError",
     "build_sections",
     "git_apply_hunk",
+    "git_baseline",
     "git_commit",
     "git_diff",
     "git_file_action",
@@ -411,6 +412,83 @@ async def git_diff(root: Path, rel: str, *, staged: bool) -> dict[str, Any]:
         "new_path": None if parsed["new_dev_null"] else rel,
         "hunks": [asdict(h) for h in parsed["hunks"]],
     }
+
+
+def _baseline_payload(
+    rel: str,
+    *,
+    available: bool = True,
+    exists: bool = False,
+    binary: bool = False,
+    unmerged: bool = False,
+    content: str = "",
+) -> dict[str, Any]:
+    """The wire shape for :func:`git_baseline` — one place for the keys."""
+    return {
+        "path": rel,
+        "available": available,
+        "exists": exists,
+        "binary": binary,
+        "unmerged": unmerged,
+        "content": content,
+    }
+
+
+async def git_baseline(root: Path, rel: str) -> dict[str, Any]:
+    """The HEAD version of *rel*, for live editor diff decorations.
+
+    Returns ``{path, available, exists, binary, unmerged, content}``.
+    ``available: false`` means git cannot read the repository at all
+    (non-repo, missing git, timeout) — the editor shows no decorations.
+    ``exists: false`` means git could be read but HEAD has no blob at the
+    path: an untracked or newly added file, which the editor treats as
+    every line added (``content`` is then empty).  That distinction
+    matters — collapsing the two would paint a whole file green merely
+    because the server is not a repository.
+
+    The baseline is the worktree-independent HEAD side, so staged and
+    unstaged edits both diff against it.  Unmerged paths report
+    ``unmerged: true`` (git's combined conflict diff is not a usable
+    baseline), as do binary or non-UTF-8 blobs, whose bytes are not
+    returned.  Bad paths raise :class:`DiffError` exactly like the other
+    git endpoints; a repository git cannot read degrades to ``available:
+    false`` instead of an error, matching :func:`git_status`.
+    """
+    try:
+        path = resolve_relative(root, rel)
+    except FileApiError as exc:
+        raise DiffError(exc.status_code, exc.message) from None
+    if path.is_dir():
+        raise DiffError(400, f"not a file: {rel!r}")
+
+    try:
+        kind, _x, _y = await _path_state(root, rel)
+        if kind == "unmerged":
+            return _baseline_payload(rel, unmerged=True)
+        # Whether HEAD has the path is the real question — not what the
+        # index says.  This also handles a staged deletion recreated in
+        # the worktree, whose porcelain state reads untracked.
+        _stdout, _stderr, rc = await _run_git(
+            "rev-parse", "--verify", "--quiet", "HEAD", cwd=root,
+        )
+        if rc != 0:  # unborn branch — nothing has ever been committed
+            return _baseline_payload(rel)
+        data, _stderr, rc = await _run_git(
+            "cat-file", "blob", f"HEAD:{rel}", cwd=root,
+        )
+    except DiffError:
+        # Not a repository, git unavailable, or a timed-out spawn: no
+        # decorations is the normal degradation, not a failed request.
+        return _baseline_payload(rel, available=False)
+    if rc != 0:  # path not in HEAD — untracked, staged-new, or renamed
+        return _baseline_payload(rel)
+    if b"\x00" in data:
+        return _baseline_payload(rel, binary=True)
+    try:
+        content = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return _baseline_payload(rel, binary=True)
+    return _baseline_payload(rel, exists=True, content=content)
 
 
 # ---------------------------------------------------------------------------

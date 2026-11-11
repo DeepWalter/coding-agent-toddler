@@ -197,6 +197,18 @@ async def git_diff(
         return _diff_error(exc)
 
 
+@router.get("/git/baseline", response_model=None)
+async def git_baseline(
+    path: str = Query(...),
+    state: WebAppState = _GetState,
+) -> dict | JSONResponse:
+    """The file's HEAD blob — the baseline for live editor diff marks."""
+    try:
+        return await git.git_baseline(state.repo_root, path)
+    except git.DiffError as exc:
+        return _diff_error(exc)
+
+
 @router.post("/git/hunk", response_model=None)
 async def git_hunk_apply(
     payload: HunkApplyRequest,

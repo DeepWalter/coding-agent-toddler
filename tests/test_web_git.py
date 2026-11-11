@@ -328,6 +328,218 @@ class TestStatusEndpoint:
 
 
 # ============================================================================
+# GET /api/git/baseline — the HEAD side for editor diff decorations
+# ============================================================================
+
+
+def _baseline(client, path: str) -> dict:
+    resp = client.get("/api/git/baseline", params={"path": path})
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+@pytest.mark.skipif(
+    shutil.which("git") is None, reason="git is not installed",
+)
+class TestBaselineEndpoint:
+    def test_clean_file_serves_head_content(self, tmp_path):
+        _git_repo(tmp_path)
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            payload = _baseline(client, "a.txt")
+        assert payload == {
+            "path": "a.txt",
+            "available": True,
+            "exists": True,
+            "binary": False,
+            "unmerged": False,
+            "content": "a",
+        }
+
+    def test_modified_file_still_serves_head(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        (repo / "a.txt").write_text("worktree")
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            payload = _baseline(client, "a.txt")
+        assert payload["content"] == "a"
+
+    def test_staged_and_unstaged_changes_use_head(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        (repo / "a.txt").write_text("staged")
+        _git("add", "a.txt", cwd=repo)
+        (repo / "a.txt").write_text("worktree")
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            payload = _baseline(client, "a.txt")
+        assert payload["exists"] is True
+        assert payload["content"] == "a"
+
+    def test_untracked_file_has_no_head_side(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        (repo / "new.txt").write_text("new")
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            payload = _baseline(client, "new.txt")
+        assert payload["available"] is True
+        assert payload["exists"] is False
+        assert payload["content"] == ""
+
+    def test_staged_new_file_has_no_head_side(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        (repo / "new.txt").write_text("new")
+        _git("add", "new.txt", cwd=repo)
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            payload = _baseline(client, "new.txt")
+        assert payload["available"] is True
+        assert payload["exists"] is False
+
+    def test_unborn_head_has_no_head_side(self, tmp_path):
+        repo = _repo(tmp_path)
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+        (repo / "a.txt").write_text("a")
+        _git("add", "a.txt", cwd=repo)
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            payload = _baseline(client, "a.txt")
+        assert payload["available"] is True
+        assert payload["exists"] is False
+
+    def test_empty_file_at_head(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        (repo / "empty.txt").write_text("")
+        _git("add", "empty.txt", cwd=repo)
+        _git("commit", "-qm", "empty", cwd=repo)
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            payload = _baseline(client, "empty.txt")
+        assert payload["exists"] is True
+        assert payload["content"] == ""
+        assert payload["binary"] is False
+
+    def test_binary_file_at_head(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        (repo / "bin.dat").write_bytes(b"a\x00b")
+        _git("add", "bin.dat", cwd=repo)
+        _git("commit", "-qm", "binary", cwd=repo)
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            payload = _baseline(client, "bin.dat")
+        assert payload["available"] is True
+        assert payload["exists"] is False
+        assert payload["binary"] is True
+        assert payload["content"] == ""
+
+    def test_non_utf8_file_at_head_is_binary(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        (repo / "latin1.txt").write_bytes(b"\xff\xfe")
+        _git("add", "latin1.txt", cwd=repo)
+        _git("commit", "-qm", "latin1", cwd=repo)
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            payload = _baseline(client, "latin1.txt")
+        assert payload["binary"] is True
+        assert payload["exists"] is False
+
+    def test_unmerged_file(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        _git("checkout", "-qb", "side", cwd=repo)
+        (repo / "a.txt").write_text("side")
+        _git("commit", "-qam", "side", cwd=repo)
+        _git("checkout", "-q", "main", cwd=repo)
+        (repo / "a.txt").write_text("main")
+        _git("commit", "-qam", "main", cwd=repo)
+        subprocess.run(
+            ["git", "merge", "side"], cwd=repo,
+            capture_output=True, check=False,
+        )
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            payload = _baseline(client, "a.txt")
+        assert payload["available"] is True
+        assert payload["unmerged"] is True
+        assert payload["exists"] is False
+        assert payload["content"] == ""
+
+    def test_non_repo_is_unavailable(self, tmp_path):
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            payload = _baseline(client, "a.txt")
+        assert payload["available"] is False
+        assert payload["exists"] is False
+
+    def test_missing_path_has_no_head_side(self, tmp_path):
+        _git_repo(tmp_path)
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            payload = _baseline(client, "missing.txt")
+        assert payload["available"] is True
+        assert payload["exists"] is False
+
+    def test_missing_git_is_unavailable(self, tmp_path, monkeypatch):
+        _git_repo(tmp_path)
+
+        async def failing_git(*args, **kwargs):
+            raise FileNotFoundError("git")
+
+        monkeypatch.setattr(web_git, "_git", failing_git)
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            payload = _baseline(client, "a.txt")
+        assert payload["available"] is False
+
+    def test_directory_is_rejected(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        (repo / "dir").mkdir()
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = client.get("/api/git/baseline", params={"path": "dir"})
+        assert resp.status_code == 400
+
+    def test_escaping_path_is_rejected(self, tmp_path):
+        _git_repo(tmp_path)
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            resp = client.get(
+                "/api/git/baseline", params={"path": "../outside"},
+            )
+        assert resp.status_code == 400
+
+    def test_space_and_unicode_path(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        name = "spä ce.txt"
+        (repo / name).write_text("unicode")
+        _git("add", name, cwd=repo)
+        _git("commit", "-qm", "unicode", cwd=repo)
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            payload = _baseline(client, name)
+        assert payload["exists"] is True
+        assert payload["content"] == "unicode"
+
+    def test_crlf_content_is_preserved(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        _git("config", "core.autocrlf", "false", cwd=repo)
+        (repo / "crlf.txt").write_bytes(b"one\r\ntwo\r\n")
+        _git("add", "crlf.txt", cwd=repo)
+        _git("commit", "-qm", "crlf", cwd=repo)
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            payload = _baseline(client, "crlf.txt")
+        assert payload["content"] == "one\r\ntwo\r\n"
+
+    def test_renamed_file_has_no_head_side(self, tmp_path):
+        repo = _git_repo(tmp_path)
+        _git("mv", "a.txt", "b.txt", cwd=repo)
+        app = _app(tmp_path)
+        with TestClient(app) as client:
+            payload = _baseline(client, "b.txt")
+        assert payload["available"] is True
+        assert payload["exists"] is False
+
+
+# ============================================================================
 # POST /api/git/hunk — per-hunk stage / unstage / revert
 # ============================================================================
 
