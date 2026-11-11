@@ -1789,6 +1789,50 @@ class TestUserQuestions:
         ]
         assert "Redis" in tool_messages[-1].blocks[-1].tool_result_content
 
+    async def test_an_other_answer_carries_the_users_text(
+        self, question_registry, question_executor, settings, conv_ctx,
+    ):
+        llm = MockLLMProvider(responses=[
+            _make_llm_response(
+                tool_blocks=[
+                    _make_tool_use_block(
+                        "q1", "ask_user", {"questions": _question_payload()},
+                    ),
+                ],
+                stop_reason="tool_use",
+            ),
+            _make_llm_response(text="Done", stop_reason="end_turn"),
+        ])
+        loop = self._loop(
+            llm, question_registry, question_executor, settings, conv_ctx,
+        )
+
+        other_index = -1
+        ends = []
+        async for event in loop.run("Ask", config=TEST_TURN_CONFIG):
+            if (
+                isinstance(event, AgentPaused)
+                and event.prompt.choices.type is ChoiceType.QUESTION
+            ):
+                other_index = len(event.prompt.choices.data[0].choices) - 1
+                # A blank Other is not an answer; typed words settle it.
+                assert loop.answer_tool_call(
+                    "q1", [PromptAnswer(choice=other_index)],
+                ) is False
+                assert loop.answer_tool_call(
+                    "q1",
+                    [PromptAnswer(choice=other_index, content="DuckDB")],
+                ) is True
+            if isinstance(event, ToolCallEnd):
+                ends.append(event)
+
+        assert len(ends) == 1
+        assert ends[0].result.success
+        assert "DuckDB" in ends[0].result.output
+        assert ends[0].result.metadata["answers"] == [
+            {"choice": other_index, "content": "DuckDB"},
+        ]
+
     async def test_auto_mode_still_pauses_for_an_answer(
         self, question_registry, question_executor, settings, conv_ctx,
     ):

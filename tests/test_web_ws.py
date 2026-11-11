@@ -453,7 +453,13 @@ class TestQuestions:
                 assert choices["type"] == "question"
                 questions = choices["data"]
                 assert questions[0]["title"] == "Storage"
-                assert len(questions[0]["choices"]) == 2
+                # The two model-authored choices plus the tool's Other row.
+                assert len(questions[0]["choices"]) == 3
+                assert questions[0]["choices"][-1] == {
+                    "title": "Other",
+                    "content": "",
+                    "takes_input": True,
+                }
 
                 ws.send_json({
                     "cmd": "answer_tool",
@@ -511,6 +517,76 @@ class TestQuestions:
                 assert entries[0]["result"]["metadata"]["answers"] == [
                     {"choice": 1, "content": None},
                 ]
+
+    def test_an_other_answer_carries_the_users_text(self, tmp_path):
+        llm = make_mock_llm(
+            ask_user_response(_questions()),
+            text_response("Done"),
+        )
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()
+            ws.send_json({"cmd": "turn", "input": "ask"})
+            asked = _wait_for(ws, "agent_paused")
+            other = len(asked["prompt"]["choices"]["data"][0]["choices"]) - 1
+
+            ws.send_json({
+                "cmd": "answer_tool",
+                "tool_id": "call_ask",
+                "answers": [{"choice": other, "content": "DuckDB"}],
+            })
+            frames = _collect_until(ws, "agent_finished")
+            ended = next(
+                frame for frame in frames
+                if frame["type"] == "tool_call_end"
+                and frame["tool_name"] == "ask_user"
+            )
+            assert ended["result"]["metadata"]["answers"] == [
+                {"choice": other, "content": "DuckDB"},
+            ]
+
+            # What the user typed is what the next model call sees.
+            tool_messages = [
+                message for message in llm.messages_history[-1]
+                if message.role == "tool"
+            ]
+            assert "DuckDB" in (
+                tool_messages[-1].blocks[-1].tool_result_content
+            )
+            _wait_until(lambda: not client.app.state.web.runner.busy)
+
+    def test_a_blank_other_or_text_on_a_plain_row_is_rejected(self, tmp_path):
+        llm = make_mock_llm(
+            ask_user_response(_questions()),
+            text_response("Done"),
+        )
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()
+            ws.send_json({"cmd": "turn", "input": "ask"})
+            asked = _wait_for(ws, "agent_paused")
+            other = len(asked["prompt"]["choices"]["data"][0]["choices"]) - 1
+
+            for answers in (
+                [{"choice": other}],
+                [{"choice": 0, "content": "DuckDB"}],
+            ):
+                ws.send_json({
+                    "cmd": "answer_tool",
+                    "tool_id": "call_ask",
+                    "answers": answers,
+                })
+                ack = _wait_for(ws, "ack")
+                assert ack["accepted"] is False
+
+            # Still pending: a valid answer now settles it.
+            ws.send_json({
+                "cmd": "answer_tool",
+                "tool_id": "call_ask",
+                "answers": [{"choice": 0}],
+            })
+            _collect_until(ws, "agent_finished")
+            _wait_until(lambda: not client.app.state.web.runner.busy)
 
     def test_reconnect_while_asking_restores_the_card(self, tmp_path):
         llm = make_mock_llm(

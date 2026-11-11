@@ -20,6 +20,7 @@ from toddler.tools.question import (
     MAX_CHOICES,
     MAX_QUESTIONS,
     MIN_CHOICES,
+    OTHER_CHOICE_TITLE,
     QuestionTool,
     parse_questions,
 )
@@ -142,7 +143,23 @@ class TestParseQuestions:
         parsed = parse_questions([_question(choices=[
             _choice("A"), _choice("B"), _choice("C"),
         ])])
-        assert len(parsed[0].choices) == 3
+        # Three model-authored choices plus the tool's own Other row.
+        assert len(parsed[0].choices) == 4
+
+    def test_every_question_ends_with_the_other_row(self):
+        parsed = parse_questions([_question(), _question(title="Auth")])
+        for question in parsed:
+            other = question.choices[-1]
+            assert other.title == OTHER_CHOICE_TITLE
+            assert other.content == ""
+            assert other.takes_input is True
+            assert sum(choice.takes_input for choice in question.choices) == 1
+
+    @pytest.mark.parametrize("title", ["Other", "other", " OTHER "])
+    def test_rejects_a_model_authored_other_choice(self, title):
+        raw = [_question(choices=[_choice(title=title), _choice()])]
+        with pytest.raises(QuestionValidationError, match="reserved"):
+            parse_questions(raw)
 
     @pytest.mark.parametrize("raw", [None, "questions", {}, 3])
     def test_rejects_a_non_list(self, raw):
@@ -237,16 +254,33 @@ class TestQuestionsResult:
         assert "(recommended)" not in result.output
 
     def test_a_free_text_answer_reads_as_the_users_words(self, questions):
+        other = len(questions[0].choices) - 1
         result = QuestionTool().questions_result(
-            questions, [PromptAnswer(choice=1, content="DuckDB")],
+            questions, [PromptAnswer(choice=other, content="DuckDB")],
         )
         assert result.success
         assert "1. Storage: DuckDB" in result.output
         # The row's own explanation is replaced by what the user wrote.
         assert "Shared storage." not in result.output
         assert result.metadata["answers"] == [
-            {"choice": 1, "content": "DuckDB"},
+            {"choice": other, "content": "DuckDB"},
         ]
+
+    @pytest.mark.parametrize("content", [None, "", "   "])
+    def test_the_other_choice_needs_the_users_words(self, questions, content):
+        other = len(questions[0].choices) - 1
+        result = QuestionTool().questions_result(
+            questions, [PromptAnswer(choice=other, content=content)],
+        )
+        assert not result.success
+        assert "invalid answer" in result.error
+
+    def test_a_plain_choice_does_not_take_text(self, questions):
+        result = QuestionTool().questions_result(
+            questions, [PromptAnswer(choice=1, content="DuckDB")],
+        )
+        assert not result.success
+        assert "invalid answer" in result.error
 
     def test_cancelled_is_a_failed_result_with_metadata(self, questions):
         result = QuestionTool().questions_result(questions, None)
@@ -262,7 +296,7 @@ class TestQuestionsResult:
         assert not result.success
         assert "answers" in result.error
 
-    @pytest.mark.parametrize("answer", [2, -1, True, "0", None])
+    @pytest.mark.parametrize("answer", [3, -1, True, "0", None])
     def test_rejects_an_out_of_range_or_non_integer_index(
         self, questions, answer,
     ):
@@ -289,7 +323,10 @@ class TestCallPrompt:
         assert prompt.choices.data[0].choices[0].title == "SQLite"
         assert prompt.to_dict()["choices"] == {
             "type": "question",
-            "data": [_question()],
+            "data": [
+                question.to_dict()
+                for question in parse_questions([_question()])
+            ],
         }
 
     def test_it_rejects_malformed_arguments(self):

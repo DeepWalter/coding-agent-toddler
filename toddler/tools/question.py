@@ -27,6 +27,7 @@ __all__ = [
     "MAX_CHOICES",
     "MAX_QUESTIONS",
     "MIN_CHOICES",
+    "OTHER_CHOICE_TITLE",
     "QuestionTool",
     "QuestionValidationError",
     "parse_questions",
@@ -39,6 +40,16 @@ MAX_QUESTIONS = 5
 MIN_CHOICES = 2
 MAX_CHOICES = 3
 
+#: Title of the free-text row every question ends with.  The row is the
+#: tool's, not the model's; its content is whatever the user types.
+OTHER_CHOICE_TITLE = "Other"
+
+#: The synthetic row itself.  ``content`` stays empty: the words the user
+#: types ride in the answer, so a stored question keeps what was asked.
+_OTHER_CHOICE = QuestionChoice(
+    title=OTHER_CHOICE_TITLE, content="", takes_input=True,
+)
+
 #: The model-facing protocol for the tool.  Embedded in the description
 #: rather than repeated by each front-end, so the wording lives once.
 ASK_USER_USAGE = (
@@ -47,7 +58,9 @@ ASK_USER_USAGE = (
     "instead of guessing or ending the turn to ask in prose. Each question "
     "has a short title (the tab label), the full question as content, and "
     "two or three choices; each choice has a short title and a sentence "
-    "explaining it. Put the recommended choice first. Ask only what you "
+    "explaining it. Put the recommended choice first. Every question "
+    "automatically gets an 'Other' choice where the user can type an "
+    "answer of their own; do not add one yourself. Ask only what you "
     "cannot find out by reading the code, and ask related questions "
     "together in one call."
 )
@@ -71,11 +84,12 @@ def _title(value: object, where: str) -> str:
 def parse_questions(raw: object) -> tuple[Question, ...]:
     """Validate a model-authored ``questions`` argument.
 
-    Returns the normalized questions, or raises
-    :class:`QuestionValidationError` with a message the model can act on.
-    The bounds are enforced here, not just in the JSON schema: an
-    OpenAI-compatible endpoint may ignore ``minItems`` / ``maxItems`` and
-    a malformed call must not reach the question card.
+    Returns the normalized questions with the tool's free-text "Other"
+    row appended to each, or raises :class:`QuestionValidationError` with
+    a message the model can act on.  The bounds are enforced here, not
+    just in the JSON schema: an OpenAI-compatible endpoint may ignore
+    ``minItems`` / ``maxItems`` and a malformed call must not reach the
+    question card.
     """
     if not isinstance(raw, (list, tuple)):
         raise QuestionValidationError(
@@ -117,14 +131,23 @@ def parse_questions(raw: object) -> tuple[Question, ...]:
                     f"{choice_where} must be an object with a title and "
                     "content."
                 )
+            choice_title = _title(
+                choice.get("title"), f"{choice_where} title",
+            )
+            if choice_title.casefold() == OTHER_CHOICE_TITLE.casefold():
+                raise QuestionValidationError(
+                    f"{choice_where} title is reserved: every question "
+                    "gets an 'Other' free-text choice automatically."
+                )
             choices.append(
                 QuestionChoice(
-                    title=_title(choice.get("title"), f"{choice_where} title"),
+                    title=choice_title,
                     content=_text(
                         choice.get("content"), f"{choice_where} content",
                     ),
                 )
             )
+        choices.append(_OTHER_CHOICE)
         questions.append(
             Question(title=title, content=content, choices=tuple(choices))
         )
@@ -181,7 +204,8 @@ class QuestionTool(BaseTool):
                             "maxItems": MAX_CHOICES,
                             "description": (
                                 "Two or three single-choice answers; put "
-                                "the recommended one first."
+                                "the recommended one first. An 'Other' "
+                                "free-text answer is added automatically."
                             ),
                             "items": {
                                 "type": "object",
@@ -284,12 +308,8 @@ class QuestionTool(BaseTool):
                 ),
             )
         for answer, question in zip(answers, questions, strict=True):
-            if (
-                not isinstance(answer, PromptAnswer)
-                or not isinstance(answer.choice, int)
-                or isinstance(answer.choice, bool)
-                or not 0 <= answer.choice < len(question.choices)
-            ):
+            problem = question.answer_error(answer)
+            if problem is not None:
                 return ToolResult(
                     tool_id="",
                     tool_name=self.name,
@@ -297,7 +317,7 @@ class QuestionTool(BaseTool):
                     output="",
                     error=(
                         f"ask_user got an invalid answer for question "
-                        f"'{question.title}'."
+                        f"'{question.title}': {problem}."
                     ),
                 )
 
@@ -311,11 +331,16 @@ class QuestionTool(BaseTool):
                 if answer.choice == 0 and len(question.choices) > 1
                 else ""
             )
-            # A row that takes free text (a future "Other" choice) reads
-            # as what the user wrote, not as the row's label.
-            label = answer.content or choice.title
+            # A row that takes input (the "Other" choice) reads as what
+            # the user wrote; the row's own explanation has no part in it.
+            text = (
+                (answer.content or "").strip()
+                if choice.takes_input
+                else ""
+            )
+            label = text or choice.title
             lines.append(f"{index}. {question.title}: {label}{recommended}")
-            if answer.content is None:
+            if not text:
                 lines.append(f"   {choice.content}")
         return ToolResult(
             tool_id="",

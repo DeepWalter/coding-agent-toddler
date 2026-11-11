@@ -361,6 +361,37 @@ class TestAnswerVerdict:
             PromptAnswer(choice=9),
         ]) is AnswerVerdict.INVALID
 
+    def test_a_question_other_row_needs_the_users_text(self):
+        choices = PromptChoices(
+            type=ChoiceType.QUESTION,
+            data=(
+                Question(
+                    title="Storage",
+                    content="Where should sessions live?",
+                    choices=(
+                        QuestionChoice("SQLite", "One file."),
+                        QuestionChoice("Redis", "Shared storage."),
+                        QuestionChoice("Other", "", takes_input=True),
+                    ),
+                ),
+            ),
+        )
+        assert choices.verdict([
+            PromptAnswer(choice=2, content="DuckDB"),
+        ]) is AnswerVerdict.GRANTED
+        # Whitespace around the words is not part of the answer.
+        assert choices.verdict([
+            PromptAnswer(choice=2, content="  DuckDB  "),
+        ]) is AnswerVerdict.GRANTED
+        # A blank Other is not an answer, and a plain row takes no words.
+        assert choices.verdict([PromptAnswer(choice=2)]) is AnswerVerdict.INVALID
+        assert choices.verdict([
+            PromptAnswer(choice=2, content="   "),
+        ]) is AnswerVerdict.INVALID
+        assert choices.verdict([
+            PromptAnswer(choice=1, content="DuckDB"),
+        ]) is AnswerVerdict.INVALID
+
 
 class TestDescriptionsElsewhere:
     """The tools that carry a description parameter: the model's own line

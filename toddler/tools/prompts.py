@@ -92,7 +92,7 @@ class PromptAnswer:
     ``choice`` indexes the pause's data — the row selected in a single
     gate, or the chosen answer for one question.  ``content`` is the
     user's own words where the chosen row takes them: a feedback reason,
-    or the text of a future "Other" question choice.
+    or the text typed into a question's "Other" choice.
     """
 
     choice: int
@@ -159,12 +159,7 @@ class PromptChoices:
         for answer, question in zip(answers, questions, strict=True):
             if not isinstance(question, Question):
                 return AnswerVerdict.INVALID
-            if (
-                not isinstance(answer, PromptAnswer)
-                or not isinstance(answer.choice, int)
-                or isinstance(answer.choice, bool)
-                or not 0 <= answer.choice < len(question.choices)
-            ):
+            if question.answer_error(answer) is not None:
                 return AnswerVerdict.INVALID
         return AnswerVerdict.GRANTED
 
@@ -281,15 +276,22 @@ class QuestionChoice:
 
     ``title`` is the short label a choice row leads with; ``content`` is
     the sentence explaining what choosing it means.  The first choice of
-    a question is the recommended one.
+    a question is the recommended one.  ``takes_input`` marks a row that
+    is a text box rather than a selection — the "Other" row the tool adds
+    to every question; the user's words ride in the answer, not here.
     """
 
     title: str
     content: str
+    takes_input: bool = False
 
     def to_dict(self) -> dict:
         """The wire form — what the web card and replay entries carry."""
-        return {"title": self.title, "content": self.content}
+        return {
+            "title": self.title,
+            "content": self.content,
+            "takes_input": self.takes_input,
+        }
 
 
 @dataclass(frozen=True)
@@ -297,7 +299,8 @@ class Question:
     """One single-choice question an ask-user tool asks the user.
 
     ``title`` is the short tab label, ``content`` the full question, and
-    ``choices`` the two or three answers, best first.
+    ``choices`` the answers the model wrote, best first, plus the
+    free-text "Other" row the tool appends.
     """
 
     title: str
@@ -311,6 +314,34 @@ class Question:
             "content": self.content,
             "choices": [choice.to_dict() for choice in self.choices],
         }
+
+    def answer_error(self, answer: object) -> str | None:
+        """Why *answer* cannot answer this question, or ``None``.
+
+        An answer names one of :attr:`choices` by index.  The row decides
+        whether text is part of the answer: a ``takes_input`` row needs
+        it, and a plain row refuses it — neither a blank "Other" nor
+        words attached to a row the user only clicked can reach the
+        model.
+        """
+        if not isinstance(answer, PromptAnswer):
+            return "it is not an answer"
+        choice = answer.choice
+        if (
+            not isinstance(choice, int)
+            or isinstance(choice, bool)
+            or not 0 <= choice < len(self.choices)
+        ):
+            return "its choice is out of range"
+        row = self.choices[choice]
+        if answer.content is not None and not isinstance(answer.content, str):
+            return "its content is not text"
+        text = (answer.content or "").strip()
+        if row.takes_input and not text:
+            return f"the '{row.title}' choice needs the user's text"
+        if not row.takes_input and text:
+            return f"the '{row.title}' choice does not take text"
+        return None
 
 
 class QuestionValidationError(ValueError):

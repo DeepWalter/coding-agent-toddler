@@ -52,6 +52,7 @@ def _question() -> Question:
         choices=(
             QuestionChoice("SQLite", "One file, no server."),
             QuestionChoice("Redis", "Shared storage."),
+            QuestionChoice("Other", "", takes_input=True),
         ),
     )
 
