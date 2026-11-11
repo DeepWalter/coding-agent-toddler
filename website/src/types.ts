@@ -141,10 +141,13 @@ export interface PausedFrame {
 }
 
 /** One answer to a question the agent asks.  The first choice is the
- *  recommendation; the rest of the row is what the question card shows. */
+ *  recommendation; the rest of the row is what the question card shows.
+ *  `takes_input` marks the free-text "Other" row the server appends to
+ *  every question: its content is the text the user types. */
 export interface QuestionChoice {
   title: string
   content: string
+  takes_input?: boolean
 }
 
 /** One single-choice question in an ask_user call. */

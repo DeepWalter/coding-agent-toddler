@@ -4149,6 +4149,112 @@ const waitFoldable = (count) =>
   await page.waitForTimeout(300)
 }
 
+// --- Phase 24b: the Other row is a box, not a button ---
+// Every question ends with an Other row.  It focuses without advancing,
+// typing marks the question answered without moving the tab, and Enter
+// commits the words.  Until there are words the question stays unanswered;
+// the typed answer is what the durable record and its replay show.
+{
+  const activeTitle = () =>
+    page.evaluate(
+      () => document.querySelector('.question-tab.active .question-tab-title')?.textContent?.trim() ?? '',
+    )
+
+  await page.fill('textarea.input-bar-textarea', 'ask me something')
+  await page.click('button:has-text("Send")')
+  await page.waitForSelector('.question-card', { timeout: 15000 })
+
+  // Arrow down from the last model choice lands in the Other box.
+  await page.locator('.question-choices .question-choice').first().focus()
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('ArrowDown')
+  const focusedOther = await page.evaluate(
+    () => document.activeElement?.classList.contains('question-other-input') ?? false,
+  )
+  console.log(`phase24b arrows reach the other box -> ${focusedOther ? 'PASS' : 'FAIL'}`)
+  if (!focusedOther) fails++
+
+  const activeOnFocus = await activeTitle()
+  const submitOnFocus = await page.locator('.question-submit').isDisabled()
+  const okFocus = activeOnFocus === 'Storage' && submitOnFocus
+  console.log(
+    `phase24b other focuses without advancing -> ${JSON.stringify(activeOnFocus)} submit ${submitOnFocus ? 'disabled' : 'enabled'} ${okFocus ? 'PASS' : 'FAIL'}`,
+  )
+  if (!okFocus) fails++
+
+  // Typing answers the question but does not advance the tab.
+  await page.fill('.question-other-input', 'DuckDB')
+  const activeAfterType = await activeTitle()
+  const answeredAfterType = await page.locator('.question-tab.answered').count()
+  const submitAfterType = await page.locator('.question-submit').isDisabled()
+  const okType =
+    activeAfterType === 'Storage' &&
+    answeredAfterType === 1 &&
+    submitAfterType
+  console.log(
+    `phase24b typing answers without advancing -> ${JSON.stringify(activeAfterType)} ${answeredAfterType} answered submit ${submitAfterType ? 'disabled' : 'enabled'} ${okType ? 'PASS' : 'FAIL'}`,
+  )
+  if (!okType) fails++
+
+  // Enter commits the answer and advances to the next question.
+  await page.keyboard.press('Enter')
+  await page.waitForFunction(
+    () => document.querySelector('.question-tab.active .question-tab-title')?.textContent?.trim() === 'Auth',
+    { timeout: 5000 },
+  )
+  const advanced = await activeTitle()
+  const okAdvance = advanced === 'Auth'
+  console.log(`phase24b enter advances -> ${JSON.stringify(advanced)} ${okAdvance ? 'PASS' : 'FAIL'}`)
+  if (!okAdvance) fails++
+
+  // Finish the set and submit; the record carries the typed words.
+  await page.locator('.question-choice').first().click()
+  await page.waitForFunction(
+    () => document.querySelector('.question-tab.active .question-tab-title')?.textContent?.trim() === 'Testing',
+    { timeout: 5000 },
+  )
+  await page.locator('.question-choice').first().click()
+  await page.waitForFunction(
+    () => !document.querySelector('.question-submit')?.disabled,
+    { timeout: 5000 },
+  )
+  await page.locator('.question-submit').click()
+  await page.waitForSelector('.question-card', { state: 'detached', timeout: 8000 })
+  await page.waitForFunction(
+    () => {
+      const calls = document.querySelectorAll('.tool-call')
+      const last = calls[calls.length - 1]
+      return last?.querySelectorAll('.tool-card-choice.is-chosen').length === 3
+    },
+    { timeout: 8000 },
+  )
+  const record = await page.locator('.tool-call').last().evaluate((el) => ({
+    chosen: [...el.querySelectorAll('.tool-card-choice.is-chosen')]
+      .map((row) => row.textContent.trim()),
+    text: el.querySelector('.tool-card-questions')?.innerText ?? '',
+  }))
+  const okRecord =
+    record.chosen.length === 3 &&
+    record.chosen[0].includes('Other') &&
+    record.chosen[0].includes('DuckDB') &&
+    record.text.includes('DuckDB')
+  console.log(`phase24b other answer reaches the record -> ${JSON.stringify(record.chosen[0])} ${okRecord ? 'PASS' : 'FAIL'}`)
+  if (!okRecord) fails++
+
+  // Reload: the typed answer is part of the durable record.
+  await page.reload()
+  await page.waitForSelector('.tool-card-questions', { timeout: 15000 })
+  const replayed = await page.locator('.tool-call').last().evaluate((el) => ({
+    chosen: [...el.querySelectorAll('.tool-card-choice.is-chosen')]
+      .map((row) => row.textContent.trim()),
+  }))
+  const okReplay =
+    replayed.chosen.length === 3 && replayed.chosen[0].includes('DuckDB')
+  console.log(`phase24b other answer replays -> ${JSON.stringify(replayed.chosen[0])} ${okReplay ? 'PASS' : 'FAIL'}`)
+  if (!okReplay) fails++
+  await page.waitForTimeout(300)
+}
+
 // --- Phase 25: the gate's feedback row is a box, not a button ---
 // The default gate carries a feedback row; in the card it renders as a
 // text input whose placeholder is the row's own title.  Typing a correction

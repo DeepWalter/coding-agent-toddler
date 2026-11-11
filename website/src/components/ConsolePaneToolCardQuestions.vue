@@ -32,7 +32,11 @@ defineProps<{ questions: ToolCardQuestion[] }>()
                 Recommended
               </span>
             </div>
-            <div class="tool-card-choice-content">{{ choice.content }}</div>
+            <div class="tool-card-choice-content">
+              {{ question.answer === ci && choice.takes_input
+                ? (question.answerText ?? '')
+                : choice.content }}
+            </div>
           </div>
         </div>
       </div>

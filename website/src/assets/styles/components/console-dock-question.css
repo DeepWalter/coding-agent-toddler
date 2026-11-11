@@ -127,7 +127,8 @@
    belongs to the selection.  The first column is the gutter the radio mark
    centers in, so every choice reads as one of a set and the text starts one
    indent in — the same reading as the transcript's record card. */
-.question-choice {
+.question-choice,
+.question-choice-other {
   display: grid;
   grid-template-columns: 4ch minmax(0, 1fr);
   align-items: center;
@@ -142,16 +143,23 @@
   cursor: pointer;
 }
 
-.question-choice:hover {
+.question-choice-other {
+  cursor: text;
+}
+
+.question-choice:hover,
+.question-choice-other:hover {
   font-weight: 600;
 }
 
-.question-choice:focus-visible {
+.question-choice:focus-visible,
+.question-choice-other:focus-within {
   outline: none;
   background: color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
-.question-choice.is-chosen {
+.question-choice.is-chosen,
+.question-choice-other.is-chosen {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 16%, transparent);
 }
@@ -168,11 +176,13 @@
   border-radius: 50%;
 }
 
-.question-choice.is-chosen .question-choice-mark {
+.question-choice.is-chosen .question-choice-mark,
+.question-choice-other.is-chosen .question-choice-mark {
   border-color: var(--accent);
 }
 
-.question-choice.is-chosen .question-choice-mark::after {
+.question-choice.is-chosen .question-choice-mark::after,
+.question-choice-other.is-chosen .question-choice-mark::after {
   content: '';
   position: absolute;
   inset: 2px;
@@ -199,6 +209,34 @@
   color: var(--text-muted);
   font-size: 12px;
   overflow-wrap: anywhere;
+}
+
+/* The Other row's content is what the user types, not a sentence the
+   model wrote.  It borrows the gate's feedback box: editor background and
+   border, accent while focused, the row title still leading. */
+.question-other-input {
+  width: 100%;
+  min-width: 0;
+  padding: 5px 7px;
+  background: var(--editor-bg);
+  color: var(--text);
+  border: 1px solid var(--editor-border);
+  border-radius: 6px;
+  font: inherit;
+  font-weight: 400;
+  outline: none;
+}
+
+.question-other-input::placeholder {
+  color: var(--text-muted);
+}
+
+.question-other-input:focus {
+  border-color: var(--accent);
+}
+
+.question-other-input:disabled {
+  opacity: 0.55;
 }
 
 .question-recommended {

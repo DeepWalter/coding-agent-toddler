@@ -252,6 +252,10 @@ let planSeq = 0
 // on the ordinary agent_paused frame — the real server's unified pause —
 // so a reload restores the card through hello.paused.
 const QUESTION_TOOL_ID = 'call_ask'
+// The free-text row the real server appends to every question.  Its
+// content stays empty; the dock renders it as a box and the answer carries
+// what the user types.
+const OTHER_CHOICE = { title: 'Other', content: '', takes_input: true }
 const QUESTION_PAUSE = {
   type: 'agent_paused',
   tool_id: QUESTION_TOOL_ID,
@@ -268,6 +272,7 @@ const QUESTION_PAUSE = {
           choices: [
             { title: 'SQLite', content: 'One file, no server to run.' },
             { title: 'Redis', content: 'Shared storage across processes.' },
+            OTHER_CHOICE,
           ],
         },
         {
@@ -277,6 +282,7 @@ const QUESTION_PAUSE = {
             { title: 'Existing OAuth', content: 'Reuse the provider already wired in.' },
             { title: 'Local password', content: 'Add a password check of our own.' },
             { title: 'Magic link', content: 'Email a one-time link instead.' },
+            OTHER_CHOICE,
           ],
         },
         {
@@ -285,6 +291,7 @@ const QUESTION_PAUSE = {
           choices: [
             { title: 'Unit tests', content: 'Fast, isolated, and close to the code.' },
             { title: 'End-to-end', content: 'Slower, but exercises the whole flow.' },
+            OTHER_CHOICE,
           ],
         },
       ],
@@ -1343,12 +1350,18 @@ wss.on('connection', (ws) => {
           const valid = answers
             && msg.tool_id === pendingAsk.tool_id
             && answers.length === questions.length
-            && answers.every(
-              (answer, i) => Number.isInteger(answer?.choice)
-                && answer.choice >= 0
-                && answer.choice < questions[i].choices.length
-                && (answer.content == null || typeof answer.content === 'string'),
-            )
+            && answers.every((answer, i) => {
+              if (
+                !Number.isInteger(answer?.choice)
+                || answer.choice < 0
+                || answer.choice >= questions[i].choices.length
+                || (answer.content != null && typeof answer.content !== 'string')
+              ) return false
+              const row = questions[i].choices[answer.choice]
+              const text = (answer.content ?? '').trim()
+              // The Other row needs words; a plain row takes none.
+              return row.takes_input ? text !== '' : text === ''
+            })
           if (!valid) {
             send({ type: 'ack', cmd: 'answer_tool', accepted: false })
             break

@@ -134,8 +134,12 @@ export interface ToolCardRow {
 }
 
 /** One question in an ask_user card: the tool's question plus the chosen
- *  choice index (null while the call waits, or after a failure). */
-export type ToolCardQuestion = Question & { answer: number | null }
+ *  choice index (null while the call waits, or after a failure) and what
+ *  the user typed into the Other row, when that is the chosen one. */
+export type ToolCardQuestion = Question & {
+  answer: number | null
+  answerText: string | null
+}
 
 export interface ToolCard {
   /** The reader's name for the tool. */
@@ -353,18 +357,23 @@ function questionsFor(block: ToolBlock): ToolCardQuestion[] | null {
       const answer = answers[index]
       // A stored answer is {choice, content?}; sessions written before
       // that shape hold a bare index, and still replay.
-      const picked = answer && typeof answer === 'object' && 'choice' in answer
-        ? (answer as { choice?: unknown }).choice
-        : answer
+      const stored = answer && typeof answer === 'object' && 'choice' in answer
+        ? (answer as { choice?: unknown; content?: unknown })
+        : null
+      const picked = stored ? stored.choice : answer
       return {
         title: typeof item.title === 'string' ? item.title : '',
         content: typeof item.content === 'string' ? item.content : '',
         choices: choices.map((choice) => ({
           title: typeof choice.title === 'string' ? choice.title : '',
           content: typeof choice.content === 'string' ? choice.content : '',
+          takes_input: choice.takes_input === true,
         })),
         answer: typeof picked === 'number' && Number.isInteger(picked)
           ? picked
+          : null,
+        answerText: stored && typeof stored.content === 'string'
+          ? stored.content.trim() || null
           : null,
       }
     })

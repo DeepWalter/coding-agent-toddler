@@ -1,9 +1,10 @@
 /**
  * Arrow-key (up/down) roving over an ask card's choice rows (tool gate,
- * plan ask).  Bind as a keydown handler on the card's root element — the
- * same handler serves every card (decision rows, feedback rows).  Rows are
- * the buttons and the gate's feedback input nested in a .*-actions block
- * (the head's ✕ close is not a choice); they stay ordinary controls, so Tab
+ * plan ask, ask-user questions).  Bind as a keydown handler on the card's
+ * root element — the same handler serves every card (decision rows,
+ * feedback rows, a question's Other box).  Rows are the buttons and the
+ * free-text inputs nested in a .*-actions / .question-choices block (the
+ * head's ✕ close is not a choice); they stay ordinary controls, so Tab
  * still walks them one by one — this only adds the up/down moves on top.
  *
  * The arrows are the card's only while the card has the focus: click the
@@ -31,7 +32,7 @@
  * complete selector (a comma never shares a descendant part).  The gate's
  * feedback row is a text input, not a button, and still a row. */
 const ROW_SELECTOR =
-  '.pause-prompt-actions button, .pause-prompt-actions input, .plan-ask-actions button, .question-choices .question-choice'
+  '.pause-prompt-actions button, .pause-prompt-actions input, .plan-ask-actions button, .question-choices .question-choice, .question-choices .question-other-input'
 
 /** The mark on the row the card would answer with.  Worn by one row at a
  * time, and kept while the focus is elsewhere. */
