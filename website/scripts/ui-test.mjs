@@ -118,6 +118,11 @@
 //            folds to `call(…)` — Python's call arguments and a shell brace
 //            body — while a same-line pair and brackets inside strings stay
 //            unfoldable
+//  phase 26 — the editor's SCM decorations: a modification, a deletion, and
+//            an addition against HEAD read as a blue bar, red triangle, and
+//            green bar in the left gutter, with matching ticks in the
+//            overview ruler; typing reruns the diff against HEAD on a
+//            debounce, so the marks move before a save
 // Prints PASS/FAIL plus diagnostics; exits 1 on any failure.
 import { chromium } from 'playwright'
 import WebSocket from 'ws'
@@ -4290,6 +4295,118 @@ const waitFoldable = (count) =>
   const okOut = out.includes('use the other file')
   console.log(`phase25 feedback reaches the result ${okOut ? 'PASS' : 'FAIL'}`)
   if (!okOut) fails++
+  await page.waitForTimeout(300)
+}
+
+// --- Phase 26: the editor's SCM gutter and overview ruler ---
+// The fixture's HEAD baseline has three widely separated changes: line 2
+// modified, line 10 deleted, and a line appended after line 19.  The
+// gutter must mark exactly those lines, aligned with the line numbers,
+// and the overview ruler must mirror the kinds in document order.  Typing
+// on line 5 and appending a line then rerun the diff against HEAD without
+// a save.
+{
+  await page.evaluate(() => {
+    localStorage.setItem('tod.tabs', JSON.stringify({
+      open: ['mock-scm.ts'],
+      active: 'mock-scm.ts',
+      root: '/tmp',
+    }))
+  })
+  await page.reload()
+  await page.waitForFunction(
+    () => document.querySelector('.editor-cm .cm-content')?.textContent.includes('line 2 modified'),
+    { timeout: 8000 },
+  )
+  await page.waitForFunction(
+    () => {
+      const count = (sel) => document.querySelectorAll(sel).length
+      return count('.cm-scmGutter .cm-gutterElement.cm-scm-add') === 1
+        && count('.cm-scmGutter .cm-gutterElement.cm-scm-mod') === 1
+        && count('.cm-scmGutter .cm-gutterElement.cm-scm-del') === 1
+        && count('.cm-scmRuler .cm-scmTick.add') === 1
+        && count('.cm-scmRuler .cm-scmTick.mod') === 1
+        && count('.cm-scmRuler .cm-scmTick.del') === 1
+    },
+    { timeout: 8000 },
+  )
+
+  const scm = await page.evaluate(() => {
+    const numberTop = (n) => {
+      const el = [...document.querySelectorAll('.cm-lineNumbers .cm-gutterElement')]
+        .find((e) => e.textContent.trim() === String(n))
+      return el ? el.getBoundingClientRect().top : null
+    }
+    const markerTops = (kind) =>
+      [...document.querySelectorAll(`.cm-scmGutter .cm-gutterElement.cm-scm-${kind}`)]
+        .map((el) => el.getBoundingClientRect().top)
+    const tickTops = (kind) =>
+      [...document.querySelectorAll(`.cm-scmRuler .cm-scmTick.${kind}`)]
+        .map((el) => el.getBoundingClientRect().top)
+    return {
+      gutter: !!document.querySelector('.cm-scmGutter'),
+      ruler: !!document.querySelector('.cm-scmRuler'),
+      add: markerTops('add'),
+      mod: markerTops('mod'),
+      del: markerTops('del'),
+      addTick: tickTops('add'),
+      modTick: tickTops('mod'),
+      delTick: tickTops('del'),
+      line2: numberTop(2),
+      line10: numberTop(10),
+      line20: numberTop(20),
+    }
+  })
+  const near = (a, b) =>
+    typeof a === 'number' && typeof b === 'number' && Math.abs(a - b) < 2
+  const okInitial =
+    scm.gutter && scm.ruler
+    && scm.add.length === 1 && scm.mod.length === 1 && scm.del.length === 1
+    && near(scm.mod[0], scm.line2)
+    && near(scm.del[0], scm.line10)
+    && near(scm.add[0], scm.line20)
+    && scm.addTick.length === 1 && scm.modTick.length === 1
+    && scm.delTick.length === 1
+    && scm.modTick[0] < scm.delTick[0] && scm.delTick[0] < scm.addTick[0]
+  console.log(`phase26 the gutter and ruler mirror head -> ${JSON.stringify(scm)} ${okInitial ? 'PASS' : 'FAIL'}`)
+  if (!okInitial) fails++
+
+  // Live diff: a fresh modification on line 5, far from the existing hunks.
+  await page.locator('.editor-cm .cm-line').nth(4).click()
+  await page.keyboard.press('End')
+  await page.keyboard.type('!')
+  await page.waitForFunction(
+    () => document.querySelectorAll('.cm-scmGutter .cm-gutterElement.cm-scm-mod').length >= 2,
+    { timeout: 5000 },
+  )
+  const liveMod = await page.evaluate(() => ({
+    markers: document.querySelectorAll('.cm-scmGutter .cm-gutterElement.cm-scm-mod').length,
+    ticks: document.querySelectorAll('.cm-scmRuler .cm-scmTick.mod').length,
+  }))
+  const okLiveMod = liveMod.markers === 2 && liveMod.ticks === 2
+  console.log(`phase26 typing live-diffs line 5 -> ${JSON.stringify(liveMod)} ${okLiveMod ? 'PASS' : 'FAIL'}`)
+  if (!okLiveMod) fails++
+
+  // Live addition: a new line after the fixture's added line joins its
+  // green range, so two gutter elements carry one (now taller) add tick.
+  // Target the "new line" text explicitly — `.last()` is the empty final
+  // line a trailing newline creates, and typing there turns the edit into a
+  // modification of the added range instead of an extension of it.
+  await page.locator('.editor-cm .cm-line').filter({ hasText: 'new line' }).click()
+  await page.keyboard.press('End')
+  await page.keyboard.press('Enter')
+  await page.keyboard.type('tail')
+  await page.waitForFunction(
+    () => document.querySelectorAll('.cm-scmGutter .cm-gutterElement.cm-scm-add').length >= 2,
+    { timeout: 5000 },
+  )
+  const liveAdd = await page.evaluate(() => ({
+    markers: document.querySelectorAll('.cm-scmGutter .cm-gutterElement.cm-scm-add').length,
+    ticks: document.querySelectorAll('.cm-scmRuler .cm-scmTick.add').length,
+  }))
+  const okLiveAdd = liveAdd.markers === 2 && liveAdd.ticks === 1
+  console.log(`phase26 a new line is added live -> ${JSON.stringify(liveAdd)} ${okLiveAdd ? 'PASS' : 'FAIL'}`)
+  if (!okLiveAdd) fails++
   await page.waitForTimeout(300)
 }
 

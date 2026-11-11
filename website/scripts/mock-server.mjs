@@ -369,6 +369,28 @@ const API = {
   },
 }
 
+// The SCM phase's fixture: a 20-line HEAD baseline and a worktree with a
+// modification near the top, a deletion in the middle, and an addition at
+// the end.  The hunks are far enough apart that CodeMirror keeps them as
+// three separate chunks.
+const SCM_BASELINE = Array.from(
+  { length: 20 },
+  (_, i) => `line ${i + 1}`,
+).join('\n') + '\n'
+const SCM_WORKTREE = [
+  'line 1', 'line 2 modified', 'line 3', 'line 4', 'line 5', 'line 6',
+  'line 7', 'line 8', 'line 9', 'line 11', 'line 12', 'line 13',
+  'line 14', 'line 15', 'line 16', 'line 17', 'line 18', 'line 19',
+  'line 20', 'new line',
+].join('\n') + '\n'
+
+// HEAD content for GET /api/git/baseline, keyed the way /api/file keys
+// paths.  A path absent from this map answers `available: false`, so the
+// editor tabs in earlier phases gain no decorations.
+const BASELINES = new Map([
+  ['mock-scm.ts', SCM_BASELINE],
+])
+
 // Files the editor phase opens, served with the same payload (and 404) as
 // toddler/web/files.read_file.  The tree stays empty: the phase restores its
 // tabs from localStorage, so the explorer needs no entries to drive them.
@@ -391,6 +413,9 @@ const FILES = new Map([
   // string whose brackets must stay unfoldable, and a one-line call.
   ['mock-fold-brackets.py', 'result = compute(\n    first,\n    second,\n)\n\nlabel = "("\nother = ")"\n\nsame = call(a, b)\n'],
   ['mock-fold-brackets.sh', 'run() {\n  echo hi\n}\necho done\n'],
+  // The SCM phase's worktree: one modified line, one deleted line, and one
+  // appended line against SCM_BASELINE above.
+  ['mock-scm.ts', SCM_WORKTREE],
   // The external fixture: keyed by its resolved absolute path, which is what
   // the editor asks for once a card falls back to `path_abs`.
   ['/home/mock/.toddler/notes.md', '# notes\noutside the repo\n'],
@@ -493,6 +518,30 @@ const server = createServer(async (req, res) => {
     res.end(JSON.stringify(
       missing ? { error: `file not found: '${rel}'` } : filePayload(rel, content),
     ))
+    return
+  }
+  if (url.pathname === '/api/git/baseline') {
+    const rel = url.searchParams.get('path') ?? ''
+    const content = BASELINES.get(rel)
+    const body = content === undefined
+      ? {
+          path: rel,
+          available: false,
+          exists: false,
+          binary: false,
+          unmerged: false,
+          content: '',
+        }
+      : {
+          path: rel,
+          available: true,
+          exists: true,
+          binary: false,
+          unmerged: false,
+          content,
+        }
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify(body))
     return
   }
   if (url.pathname.startsWith('/api/')) {
