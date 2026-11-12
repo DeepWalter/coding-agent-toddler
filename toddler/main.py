@@ -126,6 +126,7 @@ def main() -> None:
             open_browser=not args.no_open,
             dev=args.dev,
             new_session=args.new_session,
+            allow_terminal=args.allow_terminal,
         )
         return
 

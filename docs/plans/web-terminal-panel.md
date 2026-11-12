@@ -116,7 +116,8 @@ ungated shell, so it gets two gates:
 ### Wiring
 
 - `toddler/web/app.py` — include the terminal router next to the others,
-  before the static mount; `create_app(..., terminal_enabled=True)`.
+  before the static mount; `create_app` takes `terminal_enabled` (default
+  false) and `run_server` enables it for loopback binds.
 - `toddler/web/state.py` — `WebAppState.terminal_enabled`.
 - `toddler/web/server.py`, `toddler/utils/cli.py` — loopback check and the
   `--allow-terminal` flag.

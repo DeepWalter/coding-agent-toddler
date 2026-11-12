@@ -36,3 +36,7 @@ class WebAppState:
     runner: TurnRunner
     repo_root: Path
     dev: bool
+    #: Whether ``/ws/terminal`` may spawn shells.  False when the server
+    #: binds a non-loopback address without ``--allow-terminal`` — the
+    #: endpoint is an ungated shell and must not be reachable from a LAN.
+    terminal_enabled: bool = False

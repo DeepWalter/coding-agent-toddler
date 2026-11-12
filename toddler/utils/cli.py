@@ -149,5 +149,14 @@ def build_serve_argparser() -> argparse.ArgumentParser:
         action="store_true",
         help="Enable dev-mode CORS for the Vite dev server (:5173).",
     )
+    p.add_argument(
+        "--allow-terminal",
+        action="store_true",
+        help=(
+            "Allow the web terminal when binding a non-loopback --host.  "
+            "The terminal is an ungated shell — only enable it behind a "
+            "trusted network or proxy."
+        ),
+    )
     _add_common_args(p)
     return p

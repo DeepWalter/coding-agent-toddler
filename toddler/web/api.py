@@ -124,6 +124,8 @@ async def meta(state: WebAppState = _GetState) -> dict:
         "repo_root": str(state.repo_root),
         "model": state.settings.model_spec,
         "dev": state.dev,
+        # Whether the topbar should offer the terminal toggle.
+        "terminal": state.terminal_enabled,
     }
 
 

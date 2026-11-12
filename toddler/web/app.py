@@ -22,6 +22,7 @@ from toddler.session import SessionManager, SQLiteDatabase, StorageManager
 from toddler.web.api import router as api_router
 from toddler.web.runners import TurnRunner
 from toddler.web.state import WebAppState
+from toddler.web.terminal import router as terminal_router
 from toddler.web.ws import router as ws_router
 
 __all__ = ["create_app"]
@@ -38,6 +39,7 @@ def create_app(
     dev: bool = False,
     new_session: bool = False,
     llm: BaseLLMProvider | None = None,
+    terminal_enabled: bool = False,
 ) -> FastAPI:
     """Build the FastAPI app with lifespan wiring and the static mount.
 
@@ -89,6 +91,7 @@ def create_app(
             ),
             repo_root=root,
             dev=dev,
+            terminal_enabled=terminal_enabled,
         )
         try:
             yield
@@ -111,6 +114,7 @@ def create_app(
     # Routers before the static mount so /api and /ws are never shadowed.
     app.include_router(api_router)
     app.include_router(ws_router)
+    app.include_router(terminal_router)
 
     # Static mount LAST so /api (and later /ws) are never shadowed.  When
     # the frontend isn't built, / returns a JSON hint instead.

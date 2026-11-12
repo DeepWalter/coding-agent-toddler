@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import threading
 import webbrowser
 from pathlib import Path
@@ -14,6 +15,18 @@ from toddler.web.app import create_app
 __all__ = ["run_server"]
 
 
+def _is_loopback_host(host: str) -> bool:
+    """Whether *host* names this machine.
+
+    The terminal endpoint is an ungated shell; it is enabled by default
+    only when the server binds a loopback address.
+    """
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return host in ("localhost",)
+
+
 def run_server(
     settings: Settings,
     *,
@@ -22,6 +35,7 @@ def run_server(
     open_browser: bool = True,
     dev: bool = False,
     new_session: bool = False,
+    allow_terminal: bool = False,
 ) -> None:
     """Run the FastAPI app under uvicorn (blocks until interrupted).
 
@@ -34,6 +48,7 @@ def run_server(
         repo_root=Path.cwd(),
         dev=dev,
         new_session=new_session,
+        terminal_enabled=allow_terminal or _is_loopback_host(host),
     )
 
     if open_browser:
