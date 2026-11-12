@@ -4519,6 +4519,38 @@ const waitFoldable = (count) =>
   if (!okTheme) fails++
   await page.click('.theme-toggle') // leave the run in the theme it started in
 
+  // Clearing the screen keeps the output: ED2 scrolls the erased viewport
+  // into the scrollback, so a wheel-up reaches lines that were on screen.
+  await page.locator('.terminal-host').click()
+  await page.keyboard.type('lines')
+  await page.keyboard.press('Enter')
+  await page.waitForFunction(
+    () => document.querySelector('.xterm-rows')?.textContent?.includes('scroll line 30'),
+    { timeout: 8000 },
+  )
+  await page.keyboard.type('clear')
+  await page.keyboard.press('Enter')
+  await page.waitForFunction(
+    () => !(document.querySelector('.xterm-rows')?.textContent ?? '').includes('scroll line'),
+    { timeout: 8000 },
+  )
+  const clearBox = await page.locator('.terminal-host').boundingBox()
+  await page.mouse.move(
+    clearBox.x + clearBox.width / 2,
+    clearBox.y + clearBox.height / 2,
+  )
+  await page.mouse.wheel(0, -1500)
+  await page.waitForFunction(
+    () => (document.querySelector('.xterm-rows')?.textContent ?? '').includes('scroll line'),
+    { timeout: 8000 },
+  )
+  const scrolledBack = await page.evaluate(
+    () => (document.querySelector('.xterm-rows')?.textContent ?? '').slice(0, 60),
+  )
+  const okScrollback = scrolledBack.includes('scroll line')
+  console.log(`phase27 clearing keeps the scrollback ${JSON.stringify(scrolledBack)} ${okScrollback ? 'PASS' : 'FAIL'}`)
+  if (!okScrollback) fails++
+
   // Reload: closed by default, the dragged height comes back on reopen.
   await page.reload()
   await page.waitForSelector('.terminal-toggle', { timeout: 15000 })

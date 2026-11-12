@@ -715,6 +715,22 @@ terminalWss.on('connection', (ws) => {
       ws.close()
       return
     }
+    // A tall listing, for the scrollback case: it pushes the viewport past
+    // its height so earlier lines live in the scrollback.
+    if (command === 'lines') {
+      const lines = Array.from(
+        { length: 30 },
+        (_, i) => `scroll line ${i + 1}`,
+      ).join('\r\n')
+      ws.send(Buffer.from(`\r\n${lines}\r\n$ `))
+      return
+    }
+    // `clear` is ED2 (what /usr/bin/clear emits with TERM=xterm-256color).
+    // The prompt is redrawn after the screen clears.
+    if (command === 'clear') {
+      ws.send(Buffer.from('\r\n\x1b[H\x1b[2J$ '))
+      return
+    }
     ws.send(Buffer.from('\r\n$ '))
   })
 })

@@ -165,6 +165,9 @@ function ensureTerminal() {
     lineHeight: 1.2,
     cursorBlink: true,
     scrollback: 5000,
+    // `clear` sends ED2; the default wipes the viewport in place, losing the
+    // output.  Scroll it into the scrollback instead, like PuTTY does.
+    scrollOnEraseInDisplay: true,
     theme: terminalTheme(),
   })
   fit = new FitAddon()

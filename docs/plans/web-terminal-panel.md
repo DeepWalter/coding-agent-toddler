@@ -157,6 +157,9 @@ the xterm instance and socket; App owns position and height.
 - **Refit** — a `ResizeObserver` on the host calls `fit()` on a
   `requestAnimationFrame`, skipped while the host has zero size. A watcher
   on `visible` refits and focuses after `nextTick`.
+- **Scrollback** — 5000 lines, and `scrollOnEraseInDisplay: true`: `clear`
+  (ED2) scrolls the erased viewport into scrollback instead of wiping it,
+  so the output stays reachable with the wheel.
 - **Theme** — build the xterm `theme` from
   `getComputedStyle(document.documentElement)` (`--editor-bg`, `--text`,
   `--cursor`, `--selection`, and the syntax colors for the ANSI slots), and
@@ -224,6 +227,8 @@ the xterm instance and socket; App owns position and height.
 - Drag the handle up/down → height changes and clamps to [15, 85]; reload →
   the panel starts closed, and the dragged height returns when reopened.
 - Switching the theme while open repaints the xterm background.
+- `clear` empties the viewport but keeps the output in scrollback (a
+  wheel-up reaches it).
 - `exit` closes the panel by itself, and reopening starts a shell whose
   screen has no content from the previous one.
 
