@@ -1,14 +1,17 @@
-/* Pane chrome shared by FileExplorer, SourceControl, ConsoleHeader and
-   FileEditorDiffView: the one header row, its titles, the refresh button,
-   and the explorer/source-control list and empty states. */
+/* Pane chrome shared by FileExplorer, SourceControl, ConsoleHeader,
+   FileEditorDiffView and the terminal panel: the one header row, its
+   titles, the refresh button, and the explorer/source-control list and
+   empty states. */
 
-/* One row for every pane header — explorer, source control, console — so
-   the three line up across the split.  min-height holds that row whatever
-   the content: the console header is title-only, and would otherwise come
-   out a few px shorter than the two carrying a refresh button. */
+/* One row for every pane header — explorer, source control, console, the
+   terminal panel — so they line up down the split.  min-height holds that
+   row whatever the content: the console header is title-only, and would
+   otherwise come out a few px shorter than the two carrying a refresh
+   button. */
 .explorer-header,
 .sc-header,
-.console-header {
+.console-header,
+.terminal-header {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -21,7 +24,8 @@
 
 .explorer-title,
 .sc-title,
-.console-title {
+.console-title,
+.terminal-title {
   font-weight: 600;
 }
 

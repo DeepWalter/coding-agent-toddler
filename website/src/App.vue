@@ -241,10 +241,25 @@ const terminalPct = ref(
   ),
 )
 const terminalDrag = ref(false)
+const terminalMaximized = ref(false)
+// The height to come back to when a maximized panel is restored.  It is
+// the last dragged/stored height, kept in memory only — a reload starts
+// closed and reopens at the stored height.
+let terminalRestorePct = DEFAULT_TERMINAL_PCT
 const editorPaneEl = ref<HTMLElement | null>(null)
 
 function toggleTerminal() {
   terminalOpen.value = !terminalOpen.value
+}
+
+function toggleTerminalMaximize() {
+  if (terminalMaximized.value) {
+    terminalMaximized.value = false
+    terminalPct.value = terminalRestorePct
+  } else {
+    terminalRestorePct = terminalPct.value
+    terminalMaximized.value = true
+  }
 }
 
 function onTerminalResizeDown(event: PointerEvent) {
@@ -714,9 +729,10 @@ function onDividerUp(event: PointerEvent) {
         <div
           v-show="terminalOpen"
           class="terminal-panel"
-          :style="{ height: terminalPct + '%' }"
+          :style="{ height: terminalMaximized ? '100%' : terminalPct + '%' }"
         >
           <div
+            v-if="!terminalMaximized"
             class="terminal-resize-handle"
             :class="{ dragging: terminalDrag }"
             title="Drag to resize"
@@ -724,6 +740,53 @@ function onDividerUp(event: PointerEvent) {
             @pointermove="onTerminalResizeMove"
             @pointerup="onTerminalResizeUp"
           />
+          <div class="terminal-header">
+            <span class="terminal-title">Terminal</span>
+            <div class="terminal-actions">
+              <button
+                type="button"
+                class="terminal-action"
+                :aria-label="terminalMaximized ? 'Restore Panel' : 'Maximize Panel'"
+                :aria-pressed="terminalMaximized"
+                :title="terminalMaximized ? 'Restore Panel' : 'Maximize Panel'"
+                @click="toggleTerminalMaximize"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  width="14"
+                  height="14"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path v-if="terminalMaximized" d="M6 9l6 6 6-6" />
+                  <path v-else d="M18 15l-6-6-6 6" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                class="terminal-action"
+                aria-label="Hide Panel"
+                title="Hide Panel"
+                @click="terminalOpen = false"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  width="14"
+                  height="14"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M18 6L6 18M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
           <TerminalPanel
             :visible="terminalOpen"
             :theme="theme"

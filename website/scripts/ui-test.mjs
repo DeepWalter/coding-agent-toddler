@@ -4454,10 +4454,43 @@ const waitFoldable = (count) =>
   console.log(`phase27 the panel opens at ~1/3 of the editor ${pct.toFixed(1)}% ${okThird ? 'PASS' : 'FAIL'}`)
   if (!okThird) fails++
 
+  // Header: the title and the two actions, with maximize/restore around
+  // the stored height.
+  const header = await page.evaluate(() => ({
+    title: document.querySelector('.terminal-title')?.textContent?.trim() ?? '',
+    actions: [...document.querySelectorAll('.terminal-action')]
+      .map((el) => el.getAttribute('aria-label') ?? ''),
+  }))
+  const okHeader =
+    header.title === 'Terminal' &&
+    header.actions.join('|') === 'Maximize Panel|Hide Panel'
+  console.log(`phase27 the header names the panel and its icon actions ${JSON.stringify(header)} ${okHeader ? 'PASS' : 'FAIL'}`)
+  if (!okHeader) fails++
+
+  await page.click('.terminal-action[aria-label="Maximize Panel"]')
+  await page.waitForTimeout(250)
+  const maxPct = ((await panelHeight()) / (await paneHeight())) * 100
+  const maxLabel = await page
+    .locator('.terminal-action')
+    .first()
+    .getAttribute('aria-label')
+  const okMax =
+    Math.abs(maxPct - 100) <= 1 && maxLabel === 'Restore Panel'
+  console.log(`phase27 maximize fills the editor ${maxPct.toFixed(1)}% ${okMax ? 'PASS' : 'FAIL'}`)
+  if (!okMax) fails++
+
+  await page.click('.terminal-action[aria-label="Restore Panel"]')
+  await page.waitForTimeout(250)
+  const restorePct = ((await panelHeight()) / (await paneHeight())) * 100
+  const okRestore = Math.abs(restorePct - pct) <= 2
+  console.log(`phase27 restore returns to the stored height ${restorePct.toFixed(1)}% ${okRestore ? 'PASS' : 'FAIL'}`)
+  if (!okRestore) fails++
+
   await page.waitForFunction(
     () => document.querySelector('.xterm-rows')?.textContent?.includes('mock terminal ready'),
     { timeout: 8000 },
   )
+  await page.locator('.terminal-host').click()
   await page.keyboard.type('echo hi')
   await page.keyboard.press('Enter')
   await page.waitForFunction(
@@ -4471,8 +4504,8 @@ const waitFoldable = (count) =>
   console.log(`phase27 typing reaches the shell ${JSON.stringify(typed.slice(-60))} ${okTyped ? 'PASS' : 'FAIL'}`)
   if (!okTyped) fails++
 
-  // Hide and re-show: the socket and shell stay alive.
-  await toggle.click()
+  // Hide Panel and re-show: the socket and shell stay alive.
+  await page.click('.terminal-action[aria-label="Hide Panel"]')
   await page.waitForSelector('.terminal-panel', { state: 'hidden', timeout: 8000 })
   await toggle.click()
   await page.waitForSelector('.terminal-panel', { state: 'visible', timeout: 8000 })

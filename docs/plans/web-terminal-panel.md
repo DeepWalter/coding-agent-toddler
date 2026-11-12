@@ -29,6 +29,12 @@ Design principles:
   drag handle; the height clamps to [15 %, 85 %] and persists in
   `localStorage` as `tod.terminal` (`{ "height": 33 }`). Open/closed is **not**
   persisted: every page load starts with the panel closed.
+- A slim header names the panel **Terminal** and carries two icon actions —
+  **Maximize Panel** (a chevron, turning into **Restore Panel** while
+  maximized) and **Hide Panel** (an ×). Maximize fills the editor pane (the
+  drag handle goes away) and Restore returns to the last dragged height;
+  Hide is the same close path as the topbar toggle, so the shell stays
+  alive.
 - Opening focuses the terminal. The editor underneath keeps its tabs, scroll,
   and cursor untouched.
 - The shell is `$SHELL -l` (fallback `/bin/sh`), started in the served repo
@@ -223,6 +229,9 @@ the xterm instance and socket; App owns position and height.
 
 - Toggle exists; click → `.terminal-panel` visible and its height is ≈ 33 %
   of `.pane-editor` (±3 points).
+- The header reads "Terminal" with Maximize Panel / Hide Panel icon actions;
+  maximize fills the pane and relabels to "Restore Panel", restore returns
+  to the stored height, and Hide closes the panel like the topbar toggle.
 - Type `echo hi` + Enter; `.xterm-rows` shows the input and the mock's echo
   and prompt.
 - Reclick → panel hidden; click again → earlier output is still there (the

@@ -32,6 +32,39 @@
   background: var(--accent-hover);
 }
 
+/* The panel's own actions: Maximize/Restore and Hide.  Ghost icon buttons
+   so the header stays as quiet as the pane headers it sits among. */
+.terminal-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  flex: none;
+}
+
+.terminal-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-subtle);
+  cursor: pointer;
+}
+
+.terminal-action:hover {
+  background: var(--editor-surface-2);
+  color: var(--text);
+}
+
+.terminal-action svg {
+  display: block;
+}
+
 .terminal-host {
   flex: 1;
   min-height: 0;
