@@ -4496,19 +4496,26 @@ const waitFoldable = (count) =>
 
   // The xterm palette follows the app theme while the panel is open.
   // xterm paints the theme background onto the scrollable element inside
-  // the viewport (the viewport's own #000 is the package stylesheet).
+  // the viewport; the viewport itself must match, or the strip below the
+  // last fitted row stays the package stylesheet's black.
   const xtermBg = () =>
-    page.evaluate(
-      () =>
-        getComputedStyle(document.querySelector('.xterm-scrollable-element'))
-          .backgroundColor,
-    )
+    page.evaluate(() => ({
+      scrollable: getComputedStyle(
+        document.querySelector('.xterm-scrollable-element'),
+      ).backgroundColor,
+      viewport: getComputedStyle(
+        document.querySelector('.xterm-viewport'),
+      ).backgroundColor,
+    }))
   const darkBg = await xtermBg()
   await page.click('.theme-toggle')
   await page.waitForTimeout(200)
   const lightBg = await xtermBg()
-  const okTheme = darkBg !== lightBg && lightBg === 'rgb(255, 255, 255)'
-  console.log(`phase27 the palette follows the theme ${darkBg} -> ${lightBg} ${okTheme ? 'PASS' : 'FAIL'}`)
+  const okTheme =
+    darkBg.scrollable !== lightBg.scrollable &&
+    lightBg.scrollable === 'rgb(255, 255, 255)' &&
+    lightBg.viewport === lightBg.scrollable
+  console.log(`phase27 the palette follows the theme ${JSON.stringify(darkBg)} -> ${JSON.stringify(lightBg)} ${okTheme ? 'PASS' : 'FAIL'}`)
   if (!okTheme) fails++
   await page.click('.theme-toggle') // leave the run in the theme it started in
 

@@ -43,3 +43,10 @@
 .terminal-host .xterm {
   height: 100%;
 }
+
+/* The package stylesheet paints the viewport #000, while the theme colors
+   only the scrollable element inside it.  The few pixels below the last
+   fitted row would otherwise stay black — stark against the light theme. */
+.terminal-host .xterm .xterm-viewport {
+  background-color: var(--editor-bg);
+}
