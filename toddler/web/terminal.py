@@ -247,11 +247,14 @@ async def _run_session(
             # exit); the task's job is done either way.
             pass
 
-    await websocket.send_json(
-        {"type": "ready", "shell": shell, "cwd": str(state.repo_root)},
-    )
-    tasks = [asyncio.create_task(receive()), asyncio.create_task(pump())]
+    tasks: list[asyncio.Task[None]] = []
     try:
+        # Sent inside the guarded block: a client that vanishes between the
+        # spawn and this frame must still close the PTY and reap the shell.
+        await websocket.send_json(
+            {"type": "ready", "shell": shell, "cwd": str(state.repo_root)},
+        )
+        tasks = [asyncio.create_task(receive()), asyncio.create_task(pump())]
         await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
     except asyncio.CancelledError:
         # The server or the test client is tearing the connection down.  Run
