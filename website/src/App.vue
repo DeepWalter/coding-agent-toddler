@@ -248,8 +248,44 @@ const terminalMaximized = ref(false)
 let terminalRestorePct = DEFAULT_TERMINAL_PCT
 const editorPaneEl = ref<HTMLElement | null>(null)
 
+// Each entry is one live terminal; the rail numbers them by position.
+// Ids are never reused, so a deleted terminal's component unmounts (and
+// its shell closes) without a later one inheriting its state.
+const terminals = ref<number[]>([])
+const activeTerminalId = ref<number | null>(null)
+let terminalSeq = 0
+
+function addTerminal() {
+  const id = ++terminalSeq
+  terminals.value.push(id)
+  activeTerminalId.value = id
+}
+
+/** Drop *id*'s terminal.  Its component unmounts, which closes its socket
+ *  and the shell.  The neighbour takes over; the last one closes the
+ *  panel, since there is nothing left to show. */
+function removeTerminal(id: number) {
+  const idx = terminals.value.indexOf(id)
+  if (idx === -1) return
+  terminals.value.splice(idx, 1)
+  if (terminals.value.length === 0) {
+    activeTerminalId.value = null
+    terminalOpen.value = false
+    return
+  }
+  if (activeTerminalId.value === id) {
+    activeTerminalId.value =
+      terminals.value[Math.min(idx, terminals.value.length - 1)]
+  }
+}
+
+function deleteTerminal() {
+  if (activeTerminalId.value !== null) removeTerminal(activeTerminalId.value)
+}
+
 function toggleTerminal() {
   terminalOpen.value = !terminalOpen.value
+  if (terminalOpen.value && terminals.value.length === 0) addTerminal()
 }
 
 function toggleTerminalMaximize() {
@@ -746,6 +782,49 @@ function onDividerUp(event: PointerEvent) {
               <button
                 type="button"
                 class="terminal-action"
+                aria-label="Add Terminal"
+                title="Add Terminal"
+                @click="addTerminal"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  width="14"
+                  height="14"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M12 5v14M5 12h14" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                class="terminal-action"
+                aria-label="Delete Terminal"
+                title="Delete Terminal"
+                @click="deleteTerminal"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  width="14"
+                  height="14"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M4 7h16" />
+                  <path d="M9 7V4h6v3" />
+                  <path d="M6 7l1 13h10l1-13" />
+                </svg>
+              </button>
+              <span class="terminal-actions-divider" aria-hidden="true" />
+              <button
+                type="button"
+                class="terminal-action"
                 :aria-label="terminalMaximized ? 'Restore Panel' : 'Maximize Panel'"
                 :aria-pressed="terminalMaximized"
                 :title="terminalMaximized ? 'Restore Panel' : 'Maximize Panel'"
@@ -787,11 +866,36 @@ function onDividerUp(event: PointerEvent) {
               </button>
             </div>
           </div>
-          <TerminalPanel
-            :visible="terminalOpen"
-            :theme="theme"
-            @exit="terminalOpen = false"
-          />
+          <div class="terminal-body">
+            <div class="terminal-stage">
+              <div
+                v-for="id in terminals"
+                :key="id"
+                v-show="id === activeTerminalId"
+                class="terminal-slot"
+                :class="{ active: id === activeTerminalId }"
+              >
+                <TerminalPanel
+                  :visible="terminalOpen && id === activeTerminalId"
+                  :theme="theme"
+                  @exit="removeTerminal(id)"
+                />
+              </div>
+            </div>
+            <nav class="terminal-tabs" aria-label="Terminals">
+              <button
+                v-for="(id, i) in terminals"
+                :key="id"
+                type="button"
+                class="terminal-tab"
+                :class="{ active: id === activeTerminalId }"
+                :title="`Terminal ${i + 1}`"
+                :aria-label="`Terminal ${i + 1}`"
+                :aria-current="id === activeTerminalId ? 'true' : undefined"
+                @click="activeTerminalId = id"
+              >{{ i + 1 }}</button>
+            </nav>
+          </div>
         </div>
       </section>
 

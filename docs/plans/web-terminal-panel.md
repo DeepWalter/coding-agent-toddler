@@ -29,19 +29,25 @@ Design principles:
   drag handle; the height clamps to [15 %, 85 %] and persists in
   `localStorage` as `tod.terminal` (`{ "height": 33 }`). Open/closed is **not**
   persisted: every page load starts with the panel closed.
-- A slim header names the panel **Terminal** and carries two icon actions —
-  **Maximize Panel** (a chevron, turning into **Restore Panel** while
-  maximized) and **Hide Panel** (an ×). Maximize fills the editor pane (the
-  drag handle goes away) and Restore returns to the last dragged height;
-  Hide is the same close path as the topbar toggle, so the shell stays
-  alive.
-- Opening focuses the terminal. The editor underneath keeps its tabs, scroll,
-  and cursor untouched.
-- The shell is `$SHELL -l` (fallback `/bin/sh`), started in the served repo
+- A slim header names the panel **Terminal** and carries four icon actions:
+  **Add Terminal** (＋), **Delete Terminal** (trash), **Maximize Panel** (a
+  chevron, turning into **Restore Panel** while maximized), and **Hide
+  Panel** (an ×). Maximize fills the editor pane (the drag handle goes away)
+  and Restore returns to the last dragged height; Hide is the same close
+  path as the topbar toggle, so the shells stay alive.
+- The panel can hold several terminals. They share one panel; a vertical
+  rail on its right edge gives each a numbered tab. Add appends and selects
+  a new terminal, Delete closes the active one (the neighbour takes over),
+  and clicking a tab switches to that terminal. Closing the last one closes
+  the panel.
+- Opening focuses the active terminal. The editor underneath keeps its
+  tabs, scroll, and cursor untouched.
+- Each shell is `$SHELL -l` (fallback `/bin/sh`), started in the served repo
   root with `TERM=xterm-256color` and `COLORTERM=truecolor`. One shell per
-  WebSocket connection, i.e. one per browser tab.
-- When the shell exits (`exit`, Ctrl-D, or a killed process), the panel
-  closes itself; opening it again starts a fresh shell.
+  WebSocket connection, i.e. one per terminal tab.
+- When a shell exits (`exit`, Ctrl-D, or a killed process), its tab closes;
+  when it was the last, the panel closes too. Opening the panel again
+  starts one fresh shell.
 - The xterm palette follows the app theme (built from the `--editor-bg`,
   `--text`, syntax, cursor, and selection variables) and is rebuilt when the
   theme flips. Font is the editor's `--mono` stack at 13 px.
@@ -181,6 +187,11 @@ the xterm instance and socket; App owns position and height.
 - State: `terminalOpen = ref(false)`, `terminalPct =
   ref(readStored('tod.terminal', …, 33))` clamped to [15, 85], plus drag
   state mirroring the horizontal dividers.
+- Terminals: `terminals = ref<number[]>([])` and `activeTerminalId`; ids
+  are never reused. Add pushes an id and selects it; Delete removes the
+  active id and selects the neighbour (or closes the panel when none is
+  left); an `exit` frame follows the same remove path. Opening the panel
+  with no terminals creates one.
 - Drag: pointer capture on the handle; height % is
   `(paneBottom - clientY) / paneHeight * 100`, persisted on pointerup.
 - Markup:
@@ -190,8 +201,13 @@ the xterm instance and socket; App owns position and height.
   - `.pane-editor` gets `position: relative`. After `FileEditor`, add
     `<div v-show="terminalOpen" class="terminal-panel"
     :style="{ height: terminalPct + '%' }">` containing the 5 px
-    `.terminal-resize-handle` and `<TerminalPanel :visible="terminalOpen"
-    :theme="theme" />`.
+    `.terminal-resize-handle`, the header, and a `.terminal-body` split
+    into the `.terminal-stage` (one absolutely positioned `.terminal-slot`
+    per terminal, `v-show`-ed on the active id) and the `.terminal-tabs`
+    rail on the right.
+  - Each slot owns one `<TerminalPanel :visible="terminalOpen &&
+    id === activeTerminalId" @exit="removeTerminal(id)" />`; hidden slots
+    stay mounted, so their xterm buffers and sockets survive a tab switch.
   - The overlay sits above the editor (`z-index`); the editor keeps its
     state underneath.
 - Availability: fetch `/api/meta` on mount and hide the toggle when
@@ -227,11 +243,15 @@ the xterm instance and socket; App owns position and height.
 
 ### UI — phase 27 in `website/scripts/ui-test.mjs`
 
-- Toggle exists; click → `.terminal-panel` visible and its height is ≈ 33 %
-  of `.pane-editor` (±3 points).
-- The header reads "Terminal" with Maximize Panel / Hide Panel icon actions;
+- Toggle exists; click → `.terminal-panel` visible, one tab, and its height
+  is ≈ 33 % of `.pane-editor` (±3 points).
+- The header reads "Terminal" with Add/Delete/Maximize/Hide icon actions;
   maximize fills the pane and relabels to "Restore Panel", restore returns
   to the stored height, and Hide closes the panel like the topbar toggle.
+- Add opens a second tab with its own socket and screen; switching tabs
+  keeps each screen intact; Delete closes the active tab and its
+  neighbour takes over.
+- Hide preserves every terminal; a reload resets to one fresh tab on open.
 - Type `echo hi` + Enter; `.xterm-rows` shows the input and the mock's echo
   and prompt.
 - Reclick → panel hidden; click again → earlier output is still there (the
@@ -241,8 +261,9 @@ the xterm instance and socket; App owns position and height.
 - Switching the theme while open repaints the xterm background.
 - `clear` empties the viewport but keeps the output in scrollback (a
   wheel-up reaches it).
-- `exit` closes the panel by itself, and reopening starts a shell whose
-  screen has no content from the previous one.
+- `exit` closes only that terminal's tab; the last one closes the panel,
+  and reopening starts a shell whose screen has no content from the
+  previous one.
 
 ## Verification
 

@@ -4463,19 +4463,17 @@ const waitFoldable = (count) =>
   }))
   const okHeader =
     header.title === 'Terminal' &&
-    header.actions.join('|') === 'Maximize Panel|Hide Panel'
+    header.actions.join('|') ===
+      'Add Terminal|Delete Terminal|Maximize Panel|Hide Panel'
   console.log(`phase27 the header names the panel and its icon actions ${JSON.stringify(header)} ${okHeader ? 'PASS' : 'FAIL'}`)
   if (!okHeader) fails++
 
   await page.click('.terminal-action[aria-label="Maximize Panel"]')
   await page.waitForTimeout(250)
   const maxPct = ((await panelHeight()) / (await paneHeight())) * 100
-  const maxLabel = await page
-    .locator('.terminal-action')
-    .first()
-    .getAttribute('aria-label')
-  const okMax =
-    Math.abs(maxPct - 100) <= 1 && maxLabel === 'Restore Panel'
+  const restoreAction =
+    (await page.locator('.terminal-action[aria-label="Restore Panel"]').count()) === 1
+  const okMax = Math.abs(maxPct - 100) <= 1 && restoreAction
   console.log(`phase27 maximize fills the editor ${maxPct.toFixed(1)}% ${okMax ? 'PASS' : 'FAIL'}`)
   if (!okMax) fails++
 
@@ -4486,23 +4484,80 @@ const waitFoldable = (count) =>
   console.log(`phase27 restore returns to the stored height ${restorePct.toFixed(1)}% ${okRestore ? 'PASS' : 'FAIL'}`)
   if (!okRestore) fails++
 
-  await page.waitForFunction(
-    () => document.querySelector('.xterm-rows')?.textContent?.includes('mock terminal ready'),
-    { timeout: 8000 },
-  )
-  await page.locator('.terminal-host').click()
-  await page.keyboard.type('echo hi')
+  const activeRows = () =>
+    page.evaluate(
+      () => document.querySelector('.terminal-slot.active .xterm-rows')?.textContent ?? '',
+    )
+  const tabLabels = () => page.locator('.terminal-tab').allTextContents()
+  const waitActive = (needle) =>
+    page.waitForFunction(
+      (text) =>
+        (document.querySelector('.terminal-slot.active .xterm-rows')?.textContent ?? '')
+          .includes(text),
+      needle,
+      { timeout: 8000 },
+    )
+
+  const initialTabs = await tabLabels()
+  const okInitialTab = initialTabs.join() === '1'
+  console.log(`phase27 opening starts with one terminal tab ${JSON.stringify(initialTabs)} ${okInitialTab ? 'PASS' : 'FAIL'}`)
+  if (!okInitialTab) fails++
+
+  await waitActive('mock terminal ready')
+  await page.locator('.terminal-slot.active .terminal-host').click()
+  await page.keyboard.type('echo one')
   await page.keyboard.press('Enter')
-  await page.waitForFunction(
-    () => document.querySelector('.xterm-rows')?.textContent?.includes('echo hi'),
-    { timeout: 8000 },
-  )
-  const typed = await page.evaluate(
-    () => document.querySelector('.xterm-rows')?.textContent ?? '',
-  )
-  const okTyped = typed.includes('echo hi')
+  await waitActive('echo one')
+  const typed = await activeRows()
+  const okTyped = typed.includes('echo one')
   console.log(`phase27 typing reaches the shell ${JSON.stringify(typed.slice(-60))} ${okTyped ? 'PASS' : 'FAIL'}`)
   if (!okTyped) fails++
+
+  // A second terminal gets its own tab, socket, and screen.
+  await page.click('.terminal-action[aria-label="Add Terminal"]')
+  await page.waitForFunction(
+    () => document.querySelectorAll('.terminal-tab').length === 2,
+    { timeout: 8000 },
+  )
+  const twoTabs = await tabLabels()
+  await waitActive('mock terminal ready')
+  await page.locator('.terminal-slot.active .terminal-host').click()
+  await page.keyboard.type('echo two')
+  await page.keyboard.press('Enter')
+  await waitActive('echo two')
+  const okAdded =
+    twoTabs.join() === '1,2' && (await activeRows()).includes('echo two')
+  console.log(`phase27 the add action opens a second terminal ${JSON.stringify(twoTabs)} ${okAdded ? 'PASS' : 'FAIL'}`)
+  if (!okAdded) fails++
+
+  // Switching tabs leaves each session's screen intact.
+  await page.locator('.terminal-tab').first().click()
+  await waitActive('echo one')
+  const firstBack = await activeRows()
+  const okFirst = firstBack.includes('echo one') && !firstBack.includes('echo two')
+  console.log(`phase27 the first tab keeps its own screen ${okFirst ? 'PASS' : 'FAIL'}`)
+  if (!okFirst) fails++
+
+  await page.locator('.terminal-tab').nth(1).click()
+  await waitActive('echo two')
+  const secondBack = await activeRows()
+  const okSecond = secondBack.includes('echo two') && !secondBack.includes('echo one')
+  console.log(`phase27 the second tab keeps its own screen ${okSecond ? 'PASS' : 'FAIL'}`)
+  if (!okSecond) fails++
+
+  // Deleting the active terminal closes just its tab; its neighbour takes
+  // over.
+  await page.click('.terminal-action[aria-label="Delete Terminal"]')
+  await page.waitForFunction(
+    () => document.querySelectorAll('.terminal-tab').length === 1,
+    { timeout: 8000 },
+  )
+  const afterDeleteTabs = await tabLabels()
+  const afterDelete = await activeRows()
+  const okDeleted =
+    afterDeleteTabs.join() === '1' && afterDelete.includes('echo one')
+  console.log(`phase27 the delete action closes the active tab ${JSON.stringify(afterDeleteTabs)} ${okDeleted ? 'PASS' : 'FAIL'}`)
+  if (!okDeleted) fails++
 
   // Hide Panel and re-show: the socket and shell stay alive.
   await page.click('.terminal-action[aria-label="Hide Panel"]')
@@ -4510,7 +4565,10 @@ const waitFoldable = (count) =>
   await toggle.click()
   await page.waitForSelector('.terminal-panel', { state: 'visible', timeout: 8000 })
   const kept = await page.evaluate(
-    () => document.querySelector('.xterm-rows')?.textContent?.includes('echo hi') ?? false,
+    () =>
+      document
+        .querySelector('.terminal-slot.active .xterm-rows')
+        ?.textContent?.includes('echo one') ?? false,
   )
   console.log(`phase27 hiding preserves the shell ${kept ? 'PASS' : 'FAIL'}`)
   if (!kept) fails++
@@ -4534,10 +4592,10 @@ const waitFoldable = (count) =>
   const xtermBg = () =>
     page.evaluate(() => ({
       scrollable: getComputedStyle(
-        document.querySelector('.xterm-scrollable-element'),
+        document.querySelector('.terminal-slot.active .xterm-scrollable-element'),
       ).backgroundColor,
       viewport: getComputedStyle(
-        document.querySelector('.xterm-viewport'),
+        document.querySelector('.terminal-slot.active .xterm-viewport'),
       ).backgroundColor,
     }))
   const darkBg = await xtermBg()
@@ -4554,18 +4612,23 @@ const waitFoldable = (count) =>
 
   // Clearing the screen keeps the output: ED2 scrolls the erased viewport
   // into the scrollback, so a wheel-up reaches lines that were on screen.
-  await page.locator('.terminal-host').click()
+  await page.locator('.terminal-slot.active .terminal-host').click()
   await page.keyboard.type('lines')
   await page.keyboard.press('Enter')
   await page.waitForFunction(
-    () => document.querySelector('.xterm-rows')?.textContent?.includes('scroll line 30'),
+    () =>
+      document
+        .querySelector('.terminal-slot.active .xterm-rows')
+        ?.textContent?.includes('scroll line 30'),
     { timeout: 8000 },
   )
 
   // The terminal's scrollbar is xterm's own DOM scrollbar, styled to match
   // the editor's: an 8px rounded --editor-border thumb.
   const scrollbar = await page.evaluate(() => {
-    const bar = document.querySelector('.xterm-scrollable-element > .scrollbar.vertical')
+    const bar = document.querySelector(
+      '.terminal-slot.active .xterm-scrollable-element > .scrollbar.vertical',
+    )
     const slider = bar?.querySelector('.slider')
     if (!bar || !slider) return null
     const probe = document.createElement('span')
@@ -4594,21 +4657,32 @@ const waitFoldable = (count) =>
   await page.keyboard.type('clear')
   await page.keyboard.press('Enter')
   await page.waitForFunction(
-    () => !(document.querySelector('.xterm-rows')?.textContent ?? '').includes('scroll line'),
+    () =>
+      !(
+        document.querySelector('.terminal-slot.active .xterm-rows')?.textContent ?? ''
+      ).includes('scroll line'),
     { timeout: 8000 },
   )
-  const clearBox = await page.locator('.terminal-host').boundingBox()
+  const clearBox = await page
+    .locator('.terminal-slot.active .terminal-host')
+    .boundingBox()
   await page.mouse.move(
     clearBox.x + clearBox.width / 2,
     clearBox.y + clearBox.height / 2,
   )
   await page.mouse.wheel(0, -1500)
   await page.waitForFunction(
-    () => (document.querySelector('.xterm-rows')?.textContent ?? '').includes('scroll line'),
+    () =>
+      (
+        document.querySelector('.terminal-slot.active .xterm-rows')?.textContent ?? ''
+      ).includes('scroll line'),
     { timeout: 8000 },
   )
   const scrolledBack = await page.evaluate(
-    () => (document.querySelector('.xterm-rows')?.textContent ?? '').slice(0, 60),
+    () =>
+      (
+        document.querySelector('.terminal-slot.active .xterm-rows')?.textContent ?? ''
+      ).slice(0, 60),
   )
   const okScrollback = scrolledBack.includes('scroll line')
   console.log(`phase27 clearing keeps the scrollback ${JSON.stringify(scrolledBack)} ${okScrollback ? 'PASS' : 'FAIL'}`)
@@ -4625,35 +4699,58 @@ const waitFoldable = (count) =>
   await page.waitForSelector('.terminal-panel', { state: 'visible', timeout: 8000 })
   // The panel is visible before the fresh component has connected and
   // focused its textarea; wait for the shell's first paint before typing.
-  await page.waitForFunction(
-    () => document.querySelector('.xterm-rows')?.textContent?.includes('mock terminal ready'),
-    { timeout: 8000 },
-  )
+  await waitActive('mock terminal ready')
+  const reloadedTabs = await tabLabels()
   const restoredPct = ((await panelHeight()) / (await paneHeight())) * 100
-  const okRestored = Math.abs(restoredPct - draggedPct) <= 2
-  console.log(`phase27 the dragged height persists ${restoredPct.toFixed(1)}% ${okRestored ? 'PASS' : 'FAIL'}`)
+  const okRestored =
+    Math.abs(restoredPct - draggedPct) <= 2 && reloadedTabs.join() === '1'
+  console.log(`phase27 the dragged height persists and tabs reset ${restoredPct.toFixed(1)}% ${okRestored ? 'PASS' : 'FAIL'}`)
   if (!okRestored) fails++
 
-  // `exit` ends the shell and the panel closes itself; reopening starts a
-  // fresh session (the previous screen is gone).
+  await page.locator('.terminal-slot.active .terminal-host').click()
+  await page.keyboard.type('echo solo')
+  await page.keyboard.press('Enter')
+  await waitActive('echo solo')
+
+  // With two terminals open, exiting one closes only its tab.
+  await page.click('.terminal-action[aria-label="Add Terminal"]')
+  await page.waitForFunction(
+    () => document.querySelectorAll('.terminal-tab').length === 2,
+    { timeout: 8000 },
+  )
+  await waitActive('mock terminal ready')
+  await page.locator('.terminal-slot.active .terminal-host').click()
+  await page.keyboard.type('exit')
+  await page.keyboard.press('Enter')
+  await page.waitForFunction(
+    () => document.querySelectorAll('.terminal-tab').length === 1,
+    { timeout: 8000 },
+  )
+  const panelStillOpen = await page.locator('.terminal-panel').isVisible()
+  const loneTab = await tabLabels()
+  const okOneExit = panelStillOpen && loneTab.join() === '1'
+  console.log(`phase27 exiting one terminal closes only its tab ${JSON.stringify(loneTab)} ${okOneExit ? 'PASS' : 'FAIL'}`)
+  if (!okOneExit) fails++
+
+  // Exiting the last one closes the panel; reopening starts a fresh
+  // session with a single tab.
+  await waitActive('mock terminal ready')
+  await page.locator('.terminal-slot.active .terminal-host').click()
   await page.keyboard.type('exit')
   await page.keyboard.press('Enter')
   await page.waitForSelector('.terminal-panel', { state: 'hidden', timeout: 8000 })
   const autoClosed = !(await page.locator('.terminal-panel').isVisible())
-  console.log(`phase27 exiting the shell closes the panel ${autoClosed ? 'PASS' : 'FAIL'}`)
+  console.log(`phase27 exiting the last shell closes the panel ${autoClosed ? 'PASS' : 'FAIL'}`)
   if (!autoClosed) fails++
 
   await page.click('.terminal-toggle')
   await page.waitForSelector('.terminal-panel', { state: 'visible', timeout: 8000 })
-  await page.waitForFunction(
-    () => document.querySelector('.xterm-rows')?.textContent?.includes('mock terminal ready'),
-    { timeout: 8000 },
-  )
-  const leftover = await page.evaluate(
-    () => document.querySelector('.xterm-rows')?.textContent?.includes('echo hi') ?? false,
-  )
-  console.log(`phase27 reopening after exit starts a fresh shell ${leftover ? 'FAIL' : 'PASS'}`)
-  if (leftover) fails++
+  await waitActive('mock terminal ready')
+  const freshTabs = await tabLabels()
+  const leftover = (await activeRows()).includes('echo solo')
+  const okFresh = freshTabs.join() === '1' && !leftover
+  console.log(`phase27 reopening after exit starts a fresh shell ${JSON.stringify(freshTabs)} ${okFresh ? 'PASS' : 'FAIL'}`)
+  if (!okFresh) fails++
 }
 
 // The browser connection is an open handle: without closing it the process

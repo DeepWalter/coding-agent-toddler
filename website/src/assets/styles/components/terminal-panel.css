@@ -65,6 +65,80 @@
   display: block;
 }
 
+/* A hairline between the session actions and the panel actions. */
+.terminal-actions-divider {
+  width: 1px;
+  height: 14px;
+  margin: 0 2px;
+  background: var(--editor-border);
+}
+
+/* The stage holds every terminal stacked on one another; only the active
+   slot is displayed, so the hidden xterms keep their buffers and sockets
+   without fighting for layout. */
+.terminal-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.terminal-stage {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.terminal-slot {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  min-height: 0;
+}
+
+.terminal-slot > .terminal-host {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* The terminal rail: one tab per session, stacked down the right edge. */
+.terminal-tabs {
+  flex: none;
+  width: 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  overflow-y: auto;
+  border-left: 1px solid var(--editor-border);
+  background: var(--editor-surface);
+}
+
+.terminal-tab {
+  flex: none;
+  height: 24px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-subtle);
+  font: inherit;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.terminal-tab:hover {
+  background: var(--editor-surface-2);
+  color: var(--text);
+}
+
+.terminal-tab.active {
+  background: var(--editor-surface-3);
+  color: var(--text);
+  box-shadow: inset -2px 0 0 var(--accent);
+}
+
 .terminal-host {
   flex: 1;
   min-height: 0;
