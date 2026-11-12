@@ -4528,6 +4528,36 @@ const waitFoldable = (count) =>
     () => document.querySelector('.xterm-rows')?.textContent?.includes('scroll line 30'),
     { timeout: 8000 },
   )
+
+  // The terminal's scrollbar is xterm's own DOM scrollbar, styled to match
+  // the editor's: an 8px rounded --editor-border thumb.
+  const scrollbar = await page.evaluate(() => {
+    const bar = document.querySelector('.xterm-scrollable-element > .scrollbar.vertical')
+    const slider = bar?.querySelector('.slider')
+    if (!bar || !slider) return null
+    const probe = document.createElement('span')
+    probe.style.color = 'var(--editor-border)'
+    document.body.append(probe)
+    const border = getComputedStyle(probe).color
+    probe.remove()
+    const style = getComputedStyle(slider)
+    return {
+      bar: getComputedStyle(bar).width,
+      width: style.width,
+      radius: style.borderRadius,
+      background: style.backgroundColor,
+      border,
+    }
+  })
+  const okScrollbar =
+    scrollbar !== null &&
+    scrollbar.bar === '8px' &&
+    scrollbar.width === '8px' &&
+    scrollbar.radius === '4px' &&
+    scrollbar.background === scrollbar.border
+  console.log(`phase27 the scrollbar matches the editor ${JSON.stringify(scrollbar)} ${okScrollbar ? 'PASS' : 'FAIL'}`)
+  if (!okScrollbar) fails++
+
   await page.keyboard.type('clear')
   await page.keyboard.press('Enter')
   await page.waitForFunction(

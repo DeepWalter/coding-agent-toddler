@@ -50,3 +50,23 @@
 .terminal-host .xterm .xterm-viewport {
   background-color: var(--editor-bg);
 }
+
+/* xterm draws its own scrollbar (the native bar is replaced), so it does
+   not inherit the global scrollbar rules.  Match the editor's: an 8px
+   rounded --editor-border thumb on a transparent track, brightening on
+   hover/drag.  The widths are inline (sized to xterm's 14px track), so
+   they need !important; the thumb stays right-aligned in that track. */
+.terminal-host .xterm .xterm-scrollable-element > .scrollbar.vertical {
+  width: 8px !important;
+}
+
+.terminal-host .xterm .xterm-scrollable-element > .scrollbar > .slider {
+  width: 8px !important;
+  border-radius: 4px;
+  background: var(--editor-border);
+}
+
+.terminal-host .xterm .xterm-scrollable-element > .scrollbar > .slider:hover,
+.terminal-host .xterm .xterm-scrollable-element > .scrollbar > .slider.active {
+  background: color-mix(in srgb, var(--text-subtle) 45%, var(--editor-border));
+}

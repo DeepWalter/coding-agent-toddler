@@ -160,6 +160,9 @@ the xterm instance and socket; App owns position and height.
 - **Scrollback** — 5000 lines, and `scrollOnEraseInDisplay: true`: `clear`
   (ED2) scrolls the erased viewport into scrollback instead of wiping it,
   so the output stays reachable with the wheel.
+- **Scrollbar** — xterm draws its own, so the global scrollbar rules do not
+  reach it; `terminal-panel.css` matches the editor's look: an 8px rounded
+  `--editor-border` thumb on a transparent track, brightening on hover/drag.
 - **Theme** — build the xterm `theme` from
   `getComputedStyle(document.documentElement)` (`--editor-bg`, `--text`,
   `--cursor`, `--selection`, and the syntax colors for the ANSI slots), and
