@@ -107,7 +107,8 @@ Slash commands work in the input bar too (`/help`, `/mode`, `/clear`,
 
 The topbar's `>_` button opens a terminal panel over the bottom third of
 the editor — a login shell in the served directory, resizable by dragging
-its top edge and kept alive while the panel is hidden.  It admits loopback
+its top edge and kept alive while the panel is hidden.  Exiting the shell
+closes the panel; reopening it starts a fresh one.  It admits loopback
 clients only; `--allow-terminal` extends it to a non-loopback `--host`.
 The terminal runs an ungated shell, so only enable that behind a trusted
 network or proxy.

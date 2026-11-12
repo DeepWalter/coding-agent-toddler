@@ -23,6 +23,10 @@ const props = defineProps<{
   visible: boolean
   theme: 'tokyo-night' | 'github-light'
 }>()
+const emit = defineEmits<{
+  /** The shell ended (`exit`, Ctrl-D, or a killed process). */
+  exit: [code: number]
+}>()
 
 const host = ref<HTMLElement | null>(null)
 
@@ -100,6 +104,9 @@ function handleControl(text: string) {
   } else if (frame.type === 'exit') {
     sessionDead = true
     term?.write(`\r\n\x1b[2m[process exited with code ${frame.code ?? 0}]\x1b[0m\r\n`)
+    // The shell is gone, so the panel has nothing left to show: close it.
+    // Reopening starts a fresh one (activate's dead-session branch).
+    emit('exit', frame.code ?? 0)
   }
 }
 
@@ -186,7 +193,12 @@ function activate() {
     if (!props.visible || !host.value) return
     if (!started) {
       ensureTerminal()
-    } else if (sessionDead && socket === null) {
+    } else if (sessionDead) {
+      // The exit frame and the socket's close frame are separate: close any
+      // socket still winding down so the fresh session replaces it cleanly.
+      const dead = socket
+      socket = null
+      dead?.close()
       term?.reset()
       connect()
     }

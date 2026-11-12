@@ -724,7 +724,11 @@ function onDividerUp(event: PointerEvent) {
             @pointermove="onTerminalResizeMove"
             @pointerup="onTerminalResizeUp"
           />
-          <TerminalPanel :visible="terminalOpen" :theme="theme" />
+          <TerminalPanel
+            :visible="terminalOpen"
+            :theme="theme"
+            @exit="terminalOpen = false"
+          />
         </div>
       </section>
 

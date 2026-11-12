@@ -689,6 +689,7 @@ function sessionInfoFrame() {
 // needs to read the panel's output.
 const terminalWss = new WebSocketServer({ noServer: true })
 terminalWss.on('connection', (ws) => {
+  let line = ''
   ws.send(Buffer.from('\r\nmock terminal ready\r\n$ '))
   ws.on('message', (raw) => {
     let msg
@@ -699,9 +700,22 @@ terminalWss.on('connection', (ws) => {
     }
     if (msg.type !== 'input' || typeof msg.data !== 'string') return
     ws.send(Buffer.from(msg.data))
-    if (msg.data.includes('\n') || msg.data.includes('\r')) {
-      ws.send(Buffer.from('\r\n$ '))
+    const end = msg.data.search(/[\r\n]/)
+    if (end < 0) {
+      line += msg.data
+      return
     }
+    line += msg.data.slice(0, end)
+    const command = line.trim()
+    line = ''
+    // `exit` ends the session the way the real shell does: output, then
+    // the exit frame, then the socket closes.
+    if (command === 'exit') {
+      ws.send(JSON.stringify({ type: 'exit', code: 0 }))
+      ws.close()
+      return
+    }
+    ws.send(Buffer.from('\r\n$ '))
   })
 })
 

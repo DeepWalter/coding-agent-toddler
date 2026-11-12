@@ -34,8 +34,8 @@ Design principles:
 - The shell is `$SHELL -l` (fallback `/bin/sh`), started in the served repo
   root with `TERM=xterm-256color` and `COLORTERM=truecolor`. One shell per
   WebSocket connection, i.e. one per browser tab.
-- When the shell exits, the terminal shows `[process exited with code N]`.
-  Toggling the panel hidden then open again starts a fresh shell.
+- When the shell exits (`exit`, Ctrl-D, or a killed process), the panel
+  closes itself; opening it again starts a fresh shell.
 - The xterm palette follows the app theme (built from the `--editor-bg`,
   `--text`, syntax, cursor, and selection variables) and is rebuilt when the
   theme flips. Font is the editor's `--mono` stack at 13 px.
@@ -146,8 +146,8 @@ the xterm instance and socket; App owns position and height.
   - `onopen` → fit, send the initial `resize`.
   - `onmessage` → `ArrayBuffer`/`Blob` → `term.write(new Uint8Array(…))`;
     string → `term.write(…)` (the mock sends both shapes).
-  - `exit` frame → write `\r\n[process exited with code N]\r\n` and mark the
-    session dead.
+  - `exit` frame → write `\r\n[process exited with code N]\r\n`, mark the
+    session dead, and emit `exit` so App closes the panel.
   - Unexpected close → write `\r\n[terminal disconnected]\r\n`.
   - Toggling hidden → visible after a dead session reconnects (fresh shell);
     a live session is untouched.
@@ -224,6 +224,8 @@ the xterm instance and socket; App owns position and height.
 - Drag the handle up/down → height changes and clamps to [15, 85]; reload →
   the panel starts closed, and the dragged height returns when reopened.
 - Switching the theme while open repaints the xterm background.
+- `exit` closes the panel by itself, and reopening starts a shell whose
+  screen has no content from the previous one.
 
 ## Verification
 

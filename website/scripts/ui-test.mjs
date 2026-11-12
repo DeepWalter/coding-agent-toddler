@@ -4528,10 +4528,37 @@ const waitFoldable = (count) =>
 
   await page.click('.terminal-toggle')
   await page.waitForSelector('.terminal-panel', { state: 'visible', timeout: 8000 })
+  // The panel is visible before the fresh component has connected and
+  // focused its textarea; wait for the shell's first paint before typing.
+  await page.waitForFunction(
+    () => document.querySelector('.xterm-rows')?.textContent?.includes('mock terminal ready'),
+    { timeout: 8000 },
+  )
   const restoredPct = ((await panelHeight()) / (await paneHeight())) * 100
   const okRestored = Math.abs(restoredPct - draggedPct) <= 2
   console.log(`phase27 the dragged height persists ${restoredPct.toFixed(1)}% ${okRestored ? 'PASS' : 'FAIL'}`)
   if (!okRestored) fails++
+
+  // `exit` ends the shell and the panel closes itself; reopening starts a
+  // fresh session (the previous screen is gone).
+  await page.keyboard.type('exit')
+  await page.keyboard.press('Enter')
+  await page.waitForSelector('.terminal-panel', { state: 'hidden', timeout: 8000 })
+  const autoClosed = !(await page.locator('.terminal-panel').isVisible())
+  console.log(`phase27 exiting the shell closes the panel ${autoClosed ? 'PASS' : 'FAIL'}`)
+  if (!autoClosed) fails++
+
+  await page.click('.terminal-toggle')
+  await page.waitForSelector('.terminal-panel', { state: 'visible', timeout: 8000 })
+  await page.waitForFunction(
+    () => document.querySelector('.xterm-rows')?.textContent?.includes('mock terminal ready'),
+    { timeout: 8000 },
+  )
+  const leftover = await page.evaluate(
+    () => document.querySelector('.xterm-rows')?.textContent?.includes('echo hi') ?? false,
+  )
+  console.log(`phase27 reopening after exit starts a fresh shell ${leftover ? 'FAIL' : 'PASS'}`)
+  if (leftover) fails++
 }
 
 // The browser connection is an open handle: without closing it the process
