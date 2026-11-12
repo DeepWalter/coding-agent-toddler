@@ -36,7 +36,8 @@
   flex: none;
 }
 
-.theme-toggle {
+/* Icon buttons in the topbar: the theme toggle and the terminal toggle. */
+.topbar-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -50,11 +51,17 @@
   cursor: pointer;
 }
 
-.theme-toggle:hover {
+.topbar-icon:hover {
   background: var(--editor-surface-3);
   color: var(--text);
 }
 
-.theme-toggle svg {
+/* A toggle that owns a visible panel (the terminal, today). */
+.topbar-icon.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.topbar-icon svg {
   display: block;
 }

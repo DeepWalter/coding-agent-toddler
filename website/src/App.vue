@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import ConsoleDock from './components/ConsoleDock.vue'
 import ConsoleHeader from './components/ConsoleHeader.vue'
 import ConsolePane from './components/ConsolePane.vue'
@@ -8,6 +8,8 @@ import FileExplorer from './components/FileExplorer.vue'
 import SessionList from './components/SessionList.vue'
 import SourceControl from './components/SourceControl.vue'
 import StatusBar from './components/StatusBar.vue'
+import TerminalPanel from './components/TerminalPanel.vue'
+import { api } from './api'
 import { useConsole } from './composables/useConsole'
 import { useGitStatus, WRITE_TOOLS } from './composables/useGitStatus'
 import { useWebSocket } from './composables/useWebSocket'
@@ -212,6 +214,67 @@ function saveSplit() {
 
 const explorerPct = ref(split.explorer)
 const editorPct = ref(split.editor)
+
+// The editor's terminal panel: a bottom overlay over the editor pane.  Its
+// height is a % of the pane and persists; open/closed does not — a reload
+// loses the shell anyway, so every page starts closed.  The toggle is
+// hidden when the server reports the endpoint disabled (a non-loopback
+// bind without --allow-terminal).
+const TERMINAL_STORAGE_KEY = 'tod.terminal'
+const DEFAULT_TERMINAL_PCT = 33
+const MIN_TERMINAL_PCT = 15
+const MAX_TERMINAL_PCT = 85
+
+const terminalOpen = ref(false)
+const terminalAvailable = ref(true)
+const terminalPct = ref(
+  readStored<number>(
+    TERMINAL_STORAGE_KEY,
+    (raw) => {
+      const parsed = JSON.parse(raw) as { height?: unknown }
+      if (typeof parsed?.height !== 'number' || !Number.isFinite(parsed.height)) {
+        return null
+      }
+      return Math.min(MAX_TERMINAL_PCT, Math.max(MIN_TERMINAL_PCT, parsed.height))
+    },
+    DEFAULT_TERMINAL_PCT,
+  ),
+)
+const terminalDrag = ref(false)
+const editorPaneEl = ref<HTMLElement | null>(null)
+
+function toggleTerminal() {
+  terminalOpen.value = !terminalOpen.value
+}
+
+function onTerminalResizeDown(event: PointerEvent) {
+  terminalDrag.value = true
+  ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+}
+
+function onTerminalResizeMove(event: PointerEvent) {
+  if (!terminalDrag.value || !editorPaneEl.value) return
+  const rect = editorPaneEl.value.getBoundingClientRect()
+  if (rect.height <= 0) return
+  const pct = ((rect.bottom - event.clientY) / rect.height) * 100
+  terminalPct.value = Math.min(MAX_TERMINAL_PCT, Math.max(MIN_TERMINAL_PCT, pct))
+}
+
+function onTerminalResizeUp(event: PointerEvent) {
+  if (!terminalDrag.value) return
+  terminalDrag.value = false
+  ;(event.currentTarget as HTMLElement).releasePointerCapture(event.pointerId)
+  writeStored(TERMINAL_STORAGE_KEY, { height: terminalPct.value })
+}
+
+onMounted(async () => {
+  try {
+    terminalAvailable.value = (await api.meta()).terminal
+  } catch {
+    // Meta failed (the server is still starting) — leave the toggle up;
+    // the endpoint itself is the gate.
+  }
+})
 
 // Activity bar: which panel occupies the left pane ('explorer' | 'sc'),
 // or null when the pane is closed (clicking the active icon toggles it,
@@ -496,8 +559,31 @@ function onDividerUp(event: PointerEvent) {
       <span v-if="state.session" class="topbar-meta">{{ state.session.cwd }}</span>
       <div class="topbar-actions">
         <button
+          v-if="terminalAvailable"
           type="button"
-          class="theme-toggle"
+          class="topbar-icon terminal-toggle"
+          :class="{ active: terminalOpen }"
+          :aria-pressed="terminalOpen"
+          title="Toggle terminal"
+          @click="toggleTerminal"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            width="14"
+            height="14"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M4 7l5 5-5 5" />
+            <path d="M12 17h8" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          class="topbar-icon theme-toggle"
           :title="theme === 'tokyo-night' ? 'Switch to light theme' : 'Switch to dark theme'"
           @click="theme = theme === 'tokyo-night' ? 'github-light' : 'tokyo-night'"
         >
@@ -607,7 +693,7 @@ function onDividerUp(event: PointerEvent) {
         @pointerup="onDividerUp"
       />
 
-      <section class="pane pane-editor" :style="{ width: editorPct + '%' }">
+      <section ref="editorPaneEl" class="pane pane-editor" :style="{ width: editorPct + '%' }">
         <FileEditor
           :files="openTabs"
           :active="activeTab"
@@ -622,6 +708,24 @@ function onDividerUp(event: PointerEvent) {
           @dirty-count="(n) => (dirtyCount = n)"
           @refresh-git="git.scheduleRefresh"
         />
+        <!-- Bottom overlay: the terminal covers the editor's lower third;
+             the top edge drags its height.  Hidden, not unmounted — the
+             shell keeps running while the panel is closed. -->
+        <div
+          v-show="terminalOpen"
+          class="terminal-panel"
+          :style="{ height: terminalPct + '%' }"
+        >
+          <div
+            class="terminal-resize-handle"
+            :class="{ dragging: terminalDrag }"
+            title="Drag to resize"
+            @pointerdown="onTerminalResizeDown"
+            @pointermove="onTerminalResizeMove"
+            @pointerup="onTerminalResizeUp"
+          />
+          <TerminalPanel :visible="terminalOpen" :theme="theme" />
+        </div>
       </section>
 
       <div

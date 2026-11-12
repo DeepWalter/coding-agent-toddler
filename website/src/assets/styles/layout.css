@@ -25,6 +25,12 @@
   flex: none;
 }
 
+.pane-editor {
+  /* Offset parent for the terminal overlay, which pins to this pane's
+     bottom edge (components/terminal-panel.css). */
+  position: relative;
+}
+
 .pane-console {
   /* Offset parent for the floating console dock (absolute, bottom-inset),
      which reports --bar-h here. */

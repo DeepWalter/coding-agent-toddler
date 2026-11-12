@@ -1,0 +1,45 @@
+/* TerminalPanel.vue — the editor's bottom overlay and its resize edge. */
+
+.terminal-panel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--editor-bg);
+  border-top: 1px solid var(--editor-border);
+  /* Lift the panel off the editor content it covers. */
+  box-shadow: 0 -6px 18px rgb(0 0 0 / 0.18);
+}
+
+/* The top edge drags the panel's height; it owns the pointer while the
+   drag runs (App.vue captures it), so the resize continues over the
+   editor below. */
+.terminal-resize-handle {
+  flex: none;
+  height: 5px;
+  background: var(--editor-surface-2);
+  cursor: row-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+.terminal-resize-handle:hover,
+.terminal-resize-handle.dragging {
+  background: var(--accent-hover);
+}
+
+.terminal-host {
+  flex: 1;
+  min-height: 0;
+  padding: 4px 0 0 8px;
+  overflow: hidden;
+}
+
+/* xterm fills the host, which is what FitAddon measures. */
+.terminal-host .xterm {
+  height: 100%;
+}

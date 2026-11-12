@@ -3285,7 +3285,11 @@ const planTodo = (marks) =>
   const clicked = await page.evaluate(() => {
     const rows = [...document.querySelectorAll('.pause-prompt-actions button')]
     return {
-      focus: document.activeElement?.className ?? '',
+      // The toggle shares the topbar's icon-button class with the terminal
+      // button, so name it by membership rather than the whole className.
+      focus: document.activeElement?.classList.contains('theme-toggle')
+        ? 'theme-toggle'
+        : (document.activeElement?.className ?? ''),
       marked: rows.filter((row) => row.classList.contains('is-selected')).map((row) => row.textContent.trim()),
       tinted: rows.filter((row) => getComputedStyle(row).backgroundColor !== 'rgba(0, 0, 0, 0)').length,
     }
@@ -3293,7 +3297,9 @@ const planTodo = (marks) =>
   await page.keyboard.press('ArrowDown')
   await page.waitForTimeout(100)
   const elsewhere = await page.evaluate(() => ({
-    focus: document.activeElement?.className ?? '',
+    focus: document.activeElement?.classList.contains('theme-toggle')
+      ? 'theme-toggle'
+      : (document.activeElement?.className ?? ''),
     marked: [...document.querySelectorAll('.pause-prompt-actions button.is-selected')]
       .map((row) => row.textContent.trim()),
   }))

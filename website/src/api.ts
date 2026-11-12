@@ -30,8 +30,13 @@ function jsonBody(body: unknown): RequestInit {
 }
 
 export const api = {
-  meta(): Promise<{ repo_root: string; model: string; dev: boolean }> {
-    return request('/api/meta') as Promise<{ repo_root: string; model: string; dev: boolean }>
+  meta(): Promise<{ repo_root: string; model: string; dev: boolean; terminal: boolean }> {
+    return request('/api/meta') as Promise<{
+      repo_root: string
+      model: string
+      dev: boolean
+      terminal: boolean
+    }>
   },
 
   sessions(): Promise<{ sessions: SessionSummary[] }> {
