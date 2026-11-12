@@ -358,7 +358,12 @@ const TYPES = {
 const REPO_ROOT = '/tmp'
 
 const API = {
-  '/api/meta': { repo_root: REPO_ROOT, model: 'mock-model', dev: false },
+  '/api/meta': {
+    repo_root: REPO_ROOT,
+    model: 'mock-model',
+    dev: false,
+    terminal: true,
+  },
   '/api/sessions': { sessions: [] },
   '/api/tree': { root: '/tmp', entries: [] },
   '/api/git/status': {
@@ -678,7 +683,45 @@ function sessionInfoFrame() {
   return { type: 'session_info', session: { ...session }, conversation }
 }
 
-const wss = new WebSocketServer({ server, path: '/ws' })
+// The terminal endpoint: protocol-shaped echo, not a PTY.  The real server
+// streams raw bytes back and takes input/resize JSON; the mock echoes each
+// input and redraws a prompt after a newline, which is all the UI phase
+// needs to read the panel's output.
+const terminalWss = new WebSocketServer({ noServer: true })
+terminalWss.on('connection', (ws) => {
+  ws.send(Buffer.from('\r\nmock terminal ready\r\n$ '))
+  ws.on('message', (raw) => {
+    let msg
+    try {
+      msg = JSON.parse(String(raw))
+    } catch {
+      return
+    }
+    if (msg.type !== 'input' || typeof msg.data !== 'string') return
+    ws.send(Buffer.from(msg.data))
+    if (msg.data.includes('\n') || msg.data.includes('\r')) {
+      ws.send(Buffer.from('\r\n$ '))
+    }
+  })
+})
+
+const wss = new WebSocketServer({ noServer: true })
+
+// One upgrade router for both paths: a path-scoped WebSocketServer would
+// abort an upgrade its own path does not match, stealing the other one.
+server.on('upgrade', (req, socket, head) => {
+  const { pathname } = new URL(req.url ?? '/', `http://${req.headers.host}`)
+  const target = pathname === '/ws/terminal'
+    ? terminalWss
+    : pathname === '/ws'
+      ? wss
+      : null
+  if (!target) {
+    socket.destroy()
+    return
+  }
+  target.handleUpgrade(req, socket, head, (ws) => target.emit('connection', ws, req))
+})
 
 wss.on('connection', (ws) => {
   clients.add(ws)

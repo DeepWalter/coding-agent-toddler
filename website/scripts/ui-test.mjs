@@ -4421,6 +4421,112 @@ const waitFoldable = (count) =>
   await page.waitForTimeout(300)
 }
 
+// --- Phase 27: the terminal panel — toggle, 1/3 default, drag, reload ---
+{
+  // Phase 26 left its fixture dirty; save so the reload below is not held
+  // by the editor's unsaved-changes dialog.
+  await page.locator('.editor-cm .cm-line').first().click()
+  await page.keyboard.press('Control+s')
+  await page.waitForTimeout(400)
+
+  const paneHeight = () =>
+    page.evaluate(
+      () => document.querySelector('.pane-editor')?.getBoundingClientRect().height ?? 0,
+    )
+  const panelHeight = () =>
+    page.evaluate(
+      () => document.querySelector('.terminal-panel')?.getBoundingClientRect().height ?? 0,
+    )
+
+  const toggle = page.locator('.terminal-toggle')
+  const hasToggle = (await toggle.count()) === 1
+  console.log(`phase27 the topbar offers a terminal toggle ${hasToggle ? 'PASS' : 'FAIL'}`)
+  if (!hasToggle) fails++
+
+  await toggle.click()
+  await page.waitForSelector('.terminal-panel', { state: 'visible', timeout: 8000 })
+  await page.waitForSelector('.terminal-host .xterm', { timeout: 8000 })
+
+  const pane = await paneHeight()
+  const panel = await panelHeight()
+  const pct = pane > 0 ? (panel / pane) * 100 : 0
+  const okThird = Math.abs(pct - 33) <= 3
+  console.log(`phase27 the panel opens at ~1/3 of the editor ${pct.toFixed(1)}% ${okThird ? 'PASS' : 'FAIL'}`)
+  if (!okThird) fails++
+
+  await page.waitForFunction(
+    () => document.querySelector('.xterm-rows')?.textContent?.includes('mock terminal ready'),
+    { timeout: 8000 },
+  )
+  await page.keyboard.type('echo hi')
+  await page.keyboard.press('Enter')
+  await page.waitForFunction(
+    () => document.querySelector('.xterm-rows')?.textContent?.includes('echo hi'),
+    { timeout: 8000 },
+  )
+  const typed = await page.evaluate(
+    () => document.querySelector('.xterm-rows')?.textContent ?? '',
+  )
+  const okTyped = typed.includes('echo hi')
+  console.log(`phase27 typing reaches the shell ${JSON.stringify(typed.slice(-60))} ${okTyped ? 'PASS' : 'FAIL'}`)
+  if (!okTyped) fails++
+
+  // Hide and re-show: the socket and shell stay alive.
+  await toggle.click()
+  await page.waitForSelector('.terminal-panel', { state: 'hidden', timeout: 8000 })
+  await toggle.click()
+  await page.waitForSelector('.terminal-panel', { state: 'visible', timeout: 8000 })
+  const kept = await page.evaluate(
+    () => document.querySelector('.xterm-rows')?.textContent?.includes('echo hi') ?? false,
+  )
+  console.log(`phase27 hiding preserves the shell ${kept ? 'PASS' : 'FAIL'}`)
+  if (!kept) fails++
+
+  // Drag the top edge up: the panel grows, and the height is stored.
+  const handleBox = await page.locator('.terminal-resize-handle').boundingBox()
+  await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y - 90, { steps: 5 })
+  await page.mouse.up()
+  await page.waitForTimeout(250)
+  const draggedPct = ((await panelHeight()) / (await paneHeight())) * 100
+  const okDrag = draggedPct > pct + 5
+  console.log(`phase27 dragging the top edge resizes ${draggedPct.toFixed(1)}% ${okDrag ? 'PASS' : 'FAIL'}`)
+  if (!okDrag) fails++
+
+  // The xterm palette follows the app theme while the panel is open.
+  // xterm paints the theme background onto the scrollable element inside
+  // the viewport (the viewport's own #000 is the package stylesheet).
+  const xtermBg = () =>
+    page.evaluate(
+      () =>
+        getComputedStyle(document.querySelector('.xterm-scrollable-element'))
+          .backgroundColor,
+    )
+  const darkBg = await xtermBg()
+  await page.click('.theme-toggle')
+  await page.waitForTimeout(200)
+  const lightBg = await xtermBg()
+  const okTheme = darkBg !== lightBg && lightBg === 'rgb(255, 255, 255)'
+  console.log(`phase27 the palette follows the theme ${darkBg} -> ${lightBg} ${okTheme ? 'PASS' : 'FAIL'}`)
+  if (!okTheme) fails++
+  await page.click('.theme-toggle') // leave the run in the theme it started in
+
+  // Reload: closed by default, the dragged height comes back on reopen.
+  await page.reload()
+  await page.waitForSelector('.terminal-toggle', { timeout: 15000 })
+  const closed = await page.locator('.terminal-panel').isVisible().catch(() => false)
+  console.log(`phase27 a reload starts with the panel closed ${closed ? 'FAIL' : 'PASS'}`)
+  if (closed) fails++
+
+  await page.click('.terminal-toggle')
+  await page.waitForSelector('.terminal-panel', { state: 'visible', timeout: 8000 })
+  const restoredPct = ((await panelHeight()) / (await paneHeight())) * 100
+  const okRestored = Math.abs(restoredPct - draggedPct) <= 2
+  console.log(`phase27 the dragged height persists ${restoredPct.toFixed(1)}% ${okRestored ? 'PASS' : 'FAIL'}`)
+  if (!okRestored) fails++
+}
+
 // The browser connection is an open handle: without closing it the process
 // outlives the last check and a run never returns.
 await browser.close()
