@@ -105,6 +105,13 @@ Slash commands work in the input bar too (`/help`, `/mode`, `/clear`,
 `/session`, …) — they dispatch server-side and never reach the LLM.
 `/quit` and `/view` are not available in the browser.
 
+The topbar's `>_` button opens a terminal panel over the bottom third of
+the editor — a login shell in the served directory, resizable by dragging
+its top edge and kept alive while the panel is hidden.  It admits loopback
+clients only; `--allow-terminal` extends it to a non-loopback `--host`.
+The terminal runs an ungated shell, so only enable that behind a trusted
+network or proxy.
+
 The model and the thinking effort are also switchable from the pill beside
 the input box: it reads `deepseek-flash high` and opens onto the three
 slots and an eight-stop effort slider — the same tiers `/effort` and
@@ -117,7 +124,8 @@ Development workflow:
 
 ```bash
 cd website && npm run dev    # Vite :5173, proxies /api and /ws to :8000
-# keep `tod serve` running in another terminal while editing frontend code
+# keep `tod serve --dev` running in another terminal while editing frontend
+# code — --dev also lets the terminal accept the Vite origin (:5173)
 
 cd website && npm run build  # production bundle into website/dist
 tod serve                    # serves the built bundle directly
