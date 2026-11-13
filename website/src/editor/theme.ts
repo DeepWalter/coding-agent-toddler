@@ -192,19 +192,19 @@ export const editorTheme = EditorView.theme({
     borderBottom: '4px solid transparent',
     borderLeft: '5px solid var(--error)',
   },
-  // Overview ruler: absolutely positioned beside the native scrollbar,
-  // mirroring the gutter kinds as vertical ticks.
+  // Overview ruler: the same 8px rail as the editor scrollbar (the overlay
+  // one while the terminal panel is open), with the ticks centered in it.
   '.cm-scmRuler': {
     position: 'absolute',
     top: '0',
     right: '0',
-    width: '10px',
+    width: '8px',
     pointerEvents: 'none',
     zIndex: '250',
   },
   '.cm-scmRuler .cm-scmTick': {
     position: 'absolute',
-    left: '2px',
+    left: '1px',
     width: '6px',
     borderRadius: '1px',
   },

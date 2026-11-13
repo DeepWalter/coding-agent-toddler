@@ -197,10 +197,11 @@ the xterm instance and socket; App owns position and height.
   `scrollTop`. The bar's track stops at the panel's top edge (its measured
   height is passed down as `terminalOverlap`), so the chrome sits above the
   terminal instead of over it. The SCM ruler is scaled by the same ratio
-  (`transform: scaleY`) into that identical span, and its marks are
-  normalised over the document height without `scrollPastEnd`'s bottom
-  padding — so the last mark meets the ruler's bottom just as the
-  scrollbar's range ends there. Closing the panel restores the native bar.
+  (`transform: scaleY`) into that identical span, shares the bar's 8px
+  column (ticks centred in it), and its marks are normalised over the
+  document height without `scrollPastEnd`'s bottom padding — so the last
+  mark meets the ruler's bottom just as the scrollbar's range ends there.
+  Closing the panel restores the native bar.
 
 ### `App.vue` and layout
 
@@ -290,11 +291,11 @@ the xterm instance and socket; App owns position and height.
   and reopening starts a shell whose screen has no content from the
   previous one.
 - With the panel open, the editor's overlay scrollbar and SCM ruler stop at
-  the panel's top edge (neither overlaps the terminal), and the ruler is
-  the same height as the bar with its last mark reaching the ruler's
-  bottom. Scrolling to the end puts the last line at the top of the editor,
-  clear of the panel; dragging the overlay bar scrolls the editor; hiding
-  the panel brings the native bar back.
+  the panel's top edge (neither overlaps the terminal), the ruler occupies
+  the bar's 8px column with centered ticks and the same height, and its
+  last mark reaches the ruler's bottom. Scrolling to the end puts the last
+  line at the top of the editor, clear of the panel; dragging the overlay
+  bar scrolls the editor; hiding the panel brings the native bar back.
 
 ## Verification
 
