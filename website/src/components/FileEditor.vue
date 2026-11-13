@@ -60,6 +60,8 @@ const props = defineProps<{
   refreshAll?: number
   /** The terminal panel currently overlays the bottom of this pane. */
   terminalOpen?: boolean
+  /** Pixel height the panel covers, measured from the pane's bottom. */
+  terminalOverlap?: number
 }>()
 const emit = defineEmits<{
   'activate-tab': [tab: TabEntry]
@@ -1068,16 +1070,17 @@ watch(
         ref="editorHost"
         class="editor-cm"
         :class="{ 'terminal-open': terminalOpen }"
+        :style="{ '--terminal-overlap': `${terminalOverlap ?? 0}px` }"
       />
       <!-- The native scrollbar is painted with the scroller, under the
-           terminal panel; while the panel is open this bar takes over so
-           the editor's scroll chrome stays visible (and draggable) above
-           it.  The SCM ruler (z 250) still draws over both. -->
+           terminal panel; while the panel is open this bar takes over,
+           stopping at the panel's top edge so the two never overlap. -->
       <EditorScrollbar
         v-if="terminalOpen && activeTab?.state && !activeTab.loading"
         :scroll-top="barState.scrollTop"
         :scroll-height="barState.scrollHeight"
         :client-height="barState.clientHeight"
+        :bottom-inset="terminalOverlap ?? 0"
         @scroll="scrollEditorTo"
       />
       <div v-if="!active" class="editor-message">

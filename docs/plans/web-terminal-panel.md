@@ -193,9 +193,11 @@ the xterm instance and socket; App owns position and height.
   sits under the panel. While the panel is open,
   `website/src/components/EditorScrollbar.vue` replaces it: the native bar
   is hidden (`.editor-cm.terminal-open .cm-scroller`), and an 8px overlay
-  bar in the editor body (`z-index: 30`, above the panel's 20 and below the
-  SCM ruler's 250) mirrors the scroller's geometry and drives its
-  `scrollTop`. Closing the panel restores the native bar.
+  bar in the editor body mirrors the scroller's geometry and drives its
+  `scrollTop`. The bar's track stops at the panel's top edge (its measured
+  height is passed down as `terminalOverlap`), so the chrome sits above the
+  terminal instead of over it. The SCM ruler is cut at the same edge via
+  `max-height`. Closing the panel restores the native bar.
 
 ### `App.vue` and layout
 
@@ -284,10 +286,11 @@ the xterm instance and socket; App owns position and height.
 - `exit` closes only that terminal's tab; the last one closes the panel,
   and reopening starts a shell whose screen has no content from the
   previous one.
-- With the panel open, the editor's overlay scrollbar and SCM ruler sit
-  above the panel; scrolling to the end puts the last line at the top of
-  the editor, clear of the panel. Dragging the overlay bar scrolls the
-  editor; hiding the panel brings the native bar back.
+- With the panel open, the editor's overlay scrollbar and SCM ruler stop at
+  the panel's top edge (neither overlaps the terminal); scrolling to the
+  end puts the last line at the top of the editor, clear of the panel.
+  Dragging the overlay bar scrolls the editor; hiding the panel brings the
+  native bar back.
 
 ## Verification
 

@@ -15,23 +15,30 @@ const props = defineProps<{
   scrollTop: number
   scrollHeight: number
   clientHeight: number
+  /** Height of the terminal panel covering the bottom of this pane. */
+  bottomInset: number
 }>()
 const emit = defineEmits<{ scroll: [top: number] }>()
 
 // Keep the thumb grabbable even on very long documents.
 const MIN_THUMB = 24
 
+// The track stops where the terminal panel begins; the thumb still maps
+// the scroller's whole range into that shorter space.
+const trackHeight = computed(() =>
+  Math.max(0, props.clientHeight - props.bottomInset),
+)
 const maxScroll = computed(() =>
   Math.max(0, props.scrollHeight - props.clientHeight),
 )
-const needed = computed(() => maxScroll.value > 0 && props.clientHeight > 0)
+const needed = computed(() => maxScroll.value > 0 && trackHeight.value > 0)
 const thumbHeight = computed(() => {
   if (!needed.value || props.scrollHeight <= 0) return 0
   const proportional =
-    (props.clientHeight * props.clientHeight) / props.scrollHeight
-  return Math.max(MIN_THUMB, Math.min(props.clientHeight, proportional))
+    (trackHeight.value * props.clientHeight) / props.scrollHeight
+  return Math.min(trackHeight.value, Math.max(MIN_THUMB, proportional))
 })
-const room = computed(() => Math.max(0, props.clientHeight - thumbHeight.value))
+const room = computed(() => Math.max(0, trackHeight.value - thumbHeight.value))
 const thumbTop = computed(() => {
   if (room.value <= 0 || maxScroll.value <= 0) return 0
   return (props.scrollTop / maxScroll.value) * room.value
@@ -59,7 +66,7 @@ function onPointerDown(event: PointerEvent) {
   } else {
     // Page toward the click, like the native bar's track.
     const direction = y < thumbTop.value ? -1 : 1
-    emit('scroll', clamp(props.scrollTop + direction * props.clientHeight))
+    emit('scroll', clamp(props.scrollTop + direction * trackHeight.value))
   }
 }
 
@@ -81,7 +88,7 @@ function onWheel(event: WheelEvent) {
     event.deltaMode === 1
       ? event.deltaY * 20
       : event.deltaMode === 2
-        ? event.deltaY * props.clientHeight
+        ? event.deltaY * trackHeight.value
         : event.deltaY
   emit('scroll', clamp(props.scrollTop + step))
 }
@@ -98,6 +105,7 @@ function onWheel(event: WheelEvent) {
     :aria-valuemin="0"
     :aria-valuemax="maxScroll"
     :aria-valuenow="scrollTop"
+    :style="{ bottom: `${bottomInset}px` }"
     @pointerdown="onPointerDown"
     @pointermove="onPointerMove"
     @pointerup="onPointerUp"

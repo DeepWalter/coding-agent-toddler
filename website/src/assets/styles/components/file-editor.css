@@ -170,6 +170,14 @@
   background: color-mix(in srgb, var(--text-subtle) 45%, var(--editor-border));
 }
 
+/* The SCM ruler is drawn over the editor's full height; while the terminal
+   panel is open, cut it at the panel's top edge so it sits above the
+   terminal rather than over it. */
+.editor-cm.terminal-open .cm-scmRuler {
+  max-height: calc(100% - var(--terminal-overlap, 0px));
+  overflow: hidden;
+}
+
 /* Absolute overlay over the always-mounted editor host — the message paints
    over (and click-blocks) any stale doc beneath while a tab loads or fails. */
 .editor-message {

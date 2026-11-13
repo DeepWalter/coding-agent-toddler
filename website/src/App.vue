@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import ConsoleDock from './components/ConsoleDock.vue'
 import ConsoleHeader from './components/ConsoleHeader.vue'
 import ConsolePane from './components/ConsolePane.vue'
@@ -244,6 +244,15 @@ const terminalPct = ref(
 )
 const terminalDrag = ref(false)
 const terminalMaximized = ref(false)
+// The panel's pixel height while it is open — what the editor's scroll
+// chrome must stop short of.  Measured off the element itself so percentage
+// heights, drags, and maximize all land on the same number.
+const terminalPanelEl = ref<HTMLElement | null>(null)
+const terminalPanelHeight = ref(0)
+const terminalOverlap = computed(() =>
+  terminalOpen.value ? terminalPanelHeight.value : 0,
+)
+let terminalPanelObserver: ResizeObserver | null = null
 // The height to come back to when a maximized panel is restored.  It is
 // the last dragged/stored height, kept in memory only — a reload starts
 // closed and reopens at the stored height.
@@ -340,6 +349,15 @@ function onTerminalResizeUp(event: PointerEvent) {
   }
 }
 
+onMounted(() => {
+  if (!terminalPanelEl.value) return
+  terminalPanelObserver = new ResizeObserver(([entry]) => {
+    terminalPanelHeight.value =
+      entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height
+  })
+  terminalPanelObserver.observe(terminalPanelEl.value)
+})
+
 onMounted(async () => {
   try {
     terminalAvailable.value = (await api.meta()).terminal
@@ -347,6 +365,11 @@ onMounted(async () => {
     // Meta failed (the server is still starting) — leave the toggle up;
     // the endpoint itself is the gate.
   }
+})
+
+onBeforeUnmount(() => {
+  terminalPanelObserver?.disconnect()
+  terminalPanelObserver = null
 })
 
 // Activity bar: which panel occupies the left pane ('explorer' | 'sc'),
@@ -775,6 +798,7 @@ function onDividerUp(event: PointerEvent) {
           :written-file="writtenFile"
           :refresh-all="fileSweep"
           :terminal-open="terminalOpen"
+          :terminal-overlap="terminalOverlap"
           @activate-tab="(t) => (activeTab = t)"
           @close-tab="closeTab"
           @open-file="openFile"
@@ -786,6 +810,7 @@ function onDividerUp(event: PointerEvent) {
              the top edge drags its height.  Hidden, not unmounted — the
              shell keeps running while the panel is closed. -->
         <div
+          ref="terminalPanelEl"
           v-show="terminalOpen"
           class="terminal-panel"
           :style="{ height: terminalMaximized ? '100%' : terminalPct + '%' }"

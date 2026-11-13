@@ -4795,7 +4795,7 @@ const waitFoldable = (count) =>
       }
     })
 
-  const layering = await page.evaluate(() => {
+  const layout = await page.evaluate(() => {
     const bar = document.querySelector('.editor-scrollbar')
     const panel = document.querySelector('.terminal-panel')
     const ruler = document.querySelector('.cm-scmRuler')
@@ -4805,13 +4805,11 @@ const waitFoldable = (count) =>
     const r = ruler?.getBoundingClientRect()
     const hit = document.elementFromPoint(
       b.left + b.width / 2,
-      Math.min(b.bottom - 4, p.top + 12),
+      Math.min(b.bottom - 4, p.top - 20),
     )
     return {
-      barZ: Number(getComputedStyle(bar).zIndex),
-      panelZ: Number(getComputedStyle(panel).zIndex),
-      rulerZ: ruler ? Number(getComputedStyle(ruler).zIndex) : 0,
       barBottom: Math.round(b.bottom),
+      barHeight: Math.round(b.height),
       panelTop: Math.round(p.top),
       rulerBottom: r ? Math.round(r.bottom) : 0,
       hitBar: hit?.closest('.editor-scrollbar') !== null,
@@ -4820,16 +4818,15 @@ const waitFoldable = (count) =>
       ).scrollbarWidth,
     }
   })
-  const okLayering =
-    layering !== null &&
-    layering.barZ > layering.panelZ &&
-    layering.rulerZ > layering.panelZ &&
-    layering.barBottom > layering.panelTop &&
-    layering.rulerBottom > layering.panelTop &&
-    layering.hitBar &&
-    layering.nativeWidth === 'none'
-  console.log(`phase28 the scrollbar and ruler span above the panel ${JSON.stringify(layering)} ${okLayering ? 'PASS' : 'FAIL'}`)
-  if (!okLayering) fails++
+  const okLayout =
+    layout !== null &&
+    Math.abs(layout.barBottom - layout.panelTop) <= 1 &&
+    Math.abs(layout.rulerBottom - layout.panelTop) <= 1 &&
+    layout.barHeight > 0 &&
+    layout.hitBar &&
+    layout.nativeWidth === 'none'
+  console.log(`phase28 the scrollbar and ruler stop above the panel ${JSON.stringify(layout)} ${okLayout ? 'PASS' : 'FAIL'}`)
+  if (!okLayout) fails++
 
   // Every line can reach the top, so the last one clears the panel.
   await page.evaluate(() => {
