@@ -132,6 +132,44 @@
   min-height: 0;
 }
 
+/* While the terminal panel overlays this pane, the native scrollbar (which
+   is painted inside the scroller, under the panel) gives way to the overlay
+   bar in EditorScrollbar.vue. */
+.editor-cm.terminal-open .cm-scroller {
+  scrollbar-width: none;
+}
+
+.editor-cm.terminal-open .cm-scroller::-webkit-scrollbar {
+  display: none;
+}
+
+/* The editor's overlay scrollbar: the app's 8px thumb, raised above the
+   terminal panel (z 20) and below the SCM overview ruler (z 250).  It spans
+   the editor body, so the thumb remains visible over the panel. */
+.editor-scrollbar {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 8px;
+  z-index: 30;
+  touch-action: none;
+}
+
+.editor-scrollbar-thumb {
+  position: absolute;
+  right: 0;
+  width: 8px;
+  border-radius: 4px;
+  background: var(--editor-border);
+  pointer-events: none;
+}
+
+.editor-scrollbar:hover .editor-scrollbar-thumb,
+.editor-scrollbar.dragging .editor-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-subtle) 45%, var(--editor-border));
+}
+
 /* Absolute overlay over the always-mounted editor host — the message paints
    over (and click-blocks) any stale doc beneath while a tab loads or fails. */
 .editor-message {

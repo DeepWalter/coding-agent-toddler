@@ -774,6 +774,7 @@ function onDividerUp(event: PointerEvent) {
           :reveal="reveal"
           :written-file="writtenFile"
           :refresh-all="fileSweep"
+          :terminal-open="terminalOpen"
           @activate-tab="(t) => (activeTab = t)"
           @close-tab="closeTab"
           @open-file="openFile"

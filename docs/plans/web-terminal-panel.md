@@ -184,6 +184,19 @@ the xterm instance and socket; App owns position and height.
 - **Cleanup** — unmount closes the socket, disposes the terminal, and
   disconnects the observer.
 
+### Editor scroll under the panel
+
+- `FileEditor` adds CodeMirror's `scrollPastEnd()` to non-empty buffers: a
+  page of bottom padding lets every line reach the top of the editor, so
+  the end of the file can be scrolled clear of the panel.
+- The native editor scrollbar is painted with the `.cm-scroller` and thus
+  sits under the panel. While the panel is open,
+  `website/src/components/EditorScrollbar.vue` replaces it: the native bar
+  is hidden (`.editor-cm.terminal-open .cm-scroller`), and an 8px overlay
+  bar in the editor body (`z-index: 30`, above the panel's 20 and below the
+  SCM ruler's 250) mirrors the scroller's geometry and drives its
+  `scrollTop`. Closing the panel restores the native bar.
+
 ### `App.vue` and layout
 
 - State: `terminalOpen = ref(false)`, `terminalPct =
@@ -247,7 +260,7 @@ the xterm instance and socket; App owns position and height.
   `input` back, and on a newline send another prompt. Ignore `resize`. No
   real PTY in Node.
 
-### UI — phase 27 in `website/scripts/ui-test.mjs`
+### UI — phases 27–28 in `website/scripts/ui-test.mjs`
 
 - Toggle exists; click → `.terminal-panel` visible, one tab, and its height
   is ≈ 33 % of `.pane-editor` (±3 points).
@@ -258,8 +271,8 @@ the xterm instance and socket; App owns position and height.
   keeps each screen intact; Delete closes the active tab and its
   neighbour takes over.
 - Hide preserves every terminal; a reload resets to one fresh tab on open.
-- Type `echo hi` + Enter; `.xterm-rows` shows the input and the mock's echo
-  and prompt.
+- Type `echo one` + Enter; `.xterm-rows` shows the input and the mock's
+  echo and prompt.
 - Reclick → panel hidden; click again → earlier output is still there (the
   component stayed mounted).
 - Drag the handle up/down → height changes and clamps to [15, 100]; dragging
@@ -271,6 +284,10 @@ the xterm instance and socket; App owns position and height.
 - `exit` closes only that terminal's tab; the last one closes the panel,
   and reopening starts a shell whose screen has no content from the
   previous one.
+- With the panel open, the editor's overlay scrollbar and SCM ruler sit
+  above the panel; scrolling to the end puts the last line at the top of
+  the editor, clear of the panel. Dragging the overlay bar scrolls the
+  editor; hiding the panel brings the native bar back.
 
 ## Verification
 

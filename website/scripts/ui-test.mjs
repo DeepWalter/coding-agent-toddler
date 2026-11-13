@@ -4783,6 +4783,115 @@ const waitFoldable = (count) =>
   if (!okFresh) fails++
 }
 
+// --- Phase 28: editor scroll chrome while the terminal panel is open ---
+{
+  const scrollState = () =>
+    page.evaluate(() => {
+      const scroller = document.querySelector('.cm-scroller')
+      return {
+        scrollTop: scroller.scrollTop,
+        maxScroll: scroller.scrollHeight - scroller.clientHeight,
+        scrollbarWidth: getComputedStyle(scroller).scrollbarWidth,
+      }
+    })
+
+  const layering = await page.evaluate(() => {
+    const bar = document.querySelector('.editor-scrollbar')
+    const panel = document.querySelector('.terminal-panel')
+    const ruler = document.querySelector('.cm-scmRuler')
+    if (!bar || !panel) return null
+    const b = bar.getBoundingClientRect()
+    const p = panel.getBoundingClientRect()
+    const r = ruler?.getBoundingClientRect()
+    const hit = document.elementFromPoint(
+      b.left + b.width / 2,
+      Math.min(b.bottom - 4, p.top + 12),
+    )
+    return {
+      barZ: Number(getComputedStyle(bar).zIndex),
+      panelZ: Number(getComputedStyle(panel).zIndex),
+      rulerZ: ruler ? Number(getComputedStyle(ruler).zIndex) : 0,
+      barBottom: Math.round(b.bottom),
+      panelTop: Math.round(p.top),
+      rulerBottom: r ? Math.round(r.bottom) : 0,
+      hitBar: hit?.closest('.editor-scrollbar') !== null,
+      nativeWidth: getComputedStyle(
+        document.querySelector('.cm-scroller'),
+      ).scrollbarWidth,
+    }
+  })
+  const okLayering =
+    layering !== null &&
+    layering.barZ > layering.panelZ &&
+    layering.rulerZ > layering.panelZ &&
+    layering.barBottom > layering.panelTop &&
+    layering.rulerBottom > layering.panelTop &&
+    layering.hitBar &&
+    layering.nativeWidth === 'none'
+  console.log(`phase28 the scrollbar and ruler span above the panel ${JSON.stringify(layering)} ${okLayering ? 'PASS' : 'FAIL'}`)
+  if (!okLayering) fails++
+
+  // Every line can reach the top, so the last one clears the panel.
+  await page.evaluate(() => {
+    const scroller = document.querySelector('.cm-scroller')
+    scroller.scrollTop = scroller.scrollHeight
+  })
+  await page.waitForTimeout(300)
+  const end = await page.evaluate(() => {
+    const scroller = document.querySelector('.cm-scroller')
+    const s = scroller.getBoundingClientRect()
+    const panel = document.querySelector('.terminal-panel').getBoundingClientRect()
+    const lines = [...document.querySelectorAll('.cm-line')]
+    const last = lines[lines.length - 1]?.getBoundingClientRect()
+    return {
+      scrollTop: Math.round(scroller.scrollTop),
+      maxScroll: Math.round(scroller.scrollHeight - scroller.clientHeight),
+      scrollerTop: Math.round(s.top),
+      panelTop: Math.round(panel.top),
+      lastTop: last ? Math.round(last.top) : -1,
+      lastBottom: last ? Math.round(last.bottom) : -1,
+    }
+  })
+  const okEnd =
+    Math.abs(end.scrollTop - end.maxScroll) <= 1 &&
+    end.lastTop >= end.scrollerTop - 1 &&
+    end.lastTop - end.scrollerTop < 20 &&
+    end.lastBottom < end.panelTop
+  console.log(`phase28 the last line scrolls above the panel ${JSON.stringify(end)} ${okEnd ? 'PASS' : 'FAIL'}`)
+  if (!okEnd) fails++
+
+  // The bar drives the scroller: drag the thumb down from the top.
+  await page.evaluate(() => {
+    document.querySelector('.cm-scroller').scrollTop = 0
+  })
+  await page.waitForTimeout(200)
+  const thumb = await page.locator('.editor-scrollbar-thumb').boundingBox()
+  await page.mouse.move(thumb.x + thumb.width / 2, thumb.y + thumb.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(
+    thumb.x + thumb.width / 2,
+    thumb.y + thumb.height / 2 + 90,
+    { steps: 5 },
+  )
+  await page.mouse.up()
+  await page.waitForTimeout(200)
+  const dragged = await scrollState()
+  const okBarDrag = dragged.scrollTop > 0
+  console.log(`phase28 dragging the overlay bar scrolls the editor ${JSON.stringify(dragged)} ${okBarDrag ? 'PASS' : 'FAIL'}`)
+  if (!okBarDrag) fails++
+
+  // Hiding the panel restores the native scrollbar.
+  await page.click('.terminal-action[aria-label="Hide Panel"]')
+  await page.waitForSelector('.terminal-panel', { state: 'hidden', timeout: 8000 })
+  const restored = await page.evaluate(() => ({
+    bar: document.querySelectorAll('.editor-scrollbar').length,
+    width: getComputedStyle(document.querySelector('.cm-scroller')).scrollbarWidth,
+  }))
+  const okRestored = restored.bar === 0 && restored.width !== 'none'
+  console.log(`phase28 hiding the panel restores the native scrollbar ${JSON.stringify(restored)} ${okRestored ? 'PASS' : 'FAIL'}`)
+  if (!okRestored) fails++
+}
+
 // The browser connection is an open handle: without closing it the process
 // outlives the last check and a run never returns.
 await browser.close()

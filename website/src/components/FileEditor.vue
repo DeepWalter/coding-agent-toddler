@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, markRaw, onMounted, onUnmounted, ref, watch } from 'vue'
 import { EditorSelection, EditorState, type Extension } from '@codemirror/state'
-import { EditorView, drawSelection, keymap, lineNumbers } from '@codemirror/view'
+import { EditorView, drawSelection, keymap, lineNumbers, scrollPastEnd } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { forceParsing } from '@codemirror/language'
 import type { Language } from '@codemirror/language'
@@ -14,6 +14,7 @@ import { editorTheme, highlightExt } from '../editor/theme'
 import { gitBadgeClass } from '../gitStatus'
 import type { GitStatusState, RevealRequest, TabEntry } from '../types'
 import { basename, isExternal, tabKey } from '../utils'
+import EditorScrollbar from './EditorScrollbar.vue'
 import ExternalTag from './ExternalTag.vue'
 import FileEditorDiffView from './FileEditorDiffView.vue'
 import FileEditorDocView from './FileEditorDocView.vue'
@@ -57,6 +58,8 @@ const props = defineProps<{
   writtenFile?: { path: string; nonce: number } | null
   /** A turn ended: re-read every open file tab (shell-side writes too). */
   refreshAll?: number
+  /** The terminal panel currently overlays the bottom of this pane. */
+  terminalOpen?: boolean
 }>()
 const emit = defineEmits<{
   'activate-tab': [tab: TabEntry]
@@ -103,6 +106,29 @@ interface EditorTab {
 const tabs = ref<Record<string, EditorTab>>(Object.create(null))
 const editorHost = ref<HTMLElement | null>(null)
 let view: EditorView | null = null
+
+// Overlay scrollbar mirror, used while the terminal panel covers the
+// native one.  It reads the live scroller and drives it back; the bar
+// itself owns only its drawing and drag math.
+const barState = ref({ scrollTop: 0, scrollHeight: 0, clientHeight: 0 })
+let scrollbarObserver: ResizeObserver | null = null
+
+function refreshScrollbar() {
+  const scroller = view?.scrollDOM
+  if (!scroller) return
+  barState.value = {
+    scrollTop: scroller.scrollTop,
+    scrollHeight: scroller.scrollHeight,
+    clientHeight: scroller.clientHeight,
+  }
+}
+
+function scrollEditorTo(top: number) {
+  const scroller = view?.scrollDOM
+  if (!scroller) return
+  scroller.scrollTop = top
+  refreshScrollbar()
+}
 
 // Record key whose state the view currently displays — the flush-on-switch
 // needs to know which tab to write the live view state back into (the
@@ -443,6 +469,7 @@ function buildExtensions(
   readOnly = false,
   scm = false,
   onDocChange?: () => void,
+  scrollPast = true,
 ): Extension[] {
   // A read-only buffer keeps every reader's affordance — selection, copy,
   // scrolling, highlighting, the line numbers — and drops the ones that
@@ -485,6 +512,10 @@ function buildExtensions(
     // right; shared by every buffer, read-only ones included.
     ...foldingExtensions(language),
     EditorView.lineWrapping,
+    // A page of space below the last line, so it can be scrolled to the top
+    // — clear of the terminal panel that overlays the editor's bottom.
+    // (The empty state opts out: it has no document to scroll.)
+    ...(scrollPast ? [scrollPastEnd()] : []),
     editorTheme,
     highlightExt,
     ...(language ? [language] : []), // no language → plain text
@@ -516,7 +547,10 @@ const noopTab: EditorTab = {
   saving: false, saveError: null, saved: false,
   flashTimer: null, scrollTop: 0,
 }
-const emptyState = markRaw(EditorState.create({ doc: '', extensions: buildExtensions(noopTab, null) }))
+const emptyState = markRaw(EditorState.create({
+  doc: '',
+  extensions: buildExtensions(noopTab, null, false, false, undefined, false),
+}))
 
 // Flush-before-switch: after every dispatch `view.state` is a NEW object,
 // so a stored tab.state reference goes stale the moment the user types.
@@ -578,6 +612,7 @@ function showTextTab(entry: Extract<TabEntry, { kind: 'text' }>) {
 function showTab(tab: EditorTab, key: string, focus: boolean) {
   if (!view || !tab.state) return
   view.setState(tab.state)
+  requestAnimationFrame(refreshScrollbar)
   currentKey = key
   if (focus) view.focus()
   // A pending reveal owns the scroll — the click asked for a new position,
@@ -780,6 +815,13 @@ onMounted(() => {
   // restore must not fight a user who starts scrolling mid-restore.
   view.dom.addEventListener('wheel', () => { lastUserScroll = performance.now() }, { passive: true })
   view.dom.addEventListener('touchstart', () => { lastUserScroll = performance.now() }, { passive: true })
+  // The overlay bar follows the scroller on every scroll (wheel, keyboard,
+  // drag) and every size/content change (resize, tab switch, typing).
+  view.scrollDOM.addEventListener('scroll', refreshScrollbar, { passive: true })
+  scrollbarObserver = new ResizeObserver(refreshScrollbar)
+  scrollbarObserver.observe(view.scrollDOM)
+  scrollbarObserver.observe(view.contentDOM)
+  refreshScrollbar()
   window.addEventListener('beforeunload', onBeforeUnload)
   // The initial activation (restored from localStorage) needs no watcher
   // fire — the immediate watcher would run before the view exists.
@@ -791,6 +833,9 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('beforeunload', onBeforeUnload)
+  scrollbarObserver?.disconnect()
+  scrollbarObserver = null
+  view?.scrollDOM.removeEventListener('scroll', refreshScrollbar)
   view?.destroy()
   view = null
   for (const tab of Object.values(tabs.value)) {
@@ -1019,7 +1064,22 @@ watch(
          (`display: none`) rather than unmounting — the EditorView's parent
          must survive. -->
     <div class="editor-body" :class="{ hidden: !!activeDiff || !!activeDoc }">
-      <div ref="editorHost" class="editor-cm" />
+      <div
+        ref="editorHost"
+        class="editor-cm"
+        :class="{ 'terminal-open': terminalOpen }"
+      />
+      <!-- The native scrollbar is painted with the scroller, under the
+           terminal panel; while the panel is open this bar takes over so
+           the editor's scroll chrome stays visible (and draggable) above
+           it.  The SCM ruler (z 250) still draws over both. -->
+      <EditorScrollbar
+        v-if="terminalOpen && activeTab?.state && !activeTab.loading"
+        :scroll-top="barState.scrollTop"
+        :scroll-height="barState.scrollHeight"
+        :client-height="barState.clientHeight"
+        @scroll="scrollEditorTo"
+      />
       <div v-if="!active" class="editor-message">
         Select a file in the explorer to edit it.
       </div>
