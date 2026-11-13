@@ -105,7 +105,10 @@
 //  phase 20 — copy buttons: a settled reply or thought offers its raw source
 //            under the text, left-aligned with the text rather than the
 //            status gutter, invisible until hovered or focused, and absent
-//            until the stream settles (phase 5 pins the raw-markdown case)
+//            until the stream settles (phase 5 pins the raw-markdown case);
+//            every rendered code block also carries its own copy action,
+//            revealed on hover and copying the fenced source, in both a
+//            reply and a thought
 //  phase 21 — code folding: the editor marks syntax blocks for tree grammars
 //            (Python) and indented blocks for stream grammars and plain text
 //            (YAML), a gutter click hides the block behind a click-to-unfold
@@ -469,12 +472,16 @@ const SEED_PROSE = [
 const SEED_CODE = 'def fits(pane):\n    return pane.scrollHeight > pane.clientHeight'
 const SEED_CHIP = 'scrollable'
 
-// The live thought's raw source — mirrors mock-server.mjs THINK_FRAGMENTS.
-// Phase 20's copy assertion compares the clipboard to it byte for byte.
+// The live thought's raw source — mirrors mock-server.mjs THINK_FRAGMENTS,
+// fenced code block last.  Phase 20's copy assertion compares the clipboard
+// to it byte for byte.
 const THINK_REASONING =
   'live thought: stream the reasoning ' +
   'before the answer — accumulated ' +
-  'fragment by fragment, kept verbatim'
+  'fragment by fragment, kept verbatim' +
+  '\n```python\n' +
+  `${SEED_CODE}\n` +
+  '```\n'
 
 // Label shapes — the counts are the point, so these match a pattern rather
 // than pinning the mock's fragment count and stream duration (which lands in
@@ -3688,13 +3695,76 @@ const planTodo = (marks) =>
   const checkShown = await bubble
     .locator('.message-copy')
     .evaluate((el) => el.classList.contains('copied'))
+  const copyGlyph = await bubble.locator('.message-copy svg').count()
   const tabsAfter = await page.locator('.editor-tab').count()
   const okCopy =
-    copiedMessage === REPLAY_SOURCE && checkShown && tabsAfter === tabsBefore
+    copiedMessage === REPLAY_SOURCE &&
+    checkShown &&
+    copyGlyph === 1 &&
+    tabsAfter === tabsBefore
   console.log(
-    `phase20 the message copy writes the raw source ${JSON.stringify({ chars: copiedMessage?.length, raw: copiedMessage === REPLAY_SOURCE, check: checkShown, tabsBefore, tabsAfter })} ${okCopy ? 'PASS' : 'FAIL'}`,
+    `phase20 the message copy writes the raw source ${JSON.stringify({ chars: copiedMessage?.length, raw: copiedMessage === REPLAY_SOURCE, check: checkShown, glyph: copyGlyph, tabsBefore, tabsAfter })} ${okCopy ? 'PASS' : 'FAIL'}`,
   )
   if (!okCopy) fails++
+
+  // Code blocks carry their own copy action, rendered inside the markdown
+  // string rather than as a Vue child.  The mock's `code:` turn answers with
+  // one fenced block, and the button copies exactly the fenced source —
+  // trailing newline included — without opening anything.
+  await page.fill('textarea.input-bar-textarea', 'code: show me')
+  await page.click('button:has-text("Send")')
+  await page.waitForFunction(
+    () => {
+      const rows = [...document.querySelectorAll('.stream-row[data-kind="assistant"]')]
+      const row = rows[rows.length - 1]
+      return (
+        !!row &&
+        !row.querySelector('.status-mark.running') &&
+        !!row.querySelector('.code-block')
+      )
+    },
+    { timeout: 15000 },
+  )
+  const codeReply = page.locator('.stream-row[data-kind="assistant"]').last()
+  const codeBlock = codeReply.locator('.code-block')
+  const codeOpacity = () =>
+    codeBlock.locator('.code-copy').evaluate((el) => getComputedStyle(el).opacity)
+  const codeHidden = await codeOpacity()
+  await codeBlock.hover()
+  const codeHovered = await codeOpacity()
+  await page.mouse.move(0, 0)
+  const codeUnhovered = await codeOpacity()
+  const okCodeReveal =
+    codeHidden === '0' && codeHovered === '1' && codeUnhovered === '0'
+  console.log(
+    `phase20 a code block's copy action hides until hovered ${JSON.stringify({ hidden: codeHidden, hovered: codeHovered, unhovered: codeUnhovered })} ${okCodeReveal ? 'PASS' : 'FAIL'}`,
+  )
+  if (!okCodeReveal) fails++
+
+  const tabsBeforeCode = await page.locator('.editor-tab').count()
+  await page.evaluate(() => {
+    window.__copied = null
+  })
+  await codeBlock.hover()
+  await codeBlock.locator('.code-copy').click()
+  await page.waitForTimeout(150)
+  const copiedCode = await page.evaluate(() => window.__copied)
+  const codeFeedback = await codeBlock.locator('.code-copy').evaluate((el) => ({
+    copied: el.classList.contains('copied'),
+    glyph: getComputedStyle(el.querySelector('.code-copy-glyph')).display,
+    check: getComputedStyle(el.querySelector('.code-copy-check')).display,
+  }))
+  const tabsAfterCode = await page.locator('.editor-tab').count()
+  const okCodeCopy =
+    copiedCode === `${SEED_CODE}\n` &&
+    codeFeedback.copied &&
+    codeFeedback.glyph === 'none' &&
+    codeFeedback.check === 'block' &&
+    tabsAfterCode === tabsBeforeCode
+  console.log(
+    `phase20 a reply's code block copies its source ${JSON.stringify({ chars: copiedCode?.length, raw: copiedCode === `${SEED_CODE}\n`, ...codeFeedback, tabsBeforeCode, tabsAfterCode })} ${okCodeCopy ? 'PASS' : 'FAIL'}`,
+  )
+  if (!okCodeCopy) fails++
 
   // Live assistant text: the mock's `slow:` turn spaces its chunks so the
   // running block is observable.  No action row while it streams; one once
@@ -3801,6 +3871,25 @@ const planTodo = (marks) =>
     `phase20 a streaming thought has no copy action, and the settled one copies the raw reasoning ${JSON.stringify({ openActions, chars: copiedThink?.length, raw: copiedThink === THINK_REASONING })} ${okThink ? 'PASS' : 'FAIL'}`,
   )
   if (!okThink) fails++
+
+  // The reasoning body renders through the same code-copy mode, so its
+  // fenced block offers the action too.
+  const thoughtCode = liveThought.locator('.thinking-content .code-block')
+  await page.evaluate(() => {
+    window.__copied = null
+  })
+  await thoughtCode.hover()
+  await thoughtCode.locator('.code-copy').click()
+  await page.waitForTimeout(150)
+  const copiedThoughtCode = await page.evaluate(() => window.__copied)
+  const thoughtCheck = await thoughtCode
+    .locator('.code-copy')
+    .evaluate((el) => el.classList.contains('copied'))
+  const okThoughtCode = copiedThoughtCode === `${SEED_CODE}\n` && thoughtCheck
+  console.log(
+    `phase20 a thought's code block copies its source ${JSON.stringify({ chars: copiedThoughtCode?.length, raw: copiedThoughtCode === `${SEED_CODE}\n`, check: thoughtCheck })} ${okThoughtCode ? 'PASS' : 'FAIL'}`,
+  )
+  if (!okThoughtCode) fails++
 }
 
 // The fold-gutter readings shared by phases 21 and 22.  The gutter's width

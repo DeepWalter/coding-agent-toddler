@@ -88,6 +88,53 @@
   color: var(--text);
 }
 
+/* A code block rendered with its own copy button (markdown.ts's code-copy
+   mode).  The wrapper is the positioning context, not the <pre>: a wide
+   block scrolls sideways, and the button has to stay in the corner.  The
+   pre keeps the same spacing as any other block. */
+.markdown .code-block {
+  position: relative;
+  margin: 6px 0;
+}
+
+.markdown .code-block > pre {
+  margin: 0;
+  /* Room for the button over the first line; lines that still run under it
+     scroll behind its fill instead. */
+  padding-right: 38px;
+}
+
+/* Placement and reveal only: shared/copy-button.css paints the button.
+   Like the message and reasoning copy rows, it hides until the block or the
+   button is hovered/focused.  The fill keeps a wide line from reading
+   through the glyph. */
+.markdown .code-block > .code-copy {
+  position: absolute;
+  top: 4px;
+  right: 5px;
+  background: var(--editor-surface-3);
+  opacity: 0;
+}
+
+.markdown .code-block:hover > .code-copy,
+.markdown .code-block > .code-copy:focus-visible {
+  opacity: 1;
+}
+
+/* One glyph at a time — the 22px button is a grid, and two visible SVGs
+   would stack in it. */
+.code-copy .code-copy-check {
+  display: none;
+}
+
+.code-copy.copied .code-copy-glyph {
+  display: none;
+}
+
+.code-copy.copied .code-copy-check {
+  display: block;
+}
+
 :is(.message-content, .stream-line, .editor-doc, .thinking-content).markdown ul,
 :is(.message-content, .stream-line, .editor-doc, .thinking-content).markdown ol {
   margin: 4px 0;

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import type { Block } from '../types'
-import { renderMarkdown } from '../markdown'
+import { renderMarkdownWithCodeCopy } from '../markdown'
+import { handleCodeCopyClick } from '../codeCopy'
 import { estimateTokens, formatTokens } from '../utils'
 import CopyButton from './CopyButton.vue'
 
@@ -11,9 +12,11 @@ const emit = defineEmits<{
   'open-file': [path: string]
 }>()
 
-// Delegated click handler: repo-relative links (tagged `data-file` by the
-// markdown renderer) open the file in the editor pane instead of a tab.
+// Delegated click handler: a code block's copy button copies its source,
+// and repo-relative links (tagged `data-file` by the markdown renderer) open
+// the file in the editor pane instead of a tab.
 function onClick(event: MouseEvent) {
+  if (handleCodeCopyClick(event)) return
   const link = (event.target as HTMLElement | null)?.closest?.('a[data-file]') as
     | HTMLAnchorElement
     | null
@@ -68,7 +71,7 @@ const detail = computed(() => {
 /** The reasoning goes through the answer renderer — cached upstream like
  *  every markdown render — so a thought's code and structure read exactly
  *  as a reply's. */
-const rendered = computed(() => renderMarkdown(props.block.reasoning))
+const rendered = computed(() => renderMarkdownWithCodeCopy(props.block.reasoning))
 
 /** Sub-second thoughts would round to a nonsensical "0 seconds", and a
  *  long one reads better in minutes than as "125 seconds". */

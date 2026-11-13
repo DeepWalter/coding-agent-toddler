@@ -610,6 +610,15 @@ const EFFORT_TIERS = [
   'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra',
 ]
 
+// The code a pair of fixtures carries — the `code:` reply below and the
+// live thought's reasoning — so phase 20's code-copy assertions compare
+// against one body.  Keep in sync with ui-test.mjs (SEED_CODE).
+const CODE_SNIPPET = 'def fits(pane):\n    return pane.scrollHeight > pane.clientHeight'
+
+// A "code" turn's answer: one fenced block, whole, so the console's
+// per-block copy action has a reply to act on (phase 20).
+const CODE_ANSWER = 'Here is the code:\n\n```python\n' + CODE_SNIPPET + '\n```\n'
+
 // Reasoning bodies the thought-block assertions compare against — keep in
 // sync with ui-test.mjs (SEED_REASONING / THINK_REASONING).
 const SEED_REASONING =
@@ -623,6 +632,10 @@ const THINK_FRAGMENTS = [
   'live thought: stream the reasoning ',
   'before the answer — accumulated ',
   'fragment by fragment, kept verbatim',
+  // A fenced block at the end of the thought, so the per-block copy action
+  // exists in the reasoning too.  The newline before the closing fence is
+  // part of the source the clipboard comparison expects.
+  '\n```python\n' + CODE_SNIPPET + '\n```\n',
 ]
 const THINK_REASONING = THINK_FRAGMENTS.join('')
 
@@ -852,6 +865,9 @@ wss.on('connection', (ws) => {
         // observe the assistant block while it is still streaming (the normal
         // burst lands in one synchronous loop with no window to inspect).
         const slow = msg.input.startsWith('slow')
+        // A "code" turn answers with one fenced block, for the code block's
+        // own copy action below the rendered answer.
+        const code = msg.input.startsWith('code')
         // A "shell" turn runs one long shell call — the card's three-line
         // clip, its copy button and its open-in-editor path all need a call
         // that overflows the clip on both sides.
@@ -1423,12 +1439,17 @@ wss.on('connection', (ws) => {
           await new Promise((resolve) => setTimeout(resolve, thinkHold))
         }
         let content = ''
-        const chunks = long ? 60 : 26
-        for (let i = 0; i < chunks; i++) {
-          const chunk = `more streaming output chunk ${i}\n`
-          content += chunk
-          send({ type: 'content_delta', text_delta: chunk })
-          if (slow) await new Promise((resolve) => setTimeout(resolve, 40))
+        if (code) {
+          content = CODE_ANSWER
+          send({ type: 'content_delta', text_delta: content })
+        } else {
+          const chunks = long ? 60 : 26
+          for (let i = 0; i < chunks; i++) {
+            const chunk = `more streaming output chunk ${i}\n`
+            content += chunk
+            send({ type: 'content_delta', text_delta: chunk })
+            if (slow) await new Promise((resolve) => setTimeout(resolve, 40))
+          }
         }
         if (!gate && !script) {
           if (think) {

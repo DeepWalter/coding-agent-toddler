@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { renderMarkdown } from '../markdown'
+import { renderMarkdownWithCodeCopy } from '../markdown'
+import { handleCodeCopyClick } from '../codeCopy'
 import { useOverflow } from '../composables/useOverflow'
 import CopyButton from './CopyButton.vue'
 
@@ -21,7 +22,7 @@ const emit = defineEmits<{
   toggle: []
 }>()
 
-const rendered = computed(() => renderMarkdown(props.text))
+const rendered = computed(() => renderMarkdownWithCodeCopy(props.text))
 
 // A user box is given three lines
 // (assets/styles/components/console-pane-message-bubble.css) and asked one
@@ -37,9 +38,11 @@ const { clamped } = useOverflow(contentEl)
  *  has nothing cut off, and still needs its way back. */
 const toggle = computed(() => props.expanded || clamped.value)
 
-// Delegated click handler: repo-relative links (tagged `data-file` by the
-// markdown renderer) open the file in the editor pane instead of a tab.
+// Delegated click handler: a code block's copy button copies its source,
+// and repo-relative links (tagged `data-file` by the markdown renderer) open
+// the file in the editor pane instead of a tab.
 function onClick(event: MouseEvent) {
+  if (handleCodeCopyClick(event)) return
   const link = (event.target as HTMLElement | null)?.closest?.('a[data-file]') as
     | HTMLAnchorElement
     | null
