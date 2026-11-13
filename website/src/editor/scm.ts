@@ -1,6 +1,5 @@
 import { Chunk } from '@codemirror/merge'
 import {
-  EditorSelection,
   RangeSet,
   StateEffect,
   StateField,
@@ -135,9 +134,8 @@ interface RulerTick {
   kind: ScmLineChange['kind']
   top: number
   height: number
-  /** The document range the tick stands for — where a click reveals it. */
-  from: number
-  to: number
+  /** Content-space y of the tick's center — where a click centers it. */
+  anchor: number
 }
 
 const TICK_LABEL: Record<ScmLineChange['kind'], string> = {
@@ -165,27 +163,27 @@ const scmRuler = ViewPlugin.fromClass(
       this.schedule()
     }
 
-    /** Scroll the change a clicked tick stands for into view.  The editor
-     *  reports the terminal panel as a bottom scroll margin, so the target
-     *  lands in the visible area above it rather than behind it. */
+    /** Center a clicked tick's change in the visible editor.  The scroll
+     *  position is chosen so the thumb's center lands on the tick; no
+     *  selection or focus change is made — the gutter already marks the
+     *  change. */
     private reveal(event: MouseEvent) {
       const target =
         event.target instanceof Element
           ? event.target.closest<HTMLElement>('.cm-scmTick')
           : null
       if (!target) return
-      const from = Number(target.dataset.from)
-      const to = Number(target.dataset.to)
-      if (!Number.isFinite(from)) return
-      const doc = this.view.state.doc
-      const pos = Math.min(Math.max(0, from), doc.length)
-      const end = Math.min(Math.max(pos, Number.isFinite(to) ? to : pos), doc.length)
-      const range = EditorSelection.range(pos, end)
-      this.view.dispatch({
-        selection: range,
-        effects: EditorView.scrollIntoView(range, { y: 'center' }),
-      })
-      this.view.focus()
+      const anchor = Number(target.dataset.anchor)
+      if (!Number.isFinite(anchor)) return
+      const scroller = this.view.scrollDOM
+      // The ruler's transformed height is the visible editor height; the
+      // target scroll puts the anchor at its center.
+      const visible = this.dom.getBoundingClientRect().height
+      const maxScroll = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+      scroller.scrollTop = Math.min(
+        maxScroll,
+        Math.max(0, anchor - visible / 2),
+      )
     }
 
     update(update: ViewUpdate) {
@@ -199,6 +197,12 @@ const scmRuler = ViewPlugin.fromClass(
       }
     }
 
+    /** Re-measure on demand — the terminal panel's height is a CSS input
+     *  the view's own update triggers cannot see. */
+    refresh() {
+      this.schedule()
+    }
+
     private schedule() {
       if (this.destroyed) return
       this.view.requestMeasure({
@@ -210,10 +214,16 @@ const scmRuler = ViewPlugin.fromClass(
 
     private read(view: EditorView): RulerMeasure | null {
       const height = view.scrollDOM.clientHeight
-      // The document's own height, without scrollPastEnd's page of bottom
-      // padding: marks spread over the file, and the last one ends at the
-      // ruler's bottom edge, in step with the scrollbar's scroll range.
-      const total = Math.max(1, view.contentHeight - view.documentPadding.bottom)
+      // The scrollable range the thumb represents: the content height minus
+      // the strip hidden under the terminal panel.  A tick's fraction
+      // against this total is exactly where the thumb's center sits when the
+      // change is centerd in the visible editor, so a tick inside the thumb
+      // always names a change inside the visible range.
+      const overlap =
+        Number.parseFloat(
+          getComputedStyle(view.dom).getPropertyValue('--terminal-overlap'),
+        ) || 0
+      const total = Math.max(1, view.scrollDOM.scrollHeight - overlap)
       if (!height) return null
 
       const entries = view.state.field(scmField).entries
@@ -224,13 +234,13 @@ const scmRuler = ViewPlugin.fromClass(
           Math.min(entry.from, view.state.doc.length),
         )
         if (entry.kind === 'del') {
-          const center = (padding + start.top + start.height / 2) / total
+          const anchor = padding + start.top + start.height / 2
+          const center = anchor / total
           ticks.push({
             kind: 'del',
             top: center * height - 1,
             height: 2,
-            from: entry.from,
-            to: entry.from,
+            anchor,
           })
           continue
         }
@@ -243,8 +253,7 @@ const scmRuler = ViewPlugin.fromClass(
           kind: entry.kind,
           top: (top / total) * height,
           height: Math.max(2, ((bottom - top) / total) * height),
-          from: entry.from,
-          to: entry.to,
+          anchor: (top + bottom) / 2,
         })
       }
       // The ruler hugs the editor's right edge in both states: the 8px
@@ -272,9 +281,8 @@ const scmRuler = ViewPlugin.fromClass(
         el.className = `cm-scmTick ${tick.kind}`
         el.style.top = `${tick.top}px`
         el.style.height = `${tick.height}px`
-        el.dataset.from = String(tick.from)
-        el.dataset.to = String(tick.to)
-        el.title = `${TICK_LABEL[tick.kind]} change — click to reveal`
+        el.dataset.anchor = String(tick.anchor)
+        el.title = `${TICK_LABEL[tick.kind]} change — click to center`
         children.push(el)
       }
       this.dom.replaceChildren(...children)
@@ -303,6 +311,11 @@ export function computeScmChanges(
     timeout: 50,
   })
   return chunksToLineChanges(chunks, buffer)
+}
+
+/** Re-measure the overview ruler (the terminal panel's height changed). */
+export function refreshScmRuler(view: EditorView): void {
+  view.plugin(scmRuler)?.refresh()
 }
 
 /** The one extension bundle every SCM-enabled editor state installs. */

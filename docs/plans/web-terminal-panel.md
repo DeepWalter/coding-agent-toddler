@@ -199,15 +199,18 @@ the xterm instance and socket; App owns position and height.
   terminal instead of over it. The SCM ruler is scaled by the same ratio
   (`transform: scaleY`) into that identical span, sits on the scrollbar's
   8px column in both states (the overlay bar here, the native bar when the
-  panel is closed; ticks centred in the column), and its marks are
-  normalised over the document height without `scrollPastEnd`'s bottom
-  padding — so the last mark meets the ruler's bottom just as the
-  scrollbar's range ends there. Closing the panel restores the native bar.
-- Ruler ticks are controls: clicking one selects and scrolls its change
-  into view.  The editor reports the panel height through
-  `EditorView.scrollMargins`, so the reveal (and ordinary caret movement)
-  centres the target in the visible area above the panel instead of
-  leaving it behind it.
+  panel is closed; ticks centerd in the column), and its marks are
+  normalised over the scrollable range — the content height minus the
+  strip under the panel.  The overlay thumb is sized for the visible
+  height against the same range, so a tick inside the thumb is exactly a
+  change inside the visible editor.  Closing the panel restores the native
+  bar.
+- Ruler ticks are controls: clicking one centers its change in the visible
+  editor and moves the scroll position so the thumb's center lands on the
+  tick.  No selection or focus change is made — the gutter already marks
+  it.  The editor reports the panel height through
+  `EditorView.scrollMargins`, so ordinary caret movement also stays in the
+  visible area above the panel.
 
 ### `App.vue` and layout
 
@@ -301,9 +304,9 @@ the xterm instance and socket; App owns position and height.
   the bar's 8px column with centered ticks and the same height, and its
   last mark reaches the ruler's bottom. Scrolling to the end puts the last
   line at the top of the editor, clear of the panel; dragging the overlay
-  bar scrolls the editor; clicking a ruler tick reveals that change above
-  the panel; hiding the panel brings the native bar back with the ruler
-  still on its column.
+  bar scrolls the editor; clicking a ruler tick centers that change (thumb
+  center on the tick) without selecting anything; hiding the panel brings
+  the native bar back with the ruler still on its column.
 
 ## Verification
 

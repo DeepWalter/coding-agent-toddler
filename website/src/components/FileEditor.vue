@@ -8,7 +8,12 @@ import type { Language } from '@codemirror/language'
 import { api } from '../api'
 import { foldingExtensions } from '../editor/folding'
 import { languageForName, languageForPath } from '../editor/languages'
-import { computeScmChanges, scmExtensions, setScmChanges } from '../editor/scm'
+import {
+  computeScmChanges,
+  refreshScmRuler,
+  scmExtensions,
+  setScmChanges,
+} from '../editor/scm'
 import type { ScmLineChange } from '../editor/lineDiff'
 import { editorTheme, highlightExt } from '../editor/theme'
 import { gitBadgeClass } from '../gitStatus'
@@ -153,7 +158,11 @@ watch(
   () => props.terminalOverlap,
   (value) => {
     scrollMarginBottom = value ?? 0
-    view?.requestMeasure()
+    if (!view) return
+    view.requestMeasure()
+    // The ruler maps ticks against the content height minus this overlap;
+    // re-measure it once the new CSS variable has been applied.
+    refreshScmRuler(view)
   },
   { immediate: true },
 )
@@ -1097,7 +1106,10 @@ watch(
         ref="editorHost"
         class="editor-cm"
         :class="{ 'terminal-open': terminalOpen }"
-        :style="{ '--scm-ruler-scale': rulerScale }"
+        :style="{
+          '--terminal-overlap': `${terminalOverlap ?? 0}px`,
+          '--scm-ruler-scale': rulerScale,
+        }"
       />
       <!-- The native scrollbar is painted with the scroller, under the
            terminal panel; while the panel is open this bar takes over,

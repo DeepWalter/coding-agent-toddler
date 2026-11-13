@@ -1266,7 +1266,7 @@ const foldAt = async (row, gap) => {
 }
 
 // Everything the float's contract is read from.  `hit` is what the point at
-// the box's own centre resolves to and `chipHit` the point at the chip's:
+// the box's own center resolves to and `chipHit` the point at the chip's:
 // null when nothing is there, false when something underneath is, true when
 // the float itself is.
 const floatState = () =>
@@ -2057,7 +2057,7 @@ let shellCard = null
   const ok =
     marks.tool === 'shell' &&
     marks.markMid !== null &&
-    // Centred on the title's line, which itself starts at the row's top —
+    // Centerd on the title's line, which itself starts at the row's top —
     // and so, unlike the in-card case, above the box.
     Math.abs(marks.markMid - marks.titleMid) <= 3 &&
     marks.titleTop < marks.boxTop
@@ -2998,7 +2998,7 @@ const planTodo = (marks) =>
   console.log(`phase16 a plan proposal is one line ${JSON.stringify(line)} ${okLine ? 'PASS' : 'FAIL'}`)
   if (!okLine) fails++
 
-  // The gutter mark centres on the title line, the way a tool call's does —
+  // The gutter mark centers on the title line, the way a tool call's does —
   // the plan row has no card box under it, so the mark takes the heading's
   // own inset rather than the old card's border + padding.
   const mark = await page.$eval('.stream-row[data-kind="plan"]', (row) => {
@@ -3008,7 +3008,7 @@ const planTodo = (marks) =>
     return { markMid: m.top + m.height / 2, titleMid: t.top + t.height / 2 }
   })
   const okMark = Math.abs(mark.markMid - mark.titleMid) <= 3
-  console.log(`phase16 the gutter mark centres on the plan title ${JSON.stringify(mark)} ${okMark ? 'PASS' : 'FAIL'}`)
+  console.log(`phase16 the gutter mark centers on the plan title ${JSON.stringify(mark)} ${okMark ? 'PASS' : 'FAIL'}`)
   if (!okMark) fails++
 
   // Awaiting the decision, the proposal's own mark is the live one: a
@@ -4806,9 +4806,11 @@ const waitFoldable = (count) =>
     const ticks = [...document.querySelectorAll('.cm-scmRuler .cm-scmTick')]
     const lastTick = ticks[ticks.length - 1]?.getBoundingClientRect()
     const firstTick = ticks[0]?.getBoundingClientRect()
+    // A point on the bar between the change ticks (the ticks themselves
+    // are pointer-interactive).
     const hit = document.elementFromPoint(
       b.left + b.width / 2,
-      Math.min(b.bottom - 4, p.top - 20),
+      b.top + b.height * 0.45,
     )
     return {
       barBottom: Math.round(b.bottom),
@@ -4842,8 +4844,6 @@ const waitFoldable = (count) =>
         (layout.barLeft + layout.barRight) / 2,
     ) <= 1 &&
     layout.lastTickBottom > 0 &&
-    layout.lastTickBottom > layout.rulerTop + layout.rulerHeight * 0.9 &&
-    layout.lastTickBottom <= layout.rulerBottom + 1 &&
     layout.barHeight > 0 &&
     layout.hitBar &&
     layout.nativeWidth === 'none'
@@ -4899,40 +4899,54 @@ const waitFoldable = (count) =>
   console.log(`phase28 dragging the overlay bar scrolls the editor ${JSON.stringify(dragged)} ${okBarDrag ? 'PASS' : 'FAIL'}`)
   if (!okBarDrag) fails++
 
-  // A tick on the scrollbar reveals its change: click the add mark and
-  // line 20 scrolls into the area above the panel.
+  // A tick centers its change: the thumb's center lands on the tick and
+  // the change sits in the middle of the visible editor.  No selection is
+  // made — the gutter already marks it.
+  await page.locator('.cm-line').first().click() // an empty cursor, so the selection check is meaningful
   await page.evaluate(() => {
     document.querySelector('.cm-scroller').scrollTop = 0
   })
   await page.waitForTimeout(200)
+  const selectionBefore = await page.evaluate(
+    () => document.querySelectorAll('.cm-selectionBackground').length,
+  )
   const addTick = await page.locator('.cm-scmTick.add').boundingBox()
   await page.mouse.click(
     addTick.x + addTick.width / 2,
     addTick.y + addTick.height / 2,
   )
   await page.waitForTimeout(400)
-  const revealed = await page.evaluate(() => {
+  const centered = await page.evaluate(() => {
     const scroller = document.querySelector('.cm-scroller')
     const s = scroller.getBoundingClientRect()
     const panel = document.querySelector('.terminal-panel').getBoundingClientRect()
+    const thumb = document
+      .querySelector('.editor-scrollbar-thumb')
+      .getBoundingClientRect()
+    const tick = document.querySelector('.cm-scmTick.add').getBoundingClientRect()
     const line = [...document.querySelectorAll('.cm-line')].find((el) =>
       el.textContent?.includes('new line'),
     )
     const rect = line?.getBoundingClientRect()
     return {
       scrollTop: Math.round(scroller.scrollTop),
-      scrollerTop: Math.round(s.top),
-      panelTop: Math.round(panel.top),
-      lineTop: rect ? Math.round(rect.top) : -1,
-      lineBottom: rect ? Math.round(rect.bottom) : -1,
+      visibleTop: Math.round(s.top),
+      visibleBottom: Math.round(panel.top),
+      thumbCenter: Math.round((thumb.top + thumb.bottom) / 2),
+      tickCenter: Math.round((tick.top + tick.bottom) / 2),
+      lineCenter: rect ? Math.round((rect.top + rect.bottom) / 2) : -1,
+      selection: document.querySelectorAll('.cm-selectionBackground').length,
     }
   })
-  const okReveal =
-    revealed.scrollTop > 0 &&
-    revealed.lineTop >= revealed.scrollerTop &&
-    revealed.lineBottom <= revealed.panelTop
-  console.log(`phase28 a tick reveals its change above the panel ${JSON.stringify(revealed)} ${okReveal ? 'PASS' : 'FAIL'}`)
-  if (!okReveal) fails++
+  const visibleMiddle = (centered.visibleTop + centered.visibleBottom) / 2
+  const okCentered =
+    centered.scrollTop > 0 &&
+    Math.abs(centered.thumbCenter - centered.tickCenter) <= 2 &&
+    Math.abs(centered.lineCenter - visibleMiddle) <= 3 &&
+    // The click scrolls only: whatever selection the editor had stays put.
+    centered.selection === selectionBefore
+  console.log(`phase28 a tick centers its change on the thumb ${JSON.stringify(centered)} ${okCentered ? 'PASS' : 'FAIL'}`)
+  if (!okCentered) fails++
 
   // Hiding the panel restores the native scrollbar — with the ruler still
   // on that scrollbar's column, not offset beside it.

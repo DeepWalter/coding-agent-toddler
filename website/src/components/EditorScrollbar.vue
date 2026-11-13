@@ -34,8 +34,12 @@ const maxScroll = computed(() =>
 const needed = computed(() => maxScroll.value > 0 && trackHeight.value > 0)
 const thumbHeight = computed(() => {
   if (!needed.value || props.scrollHeight <= 0) return 0
-  const proportional =
-    (trackHeight.value * props.clientHeight) / props.scrollHeight
+  // The thumb represents the visible height V out of the scrollable range
+  // (content minus the hidden bottom strip), so a tick that falls inside
+  // the thumb is a change inside the visible window.  With no panel this
+  // reduces to the standard V²/content thumb.
+  const total = Math.max(1, props.scrollHeight - props.bottomInset)
+  const proportional = (trackHeight.value * trackHeight.value) / total
   return Math.min(trackHeight.value, Math.max(MIN_THUMB, proportional))
 })
 const room = computed(() => Math.max(0, trackHeight.value - thumbHeight.value))
