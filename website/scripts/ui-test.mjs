@@ -4130,13 +4130,18 @@ const waitFoldable = (count) =>
   const record = await page.locator('.tool-call').last().evaluate((el) => ({
     name: el.querySelector('.tool-call-name')?.textContent?.trim() ?? '',
     questions: el.querySelectorAll('.tool-card-question').length,
+    rows: el.querySelectorAll('.tool-card-choice').length,
     chosen: [...el.querySelectorAll('.tool-card-choice.is-chosen')]
       .map((row) => row.textContent.trim()),
     text: el.querySelector('.tool-card-questions')?.innerText ?? '',
   }))
+  // No answer here is the Other box, so the record leaves those rows out:
+  // two, three, and two choices remain of the ten the ask offered.
   const okRecord =
     record.name === 'Questions' &&
     record.questions === 3 &&
+    record.rows === 7 &&
+    !record.text.includes('Other') &&
     record.chosen.length === 3 &&
     record.text.includes('Where should sessions live?') &&
     record.chosen[0].includes('Redis')
@@ -4243,9 +4248,15 @@ const waitFoldable = (count) =>
     chosen: [...el.querySelectorAll('.tool-card-choice.is-chosen')]
       .map((row) => row.textContent.trim()),
     text: el.querySelector('.tool-card-questions')?.innerText ?? '',
+    otherRows: [...el.querySelectorAll('.tool-card-choice')]
+      .filter((row) => row.querySelector('.tool-card-choice-title')?.textContent?.includes('Other'))
+      .length,
   }))
+  // Only the chosen Other row is part of the record; the two unchosen ones
+  // the ask offered stay out of it.
   const okRecord =
     record.chosen.length === 3 &&
+    record.otherRows === 1 &&
     record.chosen[0].includes('Other') &&
     record.chosen[0].includes('DuckDB') &&
     record.text.includes('DuckDB')

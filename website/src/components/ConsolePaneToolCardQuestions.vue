@@ -18,27 +18,34 @@ defineProps<{ questions: ToolCardQuestion[] }>()
       <div class="tool-card-question-title">{{ question.title }}</div>
       <div class="tool-card-question-content">{{ question.content }}</div>
       <div class="tool-card-question-choices">
-        <div
+        <!-- The Other row is the dock's text box, not a pick among the
+             offered choices: unchanged it was never an answer, so the
+             record leaves it out and keeps it only when it was chosen. -->
+        <template
           v-for="(choice, ci) in question.choices"
           :key="ci"
-          class="tool-card-choice"
-          :class="{ 'is-chosen': question.answer === ci }"
         >
-          <span class="tool-card-choice-mark" aria-hidden="true"></span>
-          <div class="tool-card-choice-body">
-            <div class="tool-card-choice-title">
-              {{ choice.title }}
-              <span v-if="ci === 0" class="tool-card-recommended">
-                Recommended
-              </span>
-            </div>
-            <div class="tool-card-choice-content">
-              {{ question.answer === ci && choice.takes_input
-                ? (question.answerText ?? '')
-                : choice.content }}
+          <div
+            v-if="!choice.takes_input || question.answer === ci"
+            class="tool-card-choice"
+            :class="{ 'is-chosen': question.answer === ci }"
+          >
+            <span class="tool-card-choice-mark" aria-hidden="true"></span>
+            <div class="tool-card-choice-body">
+              <div class="tool-card-choice-title">
+                {{ choice.title }}
+                <span v-if="ci === 0" class="tool-card-recommended">
+                  Recommended
+                </span>
+              </div>
+              <div class="tool-card-choice-content">
+                {{ question.answer === ci && choice.takes_input
+                  ? (question.answerText ?? '')
+                  : choice.content }}
+              </div>
             </div>
           </div>
-        </div>
+        </template>
       </div>
     </div>
   </div>
