@@ -1,16 +1,26 @@
 /* Pane chrome shared by FileExplorer, SourceControl, ConsoleHeader,
-   FileEditorDiffView and the terminal panel: the one header row, its
-   titles, the refresh button, and the explorer/source-control list and
-   empty states. */
+   FileEditor / FileEditorDocView, FileEditorDiffView and the terminal panel:
+   the one header row, its titles, the refresh button, and the
+   explorer/source-control list and empty states. */
+
+/* The height every pane's top row holds — the header rows below and the
+   editor's tab strip (components/file-editor.css).  One value so the panes
+   line up across the split; border-box, so the 1px bottom border is part
+   of it. */
+:root {
+  --pane-header-h: 34px;
+}
 
 /* One row for every pane header — explorer, source control, console, the
-   terminal panel — so they line up down the split.  min-height holds that
-   row whatever the content: the console header is title-only, and would
-   otherwise come out a few px shorter than the two carrying a refresh
-   button. */
+   editor (path/diff headers), the terminal panel — so they line up down the
+   split.  min-height holds that row whatever the content: the console and
+   editor headers are title-only, and would otherwise come out a few px
+   shorter than the rows carrying a refresh button. */
 .explorer-header,
 .sc-header,
 .console-header,
+.editor-header,
+.diff-header,
 .terminal-header {
   display: flex;
   align-items: center;
@@ -19,7 +29,7 @@
   border-bottom: 1px solid var(--editor-border);
   background: var(--editor-surface);
   flex: none;
-  min-height: 34px;
+  min-height: var(--pane-header-h);
 }
 
 .explorer-title,

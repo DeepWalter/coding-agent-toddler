@@ -12,15 +12,8 @@
   flex-direction: column;
 }
 
-.editor-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--editor-border);
-  background: var(--editor-surface);
-  flex: none;
-}
+/* `.editor-header` (the path/status row, shared with the document view) is
+   part of the shared pane-header row — see shared/pane-headers.css. */
 
 .editor-path {
   flex: 1;
@@ -49,9 +42,13 @@
   color: var(--error);
 }
 
+/* The strip holds the same row height as the pane headers beside it; the
+   tabs stretch to that height and centre their labels, so the first row is
+   one line across the split whatever is open. */
 .editor-tabs {
   display: flex;
   flex: none;
+  min-height: var(--pane-header-h);
   overflow-x: auto;
   border-bottom: 1px solid var(--editor-border);
   background: var(--editor-surface);

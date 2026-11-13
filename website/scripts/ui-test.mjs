@@ -27,10 +27,11 @@
 //            pen, the click opens a selected box sized to the text on the
 //            same row, Enter commits (and keeps the transcript), Escape and
 //            an empty commit both revert, and the new title survives a reload
-//  phase 9 — reloaded file tabs: the tab list a reload restores closes
-//            cleanly — the tab to the right takes over when the active one
-//            goes, and closing the last one empties the pane (header, doc
-//            and the stored active tab all go with it)
+//  phase 9 — reloaded file tabs: the tab list a reload restores sits on the
+//            same pane-header row as the explorer and console headers and
+//            closes cleanly — the tab to the right takes over when the
+//            active one goes, and closing the last one empties the pane
+//            (header, doc and the stored active tab all go with it)
 //  phase 10 — the console's top float: the last input box the fold has
 //            reached is echoed over the pane's top edge and follows the
 //            scroll, from the moment the box's *top* crosses the fold until
@@ -1164,6 +1165,30 @@ await page.waitForSelector('.editor-tab')
   const ok = st.tabs.join(',') === 'mock-a.md,mock-b.md' &&
     st.active === 'mock-b.md' && st.doc.includes('mock B')
   console.log(`phase9 a reload restores the tabs and the active file's content ${JSON.stringify(st.tabs)} ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) fails++
+}
+
+// P9a.5: the strip is the editor's pane-header row — the same top edge and
+// height as the explorer's and the console's, as measured, so retuning one
+// row cannot silently drift the split.
+{
+  const rows = await page.evaluate(() => {
+    const rect = (sel) => {
+      const el = document.querySelector(sel)
+      if (!el) return null
+      const r = el.getBoundingClientRect()
+      return { top: Math.round(r.top), height: Math.round(r.height) }
+    }
+    return {
+      tabs: rect('.editor-tabs'),
+      explorer: rect('.explorer-header'),
+      console: rect('.console-header'),
+    }
+  })
+  const ok = rows.tabs !== null && rows.explorer !== null && rows.console !== null &&
+    rows.tabs.top === rows.explorer.top && rows.tabs.top === rows.console.top &&
+    rows.tabs.height === rows.explorer.height && rows.tabs.height === rows.console.height
+  console.log(`phase9 the tab strip holds the pane-header row ${JSON.stringify(rows)} ${ok ? 'PASS' : 'FAIL'}`)
   if (!ok) fails++
 }
 

@@ -13,15 +13,8 @@
   flex-direction: column;
 }
 
-.diff-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--editor-border);
-  background: var(--editor-surface);
-  flex: none;
-}
+/* `.diff-header` is part of the shared pane-header row — see
+   shared/pane-headers.css. */
 
 .diff-title {
   flex: 1;
