@@ -4803,6 +4803,8 @@ const waitFoldable = (count) =>
     const b = bar.getBoundingClientRect()
     const p = panel.getBoundingClientRect()
     const r = ruler?.getBoundingClientRect()
+    const ticks = [...document.querySelectorAll('.cm-scmRuler .cm-scmTick')]
+    const lastTick = ticks[ticks.length - 1]?.getBoundingClientRect()
     const hit = document.elementFromPoint(
       b.left + b.width / 2,
       Math.min(b.bottom - 4, p.top - 20),
@@ -4812,6 +4814,9 @@ const waitFoldable = (count) =>
       barHeight: Math.round(b.height),
       panelTop: Math.round(p.top),
       rulerBottom: r ? Math.round(r.bottom) : 0,
+      rulerHeight: r ? Math.round(r.height) : 0,
+      rulerTop: r ? Math.round(r.top) : 0,
+      lastTickBottom: lastTick ? Math.round(lastTick.bottom) : 0,
       hitBar: hit?.closest('.editor-scrollbar') !== null,
       nativeWidth: getComputedStyle(
         document.querySelector('.cm-scroller'),
@@ -4822,6 +4827,10 @@ const waitFoldable = (count) =>
     layout !== null &&
     Math.abs(layout.barBottom - layout.panelTop) <= 1 &&
     Math.abs(layout.rulerBottom - layout.panelTop) <= 1 &&
+    Math.abs(layout.rulerHeight - layout.barHeight) <= 1 &&
+    layout.lastTickBottom > 0 &&
+    layout.lastTickBottom > layout.rulerTop + layout.rulerHeight * 0.9 &&
+    layout.lastTickBottom <= layout.rulerBottom + 1 &&
     layout.barHeight > 0 &&
     layout.hitBar &&
     layout.nativeWidth === 'none'

@@ -177,8 +177,11 @@ const scmRuler = ViewPlugin.fromClass(
 
     private read(view: EditorView): RulerMeasure | null {
       const height = view.scrollDOM.clientHeight
-      const total = view.contentHeight
-      if (!height || !total) return null
+      // The document's own height, without scrollPastEnd's page of bottom
+      // padding: marks spread over the file, and the last one ends at the
+      // ruler's bottom edge, in step with the scrollbar's scroll range.
+      const total = Math.max(1, view.contentHeight - view.documentPadding.bottom)
+      if (!height) return null
 
       const entries = view.state.field(scmField).entries
       const padding = view.documentPadding.top

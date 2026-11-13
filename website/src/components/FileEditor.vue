@@ -132,6 +132,16 @@ function scrollEditorTo(top: number) {
   refreshScrollbar()
 }
 
+/** The visible editor height over the full scroller height — the factor
+ *  that folds the SCM ruler into the same span as the overlay bar while
+ *  the terminal panel covers the bottom. */
+const rulerScale = computed(() => {
+  const height = barState.value.clientHeight
+  if (height <= 0) return '1'
+  const visible = Math.max(0, height - (props.terminalOverlap ?? 0))
+  return String(Math.min(1, visible / height))
+})
+
 // Record key whose state the view currently displays — the flush-on-switch
 // needs to know which tab to write the live view state back into (the
 // watcher's `props.active` is already the NEW tab by the time it fires).  A
@@ -1070,7 +1080,7 @@ watch(
         ref="editorHost"
         class="editor-cm"
         :class="{ 'terminal-open': terminalOpen }"
-        :style="{ '--terminal-overlap': `${terminalOverlap ?? 0}px` }"
+        :style="{ '--scm-ruler-scale': rulerScale }"
       />
       <!-- The native scrollbar is painted with the scroller, under the
            terminal panel; while the panel is open this bar takes over,

@@ -170,12 +170,13 @@
   background: color-mix(in srgb, var(--text-subtle) 45%, var(--editor-border));
 }
 
-/* The SCM ruler is drawn over the editor's full height; while the terminal
-   panel is open, cut it at the panel's top edge so it sits above the
-   terminal rather than over it. */
+/* The SCM ruler is drawn over the editor's full height.  While the terminal
+   panel is open, scale it — ticks and all — into the same visible span as
+   the overlay scrollbar, so the two overviews agree line for line instead
+   of the ruler running over (or being cut off by) the panel. */
 .editor-cm.terminal-open .cm-scmRuler {
-  max-height: calc(100% - var(--terminal-overlap, 0px));
-  overflow: hidden;
+  transform: scaleY(var(--scm-ruler-scale, 1));
+  transform-origin: top right;
 }
 
 /* Absolute overlay over the always-mounted editor host — the message paints
