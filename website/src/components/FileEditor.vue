@@ -142,6 +142,22 @@ const rulerScale = computed(() => {
   return String(Math.min(1, visible / height))
 })
 
+// The terminal panel covers the bottom of the editor; report it as a
+// bottom scroll margin so scrollIntoView (a ruler tick's reveal, the
+// caret) keeps its target in the visible area above the panel.
+let scrollMarginBottom = 0
+const terminalScrollMargins = EditorView.scrollMargins.of(() => ({
+  bottom: scrollMarginBottom,
+}))
+watch(
+  () => props.terminalOverlap,
+  (value) => {
+    scrollMarginBottom = value ?? 0
+    view?.requestMeasure()
+  },
+  { immediate: true },
+)
+
 // Record key whose state the view currently displays — the flush-on-switch
 // needs to know which tab to write the live view state back into (the
 // watcher's `props.active` is already the NEW tab by the time it fires).  A
@@ -528,6 +544,7 @@ function buildExtensions(
     // — clear of the terminal panel that overlays the editor's bottom.
     // (The empty state opts out: it has no document to scroll.)
     ...(scrollPast ? [scrollPastEnd()] : []),
+    terminalScrollMargins,
     editorTheme,
     highlightExt,
     ...(language ? [language] : []), // no language → plain text

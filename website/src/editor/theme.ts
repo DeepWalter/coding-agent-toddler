@@ -207,6 +207,12 @@ export const editorTheme = EditorView.theme({
     left: '1px',
     width: '6px',
     borderRadius: '1px',
+    // A tick doubles as a control that reveals its change.
+    pointerEvents: 'auto',
+    cursor: 'pointer',
+  },
+  '.cm-scmRuler .cm-scmTick:hover': {
+    filter: 'brightness(1.35)',
   },
   '.cm-scmRuler .cm-scmTick.add': { background: 'var(--success)' },
   '.cm-scmRuler .cm-scmTick.mod': { background: 'var(--accent)' },

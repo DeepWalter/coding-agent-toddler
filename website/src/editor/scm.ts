@@ -1,5 +1,6 @@
 import { Chunk } from '@codemirror/merge'
 import {
+  EditorSelection,
   RangeSet,
   StateEffect,
   StateField,
@@ -134,6 +135,15 @@ interface RulerTick {
   kind: ScmLineChange['kind']
   top: number
   height: number
+  /** The document range the tick stands for — where a click reveals it. */
+  from: number
+  to: number
+}
+
+const TICK_LABEL: Record<ScmLineChange['kind'], string> = {
+  add: 'Added',
+  mod: 'Modified',
+  del: 'Deleted',
 }
 
 interface RulerMeasure {
@@ -150,8 +160,32 @@ const scmRuler = ViewPlugin.fromClass(
     constructor(private readonly view: EditorView) {
       this.dom.className = 'cm-scmRuler'
       this.dom.setAttribute('aria-hidden', 'true')
+      this.dom.addEventListener('click', (event) => this.reveal(event))
       view.dom.appendChild(this.dom)
       this.schedule()
+    }
+
+    /** Scroll the change a clicked tick stands for into view.  The editor
+     *  reports the terminal panel as a bottom scroll margin, so the target
+     *  lands in the visible area above it rather than behind it. */
+    private reveal(event: MouseEvent) {
+      const target =
+        event.target instanceof Element
+          ? event.target.closest<HTMLElement>('.cm-scmTick')
+          : null
+      if (!target) return
+      const from = Number(target.dataset.from)
+      const to = Number(target.dataset.to)
+      if (!Number.isFinite(from)) return
+      const doc = this.view.state.doc
+      const pos = Math.min(Math.max(0, from), doc.length)
+      const end = Math.min(Math.max(pos, Number.isFinite(to) ? to : pos), doc.length)
+      const range = EditorSelection.range(pos, end)
+      this.view.dispatch({
+        selection: range,
+        effects: EditorView.scrollIntoView(range, { y: 'center' }),
+      })
+      this.view.focus()
     }
 
     update(update: ViewUpdate) {
@@ -195,6 +229,8 @@ const scmRuler = ViewPlugin.fromClass(
             kind: 'del',
             top: center * height - 1,
             height: 2,
+            from: entry.from,
+            to: entry.from,
           })
           continue
         }
@@ -207,6 +243,8 @@ const scmRuler = ViewPlugin.fromClass(
           kind: entry.kind,
           top: (top / total) * height,
           height: Math.max(2, ((bottom - top) / total) * height),
+          from: entry.from,
+          to: entry.to,
         })
       }
       // The ruler hugs the editor's right edge in both states: the 8px
@@ -234,6 +272,9 @@ const scmRuler = ViewPlugin.fromClass(
         el.className = `cm-scmTick ${tick.kind}`
         el.style.top = `${tick.top}px`
         el.style.height = `${tick.height}px`
+        el.dataset.from = String(tick.from)
+        el.dataset.to = String(tick.to)
+        el.title = `${TICK_LABEL[tick.kind]} change — click to reveal`
         children.push(el)
       }
       this.dom.replaceChildren(...children)

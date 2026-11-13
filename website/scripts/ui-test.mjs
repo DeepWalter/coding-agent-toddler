@@ -4899,6 +4899,41 @@ const waitFoldable = (count) =>
   console.log(`phase28 dragging the overlay bar scrolls the editor ${JSON.stringify(dragged)} ${okBarDrag ? 'PASS' : 'FAIL'}`)
   if (!okBarDrag) fails++
 
+  // A tick on the scrollbar reveals its change: click the add mark and
+  // line 20 scrolls into the area above the panel.
+  await page.evaluate(() => {
+    document.querySelector('.cm-scroller').scrollTop = 0
+  })
+  await page.waitForTimeout(200)
+  const addTick = await page.locator('.cm-scmTick.add').boundingBox()
+  await page.mouse.click(
+    addTick.x + addTick.width / 2,
+    addTick.y + addTick.height / 2,
+  )
+  await page.waitForTimeout(400)
+  const revealed = await page.evaluate(() => {
+    const scroller = document.querySelector('.cm-scroller')
+    const s = scroller.getBoundingClientRect()
+    const panel = document.querySelector('.terminal-panel').getBoundingClientRect()
+    const line = [...document.querySelectorAll('.cm-line')].find((el) =>
+      el.textContent?.includes('new line'),
+    )
+    const rect = line?.getBoundingClientRect()
+    return {
+      scrollTop: Math.round(scroller.scrollTop),
+      scrollerTop: Math.round(s.top),
+      panelTop: Math.round(panel.top),
+      lineTop: rect ? Math.round(rect.top) : -1,
+      lineBottom: rect ? Math.round(rect.bottom) : -1,
+    }
+  })
+  const okReveal =
+    revealed.scrollTop > 0 &&
+    revealed.lineTop >= revealed.scrollerTop &&
+    revealed.lineBottom <= revealed.panelTop
+  console.log(`phase28 a tick reveals its change above the panel ${JSON.stringify(revealed)} ${okReveal ? 'PASS' : 'FAIL'}`)
+  if (!okReveal) fails++
+
   // Hiding the panel restores the native scrollbar — with the ruler still
   // on that scrollbar's column, not offset beside it.
   await page.click('.terminal-action[aria-label="Hide Panel"]')
