@@ -4585,6 +4585,36 @@ const waitFoldable = (count) =>
   console.log(`phase27 dragging the top edge resizes ${draggedPct.toFixed(1)}% ${okDrag ? 'PASS' : 'FAIL'}`)
   if (!okDrag) fails++
 
+  // Dragging the top edge to the pane's top maximizes; pulling it back
+  // down leaves the state and follows the pointer again.
+  const paneRect = await page.evaluate(
+    () => document.querySelector('.pane-editor').getBoundingClientRect().toJSON(),
+  )
+  const dragTo = async (y) => {
+    const handle = await page.locator('.terminal-resize-handle').boundingBox()
+    await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(handle.x + handle.width / 2, y, { steps: 6 })
+    await page.mouse.up()
+    await page.waitForTimeout(250)
+  }
+
+  await dragTo(paneRect.top - 5)
+  const dragMaxPct = ((await panelHeight()) / (await paneHeight())) * 100
+  const dragMaxRestore =
+    (await page.locator('.terminal-action[aria-label="Restore Panel"]').count()) === 1
+  const okDragMax = Math.abs(dragMaxPct - 100) <= 1 && dragMaxRestore
+  console.log(`phase27 dragging to the top maximizes ${dragMaxPct.toFixed(1)}% ${okDragMax ? 'PASS' : 'FAIL'}`)
+  if (!okDragMax) fails++
+
+  await dragTo(paneRect.top + paneRect.height * 0.4)
+  const dragBackPct = ((await panelHeight()) / (await paneHeight())) * 100
+  const dragBackMax =
+    (await page.locator('.terminal-action[aria-label="Maximize Panel"]').count()) === 1
+  const okDragBack = dragBackPct > 33 && dragBackPct < 99 && dragBackMax
+  console.log(`phase27 dragging back down restores ${dragBackPct.toFixed(1)}% ${okDragBack ? 'PASS' : 'FAIL'}`)
+  if (!okDragBack) fails++
+
   // The xterm palette follows the app theme while the panel is open.
   // xterm paints the theme background onto the scrollable element inside
   // the viewport; the viewport itself must match, or the strip below the
@@ -4703,7 +4733,7 @@ const waitFoldable = (count) =>
   const reloadedTabs = await tabLabels()
   const restoredPct = ((await panelHeight()) / (await paneHeight())) * 100
   const okRestored =
-    Math.abs(restoredPct - draggedPct) <= 2 && reloadedTabs.join() === '1'
+    Math.abs(restoredPct - dragBackPct) <= 2 && reloadedTabs.join() === '1'
   console.log(`phase27 the dragged height persists and tabs reset ${restoredPct.toFixed(1)}% ${okRestored ? 'PASS' : 'FAIL'}`)
   if (!okRestored) fails++
 

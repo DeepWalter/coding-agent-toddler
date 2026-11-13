@@ -223,7 +223,9 @@ const editorPct = ref(split.editor)
 const TERMINAL_STORAGE_KEY = 'tod.terminal'
 const DEFAULT_TERMINAL_PCT = 33
 const MIN_TERMINAL_PCT = 15
-const MAX_TERMINAL_PCT = 85
+// The panel may be dragged the whole way up; 100 % is the maximized state,
+// which the drag snaps into (and out of, when pulled back down).
+const MAX_TERMINAL_PCT = 100
 
 const terminalOpen = ref(false)
 const terminalAvailable = ref(true)
@@ -246,6 +248,9 @@ const terminalMaximized = ref(false)
 // the last dragged/stored height, kept in memory only — a reload starts
 // closed and reopens at the stored height.
 let terminalRestorePct = DEFAULT_TERMINAL_PCT
+// The height a drag began from — what Restore Panel returns to when the
+// drag itself ended maximized.
+let terminalDragStartPct = DEFAULT_TERMINAL_PCT
 const editorPaneEl = ref<HTMLElement | null>(null)
 
 // Each entry is one live terminal; the rail numbers them by position.
@@ -300,6 +305,7 @@ function toggleTerminalMaximize() {
 
 function onTerminalResizeDown(event: PointerEvent) {
   terminalDrag.value = true
+  terminalDragStartPct = terminalPct.value
   ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
 }
 
@@ -307,15 +313,31 @@ function onTerminalResizeMove(event: PointerEvent) {
   if (!terminalDrag.value || !editorPaneEl.value) return
   const rect = editorPaneEl.value.getBoundingClientRect()
   if (rect.height <= 0) return
-  const pct = ((rect.bottom - event.clientY) / rect.height) * 100
-  terminalPct.value = Math.min(MAX_TERMINAL_PCT, Math.max(MIN_TERMINAL_PCT, pct))
+  const raw = ((rect.bottom - event.clientY) / rect.height) * 100
+  if (raw >= MAX_TERMINAL_PCT) {
+    // Dragged to the pane's top — maximize.  The restore height is where
+    // the drag began, not the near-100 % waypoint the pointer crossed.
+    if (!terminalMaximized.value) {
+      terminalRestorePct = terminalDragStartPct
+      terminalMaximized.value = true
+    }
+    return
+  }
+  // Pulling the edge back down leaves the maximized state and follows the
+  // pointer again.
+  terminalMaximized.value = false
+  terminalPct.value = Math.max(MIN_TERMINAL_PCT, raw)
 }
 
 function onTerminalResizeUp(event: PointerEvent) {
   if (!terminalDrag.value) return
   terminalDrag.value = false
   ;(event.currentTarget as HTMLElement).releasePointerCapture(event.pointerId)
-  writeStored(TERMINAL_STORAGE_KEY, { height: terminalPct.value })
+  // A drag that ended maximized leaves the stored height alone; Restore
+  // (or the next drag) picks it up from the in-memory value.
+  if (!terminalMaximized.value) {
+    writeStored(TERMINAL_STORAGE_KEY, { height: terminalPct.value })
+  }
 }
 
 onMounted(async () => {
@@ -768,7 +790,6 @@ function onDividerUp(event: PointerEvent) {
           :style="{ height: terminalMaximized ? '100%' : terminalPct + '%' }"
         >
           <div
-            v-if="!terminalMaximized"
             class="terminal-resize-handle"
             :class="{ dragging: terminalDrag }"
             title="Drag to resize"

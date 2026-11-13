@@ -32,9 +32,11 @@ Design principles:
 - A slim header names the panel **Terminal** and carries four icon actions:
   **Add Terminal** (＋), **Delete Terminal** (trash), **Maximize Panel** (a
   chevron, turning into **Restore Panel** while maximized), and **Hide
-  Panel** (an ×). Maximize fills the editor pane (the drag handle goes away)
-  and Restore returns to the last dragged height; Hide is the same close
-  path as the topbar toggle, so the shells stay alive.
+  Panel** (an ×). Maximize fills the editor pane and Restore returns to the
+  last dragged height; Hide is the same close path as the topbar toggle, so
+  the shells stay alive. Dragging the top edge all the way up is the same
+  gesture — it snaps into maximize — and pulling the edge back down leaves
+  the maximized state.
 - The panel can hold several terminals. They share one panel; a vertical
   rail on its right edge gives each a numbered tab. Add appends and selects
   a new terminal, Delete closes the active one (the neighbour takes over),
@@ -194,6 +196,10 @@ the xterm instance and socket; App owns position and height.
   with no terminals creates one.
 - Drag: pointer capture on the handle; height % is
   `(paneBottom - clientY) / paneHeight * 100`, persisted on pointerup.
+  Reaching 100 % sets the maximized flag (restoring from the drag's start
+  height), pulling below it clears the flag and follows the pointer; a drag
+  that ends maximized stores no height. The handle stays mounted while
+  maximized so the pull-back works.
 - Markup:
   - Topbar icon button before the theme toggle, sharing the icon-button
     chrome (generalize `.theme-toggle` to a `.topbar-icon` class used by
@@ -256,8 +262,9 @@ the xterm instance and socket; App owns position and height.
   and prompt.
 - Reclick → panel hidden; click again → earlier output is still there (the
   component stayed mounted).
-- Drag the handle up/down → height changes and clamps to [15, 85]; reload →
-  the panel starts closed, and the dragged height returns when reopened.
+- Drag the handle up/down → height changes and clamps to [15, 100]; dragging
+  to the pane's top maximizes, dragging back down restores; reload → the
+  panel starts closed, and the dragged height returns when reopened.
 - Switching the theme while open repaints the xterm background.
 - `clear` empties the viewport but keeps the output in scrollback (a
   wheel-up reaches it).
