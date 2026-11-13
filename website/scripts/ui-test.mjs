@@ -4899,15 +4899,27 @@ const waitFoldable = (count) =>
   console.log(`phase28 dragging the overlay bar scrolls the editor ${JSON.stringify(dragged)} ${okBarDrag ? 'PASS' : 'FAIL'}`)
   if (!okBarDrag) fails++
 
-  // Hiding the panel restores the native scrollbar.
+  // Hiding the panel restores the native scrollbar — with the ruler still
+  // on that scrollbar's column, not offset beside it.
   await page.click('.terminal-action[aria-label="Hide Panel"]')
   await page.waitForSelector('.terminal-panel', { state: 'hidden', timeout: 8000 })
-  const restored = await page.evaluate(() => ({
-    bar: document.querySelectorAll('.editor-scrollbar').length,
-    width: getComputedStyle(document.querySelector('.cm-scroller')).scrollbarWidth,
-  }))
-  const okRestored = restored.bar === 0 && restored.width !== 'none'
-  console.log(`phase28 hiding the panel restores the native scrollbar ${JSON.stringify(restored)} ${okRestored ? 'PASS' : 'FAIL'}`)
+  const restored = await page.evaluate(() => {
+    const scroller = document.querySelector('.cm-scroller')
+    const ruler = document.querySelector('.cm-scmRuler')
+    const s = scroller.getBoundingClientRect()
+    const r = ruler?.getBoundingClientRect()
+    return {
+      bar: document.querySelectorAll('.editor-scrollbar').length,
+      width: getComputedStyle(scroller).scrollbarWidth,
+      scrollerRight: Math.round(s.right),
+      rulerRight: r ? Math.round(r.right) : 0,
+    }
+  })
+  const okRestored =
+    restored.bar === 0 &&
+    restored.width !== 'none' &&
+    Math.abs(restored.rulerRight - restored.scrollerRight) <= 1
+  console.log(`phase28 hiding the panel restores the native scrollbar in the same column ${JSON.stringify(restored)} ${okRestored ? 'PASS' : 'FAIL'}`)
   if (!okRestored) fails++
 }
 

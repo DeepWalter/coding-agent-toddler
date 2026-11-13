@@ -138,7 +138,6 @@ interface RulerTick {
 
 interface RulerMeasure {
   height: number
-  right: number
   ticks: RulerTick[]
 }
 
@@ -210,11 +209,11 @@ const scmRuler = ViewPlugin.fromClass(
           height: Math.max(2, ((bottom - top) / total) * height),
         })
       }
-      return {
-        height,
-        right: view.scrollDOM.offsetWidth - view.scrollDOM.clientWidth,
-        ticks,
-      }
+      // The ruler hugs the editor's right edge in both states: the 8px
+      // column the native scrollbar occupies while the terminal panel is
+      // closed, and the overlay bar's column while it is open.  (The theme
+      // pins `right: 0`; no inline offset is written.)
+      return { height, ticks }
     }
 
     private write(measure: RulerMeasure | null) {
@@ -229,7 +228,6 @@ const scmRuler = ViewPlugin.fromClass(
       }
       this.retries = 0
       this.dom.style.height = `${measure.height}px`
-      this.dom.style.right = `${measure.right}px`
       const children: HTMLElement[] = []
       for (const tick of measure.ticks) {
         const el = document.createElement('div')
