@@ -22,15 +22,16 @@ class StreamEvent:
 
     Event types and their expected ``data`` keys:
 
-    ====================  =========================================
-    ``content_delta``     ``{"text_delta": "..."}``
-    ``reasoning_delta``   ``{"text_delta": "..."}``
-    ``tool_use_start``    ``{"tool_id": ..., "tool_name": ...}``
-    ``tool_use_delta``    ``{"tool_id": ..., "input_delta": {...}}``
-    ``message_start``     ``{}``
-    ``message_stop``      ``{"stop_reason": ..., "usage": TokenUsage}``
-    ``error``             ``{"message": ..., "status_code": ...}``
-    ====================  =========================================
+    =======================  =====================================
+    ``content_delta``        ``{"text_delta": "..."}``
+    ``reasoning_delta``      ``{"text_delta": "..."}``
+    ``tool_use_start``       ``{"tool_id": ..., "tool_name": ...}``
+    ``tool_use_delta``       ``{"tool_id": ..., "input_delta": {...}}``
+    ``conversation_title``   ``{"title": "..."}``
+    ``message_start``        ``{}``
+    ``message_stop``         ``{"stop_reason": ..., "usage": TokenUsage}``
+    ``error``                ``{"message": ..., "status_code": ...}``
+    =======================  =====================================
 
     ``content_delta`` and ``reasoning_delta`` both feed the shared
     ``text`` payload slot of their block kind, so their increments share
@@ -42,6 +43,7 @@ class StreamEvent:
         "reasoning_delta",
         "tool_use_start",
         "tool_use_delta",
+        "conversation_title",
         "message_start",
         "message_stop",
         "error",
@@ -100,3 +102,7 @@ class LLMResponse:
     messages: list[Message]
     stop_reason: Literal["end_turn", "tool_use", "max_tokens", "stop_sequence"]
     usage: TokenUsage
+    # A conversation title the endpoint wrote alongside the answer (DeepSeek's
+    # title feature); ``None`` when the request did not ask for one or the
+    # endpoint produced none (e.g. after a refusal or an error).
+    title: str | None = None

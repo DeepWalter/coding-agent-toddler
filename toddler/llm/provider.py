@@ -115,6 +115,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         response_format: dict | None = None,
         stream: bool = True,
         temperature: float = 0.0,
+        request_title: bool = False,
     ) -> AsyncIterator[StreamEvent] | LLMResponse:
         """Send one chat-completion request — streaming by default.
 
@@ -124,6 +125,12 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         endpoint's own default in place.  The model family decides the
         final wire shape — see :meth:`_parse_params` — including whether
         prior reasoning is echoed back, see :meth:`_messages_to_openai`.
+
+        *request_title* asks a DeepSeek endpoint to write a conversation
+        title alongside the answer; endpoints without the feature ignore
+        it.  A title, when produced, is surfaced as a
+        ``conversation_title`` stream event or on
+        :attr:`~toddler.llm.responses.LLMResponse.title`.
         """
         openai_messages = self._messages_to_openai(messages, model=model)
         openai_tools = self._tools_param(tools)
@@ -134,6 +141,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
             reasoning_effort=reasoning_effort,
             response_format=response_format,
             temperature=temperature,
+            request_title=request_title,
         )
 
         if stream:
@@ -312,10 +320,15 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         internal_msg = self._openai_message_to_internal(choice.message)
         usage = self._extract_usage(response)
 
+        # DeepSeek's title feature documents ``message.title`` on the
+        # assistant message — the response has no top-level title field.
+        title = getattr(choice.message, "title", None)
+
         return LLMResponse(
             messages=[internal_msg] if internal_msg.blocks else [],
             stop_reason=_map_finish_reason(choice.finish_reason),
             usage=usage,
+            title=title,
         )
 
     # ==================================================================
@@ -474,7 +487,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
     def _chunk_events(
         self, delta, seen_ids: dict[int, str]
     ) -> list[StreamEvent]:
-        """Build the prose and tool-call events carried by one chunk.
+        """Build the events carried by one chunk's delta.
 
         Prose first: reasoning (DeepSeek thinking mode) streams before the
         answer text, and a transition chunk may carry the tail of one and
@@ -482,7 +495,9 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         slot, so both build the slot-derived ``text_delta`` key.  Tool-call
         deltas follow, tagged with the owning ``tool_id`` via *seen_ids*
         (the id only appears in the first chunk of each call, so it is
-        memoized by chunk index).
+        memoized by chunk index).  A conversation title (DeepSeek's title
+        feature) rides the delta beside those fields and is emitted once,
+        on the last chunk.
         """
         if delta is None:
             return []
@@ -536,6 +551,17 @@ class OpenAICompatibleProvider(BaseLLMProvider):
                     )
                 )
 
+        # DeepSeek's conversation-title feature: ``delta.title`` is sent
+        # once, on the last chunk, beside the content fields above.  An
+        # empty title is not surfaced — the caller keeps its fallback.
+        title = getattr(delta, "title", None)
+        if title:
+            events.append(
+                StreamEvent(
+                    type="conversation_title", data={"title": title}
+                )
+            )
+
         return events
 
     # ==================================================================
@@ -549,6 +575,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         reasoning_effort: str | None,
         response_format: dict | None,
         temperature: float,
+        request_title: bool = False,
     ) -> dict:
         """Translate our parameter names into *model*'s wire format.
 
@@ -559,10 +586,14 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         * ``deepseek-*`` — the older ``max_tokens``, and
           ``reasoning_effort`` collapsed onto DeepSeek's ``low``/``high``/
           ``max`` tiers (``"none"`` disables thinking outright, which is a
-          separate ``thinking`` field rather than an effort tier).
+          separate ``thinking`` field rather than an effort tier).  The
+          DeepSeek-only body fields — the thinking toggle and the
+          conversation-title option *request_title* asks for — share one
+          ``extra_body`` dict.
         * everything else — ``max_completion_tokens``, which the OpenAI
           reasoning models require; ``max_tokens`` is rejected there.
-          ``reasoning_effort`` passes through untranslated.
+          ``reasoning_effort`` passes through untranslated, and
+          ``request_title`` is dropped: it is a DeepSeek feature.
 
         A ``None`` ``reasoning_effort`` or ``response_format`` omits the
         field, leaving the endpoint's own default in place.
@@ -570,14 +601,19 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         kwargs: dict = {"temperature": temperature}
         if model.lower().startswith("deepseek-"):
             kwargs["max_tokens"] = max_completion_tokens
+            extra_body: dict = {}
             if reasoning_effort is not None:
                 if reasoning_effort == "none":
-                    kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+                    extra_body["thinking"] = {"type": "disabled"}
                 else:
                     tier = reasoning_effort.lower()
                     kwargs["reasoning_effort"] = (
                         _DEEPSEEK_REASON_EFFORT_MAP.get(tier, "max")
                     )
+            if request_title:
+                extra_body["title"] = {"enabled": True}
+            if extra_body:
+                kwargs["extra_body"] = extra_body
             if response_format is not None:
                 rf_type = response_format.get("type", "")
                 if rf_type == "json_schema":

@@ -38,6 +38,7 @@ class BaseLLMProvider(ABC):
         response_format: dict | None = None,
         stream: bool = True,
         temperature: float = 0.0,
+        request_title: bool = False,
     ) -> AsyncIterator[StreamEvent] | LLMResponse:
         """Send messages to the LLM and return the response.
 
@@ -83,6 +84,14 @@ class BaseLLMProvider(ABC):
         temperature:
             Sampling temperature (0.0 = deterministic).  Ignored by
             endpoints that fix it in thinking mode.
+        request_title:
+            Ask the endpoint to write a conversation title alongside this
+            response (DeepSeek's title feature).  Meant only for the first
+            request of a conversation — the title describes the exchange
+            that request carries.  Providers without the feature ignore it.
+            A title, when produced, arrives as a ``conversation_title``
+            :class:`StreamEvent` or on :attr:`LLMResponse.title`; it may be
+            absent (e.g. after a refusal or an error).
         """
         ...
 

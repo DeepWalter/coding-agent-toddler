@@ -93,6 +93,7 @@ def _parse(
     effort: str | None = None,
     response_format: dict | None = None,
     max_completion_tokens: int = 2048,
+    request_title: bool = False,
 ) -> dict:
     """Call ``_parse_params`` with the boilerplate filled in."""
     return OpenAICompatibleProvider._parse_params(
@@ -101,6 +102,7 @@ def _parse(
         reasoning_effort=effort,
         response_format=response_format,
         temperature=0.0,
+        request_title=request_title,
     )
 
 
@@ -109,15 +111,39 @@ async def _drain(stream) -> list:
     return [evt async for evt in stream]
 
 
-def _text_response(content: str = "ok") -> SimpleNamespace:
+def _text_response(
+    content: str = "ok", *, title: str | None = None,
+) -> SimpleNamespace:
     """A minimal non-streaming completion response."""
     return SimpleNamespace(
         choices=[SimpleNamespace(
-            message=SimpleNamespace(content=content, tool_calls=None),
+            message=SimpleNamespace(
+                content=content, tool_calls=None, title=title,
+            ),
             finish_reason="stop",
         )],
         usage=None,
     )
+
+
+def _delta_chunk(
+    *,
+    content: str | None = None,
+    title: str | None = None,
+    finish_reason: str | None = None,
+) -> SimpleNamespace:
+    """A streaming chunk carrying a delta; *title* rides the delta."""
+    delta = SimpleNamespace(
+        content=content, reasoning_content=None, tool_calls=None,
+    )
+    if title is not None:
+        delta.title = title
+    return SimpleNamespace(
+        choices=[SimpleNamespace(delta=delta, finish_reason=finish_reason)],
+        usage=None,
+    )
+
+
 
 
 # ============================================================================
@@ -160,6 +186,7 @@ class TestSdkCompatibility:
                     model,
                     effort=effort,
                     response_format={"type": "json_object"},
+                    request_title=True,
                 )
                 # Unknown keys raise TypeError; known ones bind partially.
                 create.bind_partial(**kwargs)
@@ -241,6 +268,34 @@ class TestResponseFormat:
 
 
 # ============================================================================
+# _parse_params — conversation title
+# ============================================================================
+
+
+class TestConversationTitle:
+    """The title option is DeepSeek's, and shares ``extra_body``."""
+
+    def test_deepseek_gets_the_title_option(self):
+        kwargs = _parse(_DEEPSEEK, request_title=True)
+        assert kwargs["extra_body"] == {"title": {"enabled": True}}
+
+    def test_title_merges_with_the_thinking_toggle(self):
+        """Both body fields ride one dict — neither may overwrite the other."""
+        kwargs = _parse(_DEEPSEEK, effort="none", request_title=True)
+        assert kwargs["extra_body"] == {
+            "thinking": {"type": "disabled"},
+            "title": {"enabled": True},
+        }
+
+    def test_other_endpoints_drop_the_option(self):
+        kwargs = _parse(_OPENAI, request_title=True)
+        assert "extra_body" not in kwargs
+
+    def test_default_off_sends_nothing(self):
+        assert "extra_body" not in _parse(_DEEPSEEK)
+
+
+# ============================================================================
 # generate — what actually reaches create()
 # ============================================================================
 
@@ -314,6 +369,101 @@ class TestGenerateWire:
         # No fallback to the configured effort — ``None`` means "leave the
         # endpoint's own default alone", and nothing else.
         assert "reasoning_effort" not in completions.calls[0]
+
+    @pytest.mark.asyncio
+    async def test_request_title_reaches_the_wire(self, monkeypatch):
+        completions = _install_stub(monkeypatch, chunks=[])
+        provider = _make_provider()
+
+        await _drain(await provider.generate(
+            [Message.user("hi")], [], model=_DEEPSEEK, stream=True,
+            request_title=True,
+        ))
+
+        assert completions.calls[0]["extra_body"] == {
+            "title": {"enabled": True},
+        }
+
+    @pytest.mark.asyncio
+    async def test_request_title_is_dropped_for_other_endpoints(
+        self, monkeypatch,
+    ):
+        completions = _install_stub(monkeypatch, chunks=[])
+        provider = _make_provider()
+
+        await _drain(await provider.generate(
+            [Message.user("hi")], [], model=_OPENAI, stream=True,
+            request_title=True,
+        ))
+
+        assert "extra_body" not in completions.calls[0]
+
+
+class TestGeneratedTitle:
+    """The title comes back out of the response, both wire shapes."""
+
+    @pytest.mark.asyncio
+    async def test_streaming_title_rides_the_last_chunk(self, monkeypatch):
+        _install_stub(monkeypatch, chunks=[
+            _delta_chunk(content="answer"),
+            _delta_chunk(title="Beijing weather", finish_reason="stop"),
+        ])
+        provider = _make_provider()
+
+        events = await _drain(await provider.generate(
+            [Message.user("hi")], [], model=_DEEPSEEK, stream=True,
+            request_title=True,
+        ))
+
+        titles = [e for e in events if e.type == "conversation_title"]
+        assert [e.data["title"] for e in titles] == ["Beijing weather"]
+        # Before the terminal event, so the turn carries it through.
+        assert events.index(titles[0]) < events.index(
+            next(e for e in events if e.type == "message_stop")
+        )
+
+    @pytest.mark.asyncio
+    async def test_absent_title_surfaces_no_event(self, monkeypatch):
+        _install_stub(monkeypatch, chunks=[
+            _delta_chunk(content="answer", finish_reason="stop"),
+        ])
+        provider = _make_provider()
+
+        events = await _drain(await provider.generate(
+            [Message.user("hi")], [], model=_DEEPSEEK, stream=True,
+            request_title=True,
+        ))
+
+        assert not [e for e in events if e.type == "conversation_title"]
+
+    @pytest.mark.asyncio
+    async def test_non_streaming_title_lands_on_the_response(
+        self, monkeypatch,
+    ):
+        _install_stub(
+            monkeypatch,
+            response=_text_response("done", title="A proper title"),
+        )
+        provider = _make_provider()
+
+        result = await provider.generate(
+            [Message.user("hi")], [], model=_DEEPSEEK, stream=False,
+            request_title=True,
+        )
+
+        assert result.title == "A proper title"
+
+    @pytest.mark.asyncio
+    async def test_non_streaming_without_a_title_is_none(self, monkeypatch):
+        _install_stub(monkeypatch, response=_text_response("done"))
+        provider = _make_provider()
+
+        result = await provider.generate(
+            [Message.user("hi")], [], model=_DEEPSEEK, stream=False,
+            request_title=True,
+        )
+
+        assert result.title is None
 
 
 # ============================================================================
