@@ -488,6 +488,7 @@ class Planner:
         user_input: str,
         *,
         config: TurnConfig,
+        request_title: bool = False,
     ) -> AsyncIterator[AgentEvent]:
         """Run the plan loop for a single user request.
 
@@ -508,10 +509,17 @@ class Planner:
             both use it, so the plan is researched and written by the same
             model — even across the approval pause, which can last as long
             as the user takes to decide.
+        request_title:
+            Ask the endpoint to write a conversation title alongside the
+            answer.  One-shot: only the first exploration request carries
+            it — the title describes the conversation's opening request,
+            so a later re-exploration or the proposal call never asks
+            again.
         """
         # --- Plan-mode path: multi-phase orchestration ---
         original_request = user_input
         explore_input = user_input
+        title_pending = request_title
 
         while True:
             current_mode = self._sm.current_mode
@@ -523,10 +531,14 @@ class Planner:
                 # execution applies to exploration.  The event rides
                 # through to the caller, which ends the turn.
                 stopped = False
+                # Consume-on-attempt: the title rides the first exploration
+                # request even if that run fails.
+                title_now, title_pending = title_pending, False
                 async for event in self._agent_loop.run(
                     explore_input,
                     config=config,
                     mode=self._sm.get_mode_hint(),
+                    request_title=title_now,
                 ):
                     if isinstance(event, AgentCancelled) or (
                         isinstance(event, AgentFinished)

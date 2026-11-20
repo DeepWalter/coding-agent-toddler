@@ -64,6 +64,9 @@ class MockLLMProvider(BaseLLMProvider):
         # ``(model, reasoning_effort)`` per call, in order — lets a test
         # assert that one turn never changes model underneath itself.
         self.call_configs: list[tuple[str, str | None]] = []
+        # The ``request_title`` flag of each call, in order — lets a test
+        # assert a conversation asks for its title only once.
+        self.title_requests: list[bool] = []
 
     async def generate(
         self,
@@ -76,9 +79,11 @@ class MockLLMProvider(BaseLLMProvider):
         response_format: dict | None = None,
         temperature: float = 0.0,
         stream: bool = True,
+        request_title: bool = False,
     ) -> AsyncIterator[StreamEvent] | LLMResponse:
         self.messages_history.append(messages)
         self.call_configs.append((model, reasoning_effort))
+        self.title_requests.append(request_title)
         resp = self._next_response()
         if stream:
             return self._stream(resp)

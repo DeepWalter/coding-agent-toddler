@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 from toddler.agent.events import (
     AgentEvent,
     ContentDelta,
+    ConversationTitle,
     ReasoningDelta,
     RecoverableAgentError,
     ToolUseStart,
@@ -209,6 +210,11 @@ class StreamHandler(BaseHandler):
                     # JSON object has no prefix that parses.
                     self._on_tool_delta(event.data)
 
+                case "conversation_title":
+                    title = event.data.get("title", "")
+                    if title:
+                        yield ConversationTitle(title=title)
+
                 case "message_stop":
                     self.stop_reason = event.data.get("stop_reason")
                     self.usage = event.data.get("usage")
@@ -361,8 +367,9 @@ class NonStreamHandler(BaseHandler):
     """Wraps a complete :class:`LLMResponse` in the handler interface.
 
     Yields a single :class:`ReasoningDelta` (if the message carries
-    reasoning) then a single :class:`ContentDelta` (if it has text), then
-    exposes the assembled result via :meth:`get_final_result`.
+    reasoning), a single :class:`ContentDelta` (if it has text), and a
+    :class:`ConversationTitle` (if the response carries one), then exposes
+    the assembled result via :meth:`get_final_result`.
 
     Usage::
 
@@ -410,6 +417,8 @@ class NonStreamHandler(BaseHandler):
         content = self._assistant_msg.content
         if content:
             yield ContentDelta(text_delta=content)
+        if response.title:
+            yield ConversationTitle(title=response.title)
 
     def get_partial_content(self) -> list[MessageBlock]:
         """Return the response content.

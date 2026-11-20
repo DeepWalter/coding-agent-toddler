@@ -35,6 +35,7 @@ class _StubLLM(BaseLLMProvider):
         self, messages, tools, *, model, reasoning_effort=None,
         max_completion_tokens=4096,
         response_format=None, temperature=0.0, stream=True,
+        request_title=False,
     ):
         raise NotImplementedError
 

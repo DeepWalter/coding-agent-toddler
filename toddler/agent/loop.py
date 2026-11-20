@@ -274,6 +274,7 @@ class AgentLoop:
         token_budget: int | None = None,
         stream: bool = False,
         mode: str = "execute",
+        request_title: bool = False,
     ) -> AsyncIterator[AgentEvent]:
         """Run the agent loop for a single user request.
 
@@ -297,6 +298,11 @@ class AgentLoop:
             Agent mode hint — ``"execute"``, ``"plan_exploring"``, or
             ``"plan_executing"``.  Used by the prompt builder to select
             mode-specific instructions.
+        request_title:
+            Ask the endpoint to write a conversation title alongside its
+            first response.  One-shot per run, consumed on the first call
+            even when that call fails: the title describes the
+            conversation's opening request.
         """
         # --- build/append to the message list via the context ---
         await self._ctx.prepare_turn(user_input, mode)
@@ -312,6 +318,11 @@ class AgentLoop:
             token_budget=token_budget,
         )
         handler = create_handler(stream=stream)
+
+        # The conversation title, if asked for, rides this run's first
+        # request and is consumed on the attempt — a failed first call must
+        # not re-ask on the next iteration.
+        title_pending = request_title
 
         # --- main loop ---
         while True:
@@ -330,10 +341,12 @@ class AgentLoop:
             )
 
             llm_result: dict[str, Message | None | str | TokenUsage] = {}
+            title_now, title_pending = title_pending, False
             try:
                 async for event in self._call_llm(
                     messages, tools, config=config, stream=stream,
                     handler=handler, llm_result=llm_result,
+                    request_title=title_now,
                 ):
                     yield event
             except asyncio.CancelledError:
@@ -508,7 +521,7 @@ class AgentLoop:
     async def _call_llm(
         self, messages: list[Message], tools: list[dict], *,
         config: TurnConfig, stream: bool, handler: BaseHandler,
-        llm_result: dict,
+        llm_result: dict, request_title: bool = False,
     ) -> AsyncIterator[AgentEvent]:
         """Call the LLM and yield :class:`AgentEvent` items in real time.
 
@@ -527,6 +540,7 @@ class AgentLoop:
                 max_completion_tokens=config.max_completion_tokens,
                 temperature=self._settings.temperature,
                 stream=stream,
+                request_title=request_title,
             )
             async for event in handler.process(response):
                 yield event

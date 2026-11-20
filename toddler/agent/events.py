@@ -51,6 +51,19 @@ class ReasoningDelta(AgentEvent):
 
 
 @dataclass
+class ConversationTitle(AgentEvent):
+    """The endpoint wrote a conversation title alongside the answer.
+
+    Produced by DeepSeek's conversation-title feature on the first request
+    of a conversation.  Consumed by
+    :class:`~toddler.session.manager.SessionManager`, which persists it —
+    no CLI or web surface renders it, so the manager never forwards it.
+    """
+
+    title: str
+
+
+@dataclass
 class ToolUseStart(AgentEvent):
     """The LLM has started emitting a tool call.
 

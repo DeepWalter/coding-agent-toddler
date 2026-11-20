@@ -56,7 +56,8 @@ class TestContextManagerTokenCount:
                                model: str, reasoning_effort=None,
                                max_completion_tokens=4096,
                                response_format=None,
-                               temperature=0.0, stream=True):
+                               temperature=0.0, stream=True,
+                               request_title=False):
                 raise NotImplementedError
 
             async def generate_compact(self, prompt: str, *, model: str) -> str:

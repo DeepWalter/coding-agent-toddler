@@ -85,6 +85,7 @@ class MockLLMProvider(BaseLLMProvider):
         response_format: dict | None = None,
         temperature: float = 0.0,
         stream: bool = True,
+        request_title: bool = False,
     ) -> AsyncIterator[StreamEvent] | LLMResponse:
         self.messages_history.append(messages)
         if self.call_count < len(self.responses):
@@ -549,7 +550,7 @@ class TestErrorRecovery:
             async def generate(
                 self, messages, tools, *, model, reasoning_effort=None,
                 max_completion_tokens=4096, response_format=None,
-                temperature=0.0, stream=True,
+                temperature=0.0, stream=True, request_title=False,
             ):
                 raise RuntimeError("API connection lost")
 

@@ -157,7 +157,8 @@ class TestContextManagerRecordUsage:
                                model: str, reasoning_effort=None,
                                max_completion_tokens=4096,
                                response_format=None,
-                               temperature=0.0, stream=True):
+                               temperature=0.0, stream=True,
+                               request_title=False):
                 raise NotImplementedError
             async def generate_compact(self, prompt: str, *, model: str) -> str:
                 raise NotImplementedError
@@ -261,7 +262,8 @@ class TestAgentLoopRecordUsageIntegration:
                                model: str, reasoning_effort=None,
                                max_completion_tokens=4096,
                                response_format=None,
-                               temperature=0.0, stream=True):
+                               temperature=0.0, stream=True,
+                               request_title=False):
                 return LLMResponse(
                     messages=[Message.assistant([
                         MessageBlock.content_block("Hello!"),
@@ -314,7 +316,8 @@ class TestAgentLoopRecordUsageIntegration:
                                model: str, reasoning_effort=None,
                                max_completion_tokens=4096,
                                response_format=None,
-                               temperature=0.0, stream=True):
+                               temperature=0.0, stream=True,
+                               request_title=False):
                 self._call += 1
                 if self._call == 1:
                     return LLMResponse(

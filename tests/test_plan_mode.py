@@ -92,7 +92,9 @@ class _SilentPlanner:
     def plan(self) -> Plan | None:
         return self._plan
 
-    async def run(self, user_input: str, *, config):
+    async def run(
+        self, user_input: str, *, config, request_title: bool = False,
+    ):
         # A recoverable error is NOT a terminal event — the CLI keeps
         # the streaming renderer running on those (it only tears the
         # alt screen down on AgentFinished / FatalAgentError).
@@ -783,14 +785,17 @@ class MockPlanLLMProvider(BaseLLMProvider):
         self.call_configs: list[tuple[str, str | None]] = []
         # response_format of each plan-proposal call, in order.
         self.plan_response_formats: list[dict | None] = []
+        # The ``request_title`` flag of each call, in order.
+        self.title_requests: list[bool] = []
 
     async def generate(
         self, messages, tools, *, model, reasoning_effort=None,
         max_completion_tokens=4096, response_format=None, temperature=0.0,
-        stream=True,
+        stream=True, request_title=False,
     ):
         self.messages_history.append(messages)
         self.call_configs.append((model, reasoning_effort))
+        self.title_requests.append(request_title)
         self.call_count += 1
 
         # Empty tools → plan proposal call (non-streaming).
