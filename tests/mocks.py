@@ -86,7 +86,7 @@ class MockLLMProvider(BaseLLMProvider):
         self.title_requests.append(request_title)
         resp = self._next_response()
         if stream:
-            return self._stream(resp)
+            return self._stream(resp, request_title=request_title)
         return resp
 
     def _next_response(self) -> LLMResponse:
@@ -97,7 +97,9 @@ class MockLLMProvider(BaseLLMProvider):
         self.call_count += 1
         return text_response("Done.")
 
-    async def _stream(self, resp: LLMResponse) -> AsyncIterator[StreamEvent]:
+    async def _stream(
+        self, resp: LLMResponse, *, request_title: bool = False,
+    ) -> AsyncIterator[StreamEvent]:
         """Replay a canned response as a :class:`StreamEvent` stream."""
         blocks = resp.messages[0].blocks if resp.messages else []
         for block in blocks:
@@ -131,6 +133,11 @@ class MockLLMProvider(BaseLLMProvider):
                         },
                     },
                 )
+        # The endpoint writes a title only when the request asked for one.
+        if request_title and resp.title:
+            yield StreamEvent(
+                type="conversation_title", data={"title": resp.title},
+            )
         yield StreamEvent(
             type="message_stop",
             data={"stop_reason": resp.stop_reason, "usage": resp.usage},
@@ -155,7 +162,9 @@ class SlowStreamLLM(MockLLMProvider):
         self._chunk_size = chunk_size
         self._delay = delay
 
-    async def _stream(self, resp: LLMResponse) -> AsyncIterator[StreamEvent]:
+    async def _stream(
+        self, resp: LLMResponse, *, request_title: bool = False,
+    ) -> AsyncIterator[StreamEvent]:
         text = resp.messages[0].content
         for i in range(0, len(text), self._chunk_size):
             await asyncio.sleep(self._delay)
@@ -185,6 +194,7 @@ def text_response(
     stop_reason: str = "end_turn",
     input_tokens: int = 10,
     output_tokens: int = 5,
+    title: str | None = None,
 ) -> LLMResponse:
     """A plain-text end-turn response with minimal boilerplate."""
     blocks = [MessageBlock.content_block(text)] if text else []
@@ -194,6 +204,7 @@ def text_response(
         usage=TokenUsage(
             input_tokens=input_tokens, output_tokens=output_tokens,
         ),
+        title=title,
     )
 
 

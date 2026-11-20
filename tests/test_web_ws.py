@@ -1554,6 +1554,28 @@ class TestSessionManagement:
             ws.send_json({"cmd": "cancel"})
             _wait_for(ws, "turn_cancelled")
 
+    def test_a_generated_title_relabels_open_tabs(self, tmp_path):
+        """The endpoint's title replaces the seed mid-turn, pushed as the
+        same session_info frame a rename rides."""
+        llm = make_mock_llm(
+            text_response("Hello.", title="Generated title"),
+        )
+        app = _app(tmp_path, llm)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # hello
+            ws.send_json({"cmd": "turn", "input": "hi"})
+            frames = _collect_until(ws, "agent_finished")
+
+            # The seed is broadcast at classification; the generated title
+            # replaces it while the first response is still completing.
+            titles = [
+                frame["conversation"]["title"] for frame in frames
+                if frame["type"] == "session_info"
+            ]
+            assert titles == ["hi", "Generated title"]
+            mgr = client.app.state.web.session_mgr
+            assert mgr.conversation.title == "Generated title"
+
 
 # ============================================================================
 # Slash commands (dispatch locally, never to the LLM)

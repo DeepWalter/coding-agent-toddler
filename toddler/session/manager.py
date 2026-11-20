@@ -16,6 +16,7 @@ from toddler.agent.events import (
     AgentCancelled,
     AgentEvent,
     AgentFinished,
+    ConversationTitle,
     FatalAgentError,
     PlanStepUpdate,
     ToolCallEnd,
@@ -471,8 +472,17 @@ class SessionManager:
         self._create_conversation_start_checkpoint()
 
         # --- Auto-title new conversations ---
+        # The truncated first input is the visible fallback; the first LLM
+        # request of the conversation also asks the endpoint for a proper
+        # title (DeepSeek's title feature).  *title_baseline* remembers the
+        # seed so a generated title only replaces it while the user has not
+        # renamed the conversation.
+        request_title = False
+        title_baseline: str | None = None
         if self._conv is not None and not self._conv.title:
             self._conv.title = user_input[:MAX_TITLE_LENGTH]
+            title_baseline = self._conv.title
+            request_title = True
 
         # --- Classify ---
         self._sm.reset()
@@ -498,7 +508,14 @@ class SessionManager:
             # UI's session-info broadcaster) see the gating flip.
             self.set_permission_mode(PermissionMode.MANUAL)
 
-            async for event in self.planner.run(user_input, config=config):
+            async for event in self.planner.run(
+                user_input, config=config, request_title=request_title,
+            ):
+                if isinstance(event, ConversationTitle):
+                    self._apply_generated_title(
+                        event.title, title_baseline,
+                    )
+                    continue
                 if isinstance(event, (
                     AgentFinished, AgentCancelled, FatalAgentError,
                 )):
@@ -506,6 +523,10 @@ class SessionManager:
                 if isinstance(event, (AgentFinished, AgentCancelled)):
                     await self._maybe_persist_phase(event)
                 yield event
+
+            # Exploration consumed the one-shot title request; a later
+            # execution phase must not ask again.
+            request_title = False
 
             if self.planner.plan is None:
                 self._sm.mark_finished()
@@ -540,7 +561,13 @@ class SessionManager:
                 self._sm.get_mode_hint(),
                 plan_mode=self._sm.is_plan_executing,
                 config=config,
+                request_title=request_title,
             ):
+                if isinstance(event, ConversationTitle):
+                    self._apply_generated_title(
+                        event.title, title_baseline,
+                    )
+                    continue
                 yield event
         elif not terminal_event_seen:
             logger.debug(
@@ -676,6 +703,35 @@ class SessionManager:
                     "Failed to create conversation-start checkpoint."
                 )
 
+    def _apply_generated_title(
+        self, title: str, baseline: str | None,
+    ) -> None:
+        """Adopt an endpoint-written conversation title.
+
+        *baseline* is the seed title captured when the first request was
+        made.  ``None`` means this turn did not ask for a title, so one
+        arriving anyway (a gateway volunteering it) is ignored.  The title
+        is adopted only while the conversation still carries the seed — a
+        user rename mid-turn wins.
+
+        Persisted immediately, like :meth:`rename_conversation`, and
+        observers are notified so the web UI's ``session_info`` frame picks
+        it up.  A cosmetic write must not kill the turn, hence the catch.
+        """
+        if self._conv is None or baseline is None:
+            return
+        title = title.strip()[:MAX_TITLE_LENGTH]
+        if not title or title == baseline or self._conv.title != baseline:
+            return
+        self._conv.title = title
+        try:
+            self._storage_mgr.update_conversation(self._conv)
+            self._sm.notify_observers()
+        except Exception:
+            logger.exception(
+                "Failed to persist the generated conversation title."
+            )
+
     async def _activate_context(self) -> None:
         """Load messages from storage and populate the context buffer.
 
@@ -752,6 +808,7 @@ class SessionManager:
 
     async def _run_phase(
         self, user_input: str, mode_hint: str, *, config: TurnConfig,
+        request_title: bool = False,
     ) -> AsyncIterator[AgentEvent]:
         """Run one agent-loop phase and persist afterward.
 
@@ -766,6 +823,7 @@ class SessionManager:
             max_iterations=self._settings.max_iterations,
             stream=stream,
             mode=mode_hint,
+            request_title=request_title,
         )
 
         usage: TokenUsage | None = None
@@ -807,7 +865,7 @@ class SessionManager:
 
     async def _run_execution(
         self, user_input: str, mode_hint: str, *,
-        plan_mode: bool, config: TurnConfig,
+        plan_mode: bool, config: TurnConfig, request_title: bool = False,
     ) -> AsyncIterator[AgentEvent]:
         """Run the execution phase, with plan tracking on plan turns.
 
@@ -828,6 +886,7 @@ class SessionManager:
 
             async for event in self._run_phase(
                 user_input, mode_hint, config=config,
+                request_title=request_title,
             ):
                 yield event
                 if not isinstance(event, ToolCallEnd):

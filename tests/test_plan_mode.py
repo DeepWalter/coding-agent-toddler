@@ -904,6 +904,22 @@ class TestSessionManagerPlanWorkflow:
         assert llm.plan_response_formats == [PLAN_RESPONSE_FORMAT]
 
     @pytest.mark.asyncio
+    async def test_the_title_rides_only_the_first_request(
+        self, session_mgr, llm,
+    ):
+        """A plan turn asks on exploration; the proposal and execution
+        requests never ask again."""
+        gen = session_mgr.process_turn("refactor the database layer")
+        async for event in gen:
+            if isinstance(event, PlanProposed):
+                break
+        session_mgr.approve_plan(plan_id=event.plan.id)
+        await self._collect(gen)
+
+        assert llm.title_requests[0] is True
+        assert not any(llm.title_requests[1:])
+
+    @pytest.mark.asyncio
     async def test_plan_generation_failure(self, session_mgr, llm):
         """Zero-step plan is rejected as invalid — yields AgentError."""
         llm._plan_json = {"title": "Bad", "steps": []}
