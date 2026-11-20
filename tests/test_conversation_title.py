@@ -14,7 +14,13 @@ from tests.mocks import MockLLMProvider, text_response, tool_use_response
 from toddler.agent.events import ContentDelta, ConversationTitle
 from toddler.agent.handler import NonStreamHandler, StreamHandler
 from toddler.config.settings import Settings
-from toddler.llm import LLMResponse, Message, StreamEvent, TokenUsage
+from toddler.llm import (
+    LLMResponse,
+    Message,
+    MessageBlock,
+    StreamEvent,
+    TokenUsage,
+)
 from toddler.session.database import SQLiteDatabase
 from toddler.session.manager import SessionManager
 from toddler.session.models import MAX_TITLE_LENGTH
@@ -198,11 +204,11 @@ class TestManager:
         assert llm.title_requests == [True, False]
         assert mgr.conversation.title == "First title"
 
-    async def test_a_tool_use_turn_asks_once(
+    async def test_a_tool_use_turn_keeps_asking_until_the_title_arrives(
         self, settings, storage_mgr, tmp_path,
     ):
-        """Only the turn's first request carries the title — the tool
-        round-trip that follows must not ask again."""
+        """A tool-call response carries no title, so the answer round asks
+        again — the endpoint writes the title with the answer."""
         llm = MockLLMProvider([
             tool_use_response("no_such_tool", {}, tool_id="call_x"),
             text_response("done", title="Tools and all"),
@@ -211,8 +217,29 @@ class TestManager:
 
         await _turn(mgr, "look something up")
 
-        assert llm.title_requests == [True, False]
+        assert llm.title_requests == [True, True]
         assert mgr.conversation.title == "Tools and all"
+
+    async def test_a_title_stops_further_requests_for_one(
+        self, settings, storage_mgr, tmp_path,
+    ):
+        """Once the endpoint writes a title, the rest of the turn's
+        requests omit the option."""
+        titled_tool_round = LLMResponse(
+            messages=[Message.assistant([
+                MessageBlock.tool_use_block("call_x", "no_such_tool", {}),
+            ])],
+            stop_reason="tool_use",
+            usage=TokenUsage(input_tokens=10, output_tokens=5),
+            title="Written with the tool round",
+        )
+        llm = MockLLMProvider([titled_tool_round, text_response("done")])
+        mgr = await _make_mgr(settings, storage_mgr, llm, tmp_path)
+
+        await _turn(mgr, "look something up")
+
+        assert llm.title_requests == [True, False]
+        assert mgr.conversation.title == "Written with the tool round"
 
     async def test_a_rename_mid_turn_wins(
         self, settings, storage_mgr, tmp_path,

@@ -511,10 +511,10 @@ class Planner:
             as the user takes to decide.
         request_title:
             Ask the endpoint to write a conversation title alongside the
-            answer.  One-shot: only the first exploration request carries
-            it — the title describes the conversation's opening request,
-            so a later re-exploration or the proposal call never asks
-            again.
+            answer.  Only the first exploration run carries it — its agent
+            loop keeps asking across tool rounds until a title arrives.
+            A re-exploration after feedback and the proposal call never
+            ask again.
         """
         # --- Plan-mode path: multi-phase orchestration ---
         original_request = user_input
@@ -531,14 +531,11 @@ class Planner:
                 # execution applies to exploration.  The event rides
                 # through to the caller, which ends the turn.
                 stopped = False
-                # Consume-on-attempt: the title rides the first exploration
-                # request even if that run fails.
-                title_now, title_pending = title_pending, False
                 async for event in self._agent_loop.run(
                     explore_input,
                     config=config,
                     mode=self._sm.get_mode_hint(),
-                    request_title=title_now,
+                    request_title=title_pending,
                 ):
                     if isinstance(event, AgentCancelled) or (
                         isinstance(event, AgentFinished)
@@ -546,6 +543,11 @@ class Planner:
                     ):
                         stopped = True
                     yield event
+                # The first exploration run carried the request (its agent
+                # loop kept asking across tool rounds until a title
+                # arrived).  A re-exploration after feedback is not the
+                # conversation's opening request and must not ask again.
+                title_pending = False
                 if stopped:
                     return
                 self._sm.transition(AgentMode.PLAN_PROPOSING)

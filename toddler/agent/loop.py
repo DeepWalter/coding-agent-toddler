@@ -27,6 +27,7 @@ from toddler.agent.events import (
     AgentEvent,
     AgentFinished,
     AgentPaused,
+    ConversationTitle,
     RecoverableAgentError,
     ToolCallEnd,
     ToolCallStart,
@@ -299,10 +300,10 @@ class AgentLoop:
             ``"plan_executing"``.  Used by the prompt builder to select
             mode-specific instructions.
         request_title:
-            Ask the endpoint to write a conversation title alongside its
-            first response.  One-shot per run, consumed on the first call
-            even when that call fails: the title describes the
-            conversation's opening request.
+            Ask the endpoint to write a conversation title alongside the
+            answer.  Kept on across this run's requests until one arrives:
+            a tool-call round carries no title, so the answer round after
+            it must ask again.  Once received, later requests omit it.
         """
         # --- build/append to the message list via the context ---
         await self._ctx.prepare_turn(user_input, mode)
@@ -319,9 +320,10 @@ class AgentLoop:
         )
         handler = create_handler(stream=stream)
 
-        # The conversation title, if asked for, rides this run's first
-        # request and is consumed on the attempt — a failed first call must
-        # not re-ask on the next iteration.
+        # The conversation title, if asked for, stays armed until the
+        # endpoint writes one.  A tool-call response carries no title, so
+        # the next request (the answer round) must ask again; once a title
+        # arrives, the remaining requests in the run omit it.
         title_pending = request_title
 
         # --- main loop ---
@@ -341,13 +343,14 @@ class AgentLoop:
             )
 
             llm_result: dict[str, Message | None | str | TokenUsage] = {}
-            title_now, title_pending = title_pending, False
             try:
                 async for event in self._call_llm(
                     messages, tools, config=config, stream=stream,
                     handler=handler, llm_result=llm_result,
-                    request_title=title_now,
+                    request_title=title_pending,
                 ):
+                    if isinstance(event, ConversationTitle):
+                        title_pending = False
                     yield event
             except asyncio.CancelledError:
                 # A cancel mid-stream leaves the model's partial output
