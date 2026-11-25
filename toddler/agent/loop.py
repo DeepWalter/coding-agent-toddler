@@ -44,14 +44,12 @@ from toddler.tools.policy import (
     blocked_message,
 )
 from toddler.tools.prompts import (
-    ALLOW_CALL_TITLE,
     DEFAULT_SINGLE_CHOICES,
     AnswerVerdict,
     ChoiceType,
     PromptAnswer,
     PromptChoices,
     Question,
-    ToolCallPrompt,
 )
 
 if TYPE_CHECKING:
@@ -609,20 +607,11 @@ class AgentLoop:
             effect: _CallEffect
             if verdict.decision is Decision.ASK:
                 try:
-                    # The tool builds the card the user answers from.  The
-                    # fallback is for a tool the registry has not got: the
-                    # gate above allows such a call through, so reaching
-                    # this pause without one takes a tool that raised while
-                    # being classified, and naming it beats rendering
-                    # nothing.
-                    prompt = (
-                        tool.build_call_prompt(**call.parameters)
-                        if tool
-                        else ToolCallPrompt(
-                            title=ALLOW_CALL_TITLE,
-                            description=call.tool_name,
-                        )
-                    )
+                    # ASK implies the registry has the tool — an unknown
+                    # name is allowed straight through to the executor's
+                    # error — so the tool builds the card the user answers
+                    # from.
+                    prompt = tool.build_call_prompt(**call.parameters)
                 except Exception as exc:
                     # Arguments the tool cannot present (an ask_user call
                     # with the wrong shape) never reach the user: the
