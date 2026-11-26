@@ -162,9 +162,10 @@ class QuestionTool(BaseTool):
     tier makes the loop ask whatever the permission mode — and the
     prompt carries the questions instead of an approve/deny choice.  The
     answers arrive as an injected ``answers`` argument to
-    :meth:`execute`, so the tool owns its result just like every other
-    tool.  The call is visible: its tool card is the durable Q&A record,
-    while the dock card is the interaction.
+    :meth:`execute`, so an answered call's result is the tool's own; a
+    cancelled call never runs, and the loop writes its failed result
+    from the parsed questions.  The call is visible: its tool card is
+    the durable Q&A record, while the dock card is the interaction.
     """
 
     name = "ask_user"
@@ -270,57 +271,16 @@ class QuestionTool(BaseTool):
     def questions_result(
         self,
         questions: tuple[Question, ...],
-        answers: list[PromptAnswer] | None,
+        answers: list[PromptAnswer],
     ) -> ToolResult:
-        """Format the answers as the call's tool result.
+        """Format validated answers as the call's tool result.
 
-        ``answers`` is one :class:`PromptAnswer` per question, in order;
-        ``None`` when the user cancelled the pause (Escape, EOF, or a
-        dismissed card).  A cancellation ends the turn — the user will
-        decide what to do next — so the result must not send the model
-        guessing on its own.
+        ``answers`` is one :class:`PromptAnswer` per question, in order.
+        The gate validated them through
+        :meth:`~toddler.tools.prompts.PromptChoices.verdict` before the
+        call was granted — a malformed set never settles — so this only
+        formats what it is given.
         """
-        if answers is None:
-            return ToolResult(
-                tool_id="",
-                tool_name=self.name,
-                success=False,
-                output="",
-                error=(
-                    "The user cancelled these questions. No answers were "
-                    "given; they will decide what to do next."
-                ),
-                metadata={
-                    "questions": [q.to_dict() for q in questions],
-                    "declined": True,
-                },
-            )
-
-        if len(answers) != len(questions):
-            return ToolResult(
-                tool_id="",
-                tool_name=self.name,
-                success=False,
-                output="",
-                error=(
-                    f"ask_user got {len(answers)} answers for "
-                    f"{len(questions)} questions."
-                ),
-            )
-        for answer, question in zip(answers, questions, strict=True):
-            problem = question.answer_error(answer)
-            if problem is not None:
-                return ToolResult(
-                    tool_id="",
-                    tool_name=self.name,
-                    success=False,
-                    output="",
-                    error=(
-                        f"ask_user got an invalid answer for question "
-                        f"'{question.title}': {problem}."
-                    ),
-                )
-
         lines = ["The user answered your questions:"]
         for index, (question, answer) in enumerate(
             zip(questions, answers, strict=True), 1,
@@ -365,15 +325,15 @@ class QuestionTool(BaseTool):
     async def execute(
         self,
         questions: object,
-        answers: list[PromptAnswer] | None = None,
+        answers: list[PromptAnswer],
         parsed_questions: tuple[Question, ...] | None = None,
     ) -> ToolResult:
         """Return the user's answers as this call's tool result.
 
         ``answers`` is injected by the loop after the pause — it is not a
         model argument and never appears in the schema or the transcript.
-        ``None`` means the user cancelled the pause (Escape/EOF); the
-        loop then ends the turn.
+        The gate validated it against the questions before granting the
+        call, so it is formatted as given.
 
         ``parsed_questions`` is injected alongside them when the call ran
         through a pause: the gate parsed and validated the questions

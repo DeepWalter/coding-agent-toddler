@@ -100,7 +100,9 @@ class _PendingApproval:
     A ``SINGLE`` pause waits for one answer and a ``QUESTION`` pause for
     an answer per question.  The choices ride along so
     :meth:`AgentLoop.answer_tool_call` can validate those answers against
-    the pause without trusting the caller.  One-shot: once settled, a
+    the pause without trusting the caller, and the verdict that accepted
+    them is recorded with them, so the waiting call acts on the same
+    meaning instead of computing it again.  One-shot: once settled, a
     later answer lands nowhere.
     """
 
@@ -113,6 +115,7 @@ class _PendingApproval:
         self.choices = choices
         self.event = asyncio.Event()
         self.answers: list[PromptAnswer] | None = None
+        self.meaning: AnswerVerdict | None = None
         self.declined = False
 
     @property
@@ -132,11 +135,13 @@ class _PendingApproval:
         *,
         declined: bool = False,
         answers: list[PromptAnswer] | None = None,
+        meaning: AnswerVerdict | None = None,
     ) -> None:
-        """Record the outcome — answers, or a decline — and release the
-        call it is holding."""
+        """Record the outcome — answers and their verdict, or a decline —
+        and release the call it is holding."""
         self.declined = declined
         self.answers = list(answers) if answers is not None else None
+        self.meaning = meaning
         self.event.set()
 
 
@@ -491,14 +496,17 @@ class AgentLoop:
         about — exactly one for a single gate, one per question for an
         ask-user pause.  ``None`` cancels the pause: nothing it held runs,
         the run of calls ends, and the turn finishes with
-        :class:`~toddler.agent.events.AgentCancelled`.  An ask-user tool
-        still executes, so it owns the cancelled wording in its result.
+        :class:`~toddler.agent.events.AgentCancelled`.  A cancelled
+        ask-user pause still answers with its parsed questions in a
+        failed result, though the tool itself does not run.
 
         Returns ``False`` when nothing is waiting, when *tool_id* names a
         different call (a stale or multi-tab answer), when the call has
         already been settled, or when *answers* is not a valid answer to
         this pause — in which case the pause stays open and the caller
-        may retry with a corrected payload.
+        may retry with a corrected payload.  The verdict that accepted
+        the answers is recorded with them, so the paused call acts on it
+        without classifying them a second time.
         """
         pending = self._pending
         if pending is None:
@@ -510,9 +518,10 @@ class AgentLoop:
         if answers is None:
             pending.settle(declined=True)
             return True
-        if pending.choices.verdict(answers) is AnswerVerdict.INVALID:
+        meaning = pending.choices.verdict(answers)
+        if meaning is AnswerVerdict.INVALID:
             return False
-        pending.settle(answers=answers)
+        pending.settle(answers=answers, meaning=meaning)
         return True
 
     # ==================================================================
@@ -723,13 +732,14 @@ class AgentLoop:
         :class:`AgentPaused`, so this method blocks on that channel until
         the user answers it.  An ordinary call is answered with one
         :class:`PromptAnswer` whose row's level decides the outcome; an
-        ask-user call with one answer per question.  An ask is then run
-        through the executor exactly like an approved call — even when
-        cancelled, because the tool owns the cancelled wording — with the
-        answers and the questions already parsed injected as
-        ``extra_params``.  :attr:`Decision.ALLOW` passes straight
-        through, and :attr:`Decision.DENY` never runs at all — it is the
-        policy answering, not a question left open.
+        ask-user call with one answer per question.  An answered ask is
+        then run through the executor exactly like an approved call, with
+        the answers and the questions the gate already parsed injected
+        as ``extra_params``.  A cancelled ask does not run: its result is
+        built from those parsed questions like a refusal's.
+        :attr:`Decision.ALLOW` passes straight through, and
+        :attr:`Decision.DENY` never runs at all — it is the policy
+        answering, not a question left open.
 
         The row's level — never its title, and never whether the answer
         carries text — decides a single gate: ``APPROVE`` runs the call,
@@ -804,52 +814,62 @@ class AgentLoop:
             if self._pending is pending:
                 self._pending = None
 
-        # A question pause is input, not permission: it runs — answered or
-        # cancelled — so the tool owns both wordings, with the questions
-        # the gate already parsed injected.  A cancellation still ends the
-        # turn afterwards; the caller reads that from the returned effect.
-        if pending.choices.type is ChoiceType.QUESTION:
-            result = await self._executor.execute(
-                call,
-                mutating=verdict.mutating,
-                extra_params={
+        # Only a granted answer runs the call.  An answered question
+        # pause is granted too: it runs with the questions the gate
+        # parsed and the answers injected, so the tool formats the
+        # result.  A cancelled question never runs — _refusal builds its
+        # result from the questions.  A cancellation ends the turn; the
+        # caller reads that from the returned effect.
+        if pending.meaning is AnswerVerdict.GRANTED:
+            questions = pending.questions
+            if questions is not None:
+                extra_params = {
                     "answers": pending.answers,
-                    "parsed_questions": pending.questions,
-                },
+                    "parsed_questions": questions,
+                }
+            else:
+                extra_params = None
+            result = await self._executor.execute(
+                call, mutating=verdict.mutating, extra_params=extra_params
             )
-            effect = (
-                _CallEffect.CANCELLED
-                if pending.declined
-                else _CallEffect.CONTINUE
-            )
-            return result, effect
+            return result, _CallEffect.CONTINUE
 
-        meaning = (
-            pending.choices.verdict(pending.answers)
-            if pending.answers is not None
-            else None
-        )
-        if meaning is AnswerVerdict.GRANTED:
-            return await self._executor.execute(
-                call, mutating=verdict.mutating,
-            ), _CallEffect.CONTINUE
-
-        return self._refusal(call, pending, meaning)
+        return self._refusal(call, pending)
 
     def _refusal(
         self, call: ToolCall, pending: _PendingApproval,
-        meaning: AnswerVerdict | None,
     ) -> tuple[ToolResult, _CallEffect]:
-        """The outcome of a single gate the user did not approve.
+        """The outcome of a paused call that will not run.
 
         A cancelled pause (Escape, a dismissed card) is not a denial:
         the user withdrew the question itself, so the whole turn ends.
+        A cancelled question pause still answers with the questions it
+        asked — the durable Q&A record — even though the tool never ran.
         A feedback row refuses the call but keeps the turn going — the
         user's words are the correction the model should act on.  A
         denial refuses the call and lets the caller decide from the
         batch whether the turn survives.
         """
         if pending.declined:
+            # A cancelled question pause never ran the tool, so its
+            # result is built here from the questions the gate parsed,
+            # keeping the durable Q&A record.
+            questions = pending.questions
+            if questions is not None:
+                return ToolResult(
+                    tool_id=call.tool_id,
+                    tool_name=call.tool_name,
+                    success=False,
+                    output="",
+                    error=(
+                        "The user cancelled these questions. No answers "
+                        "were given; they will decide what to do next."
+                    ),
+                    metadata={
+                        "questions": [q.to_dict() for q in questions],
+                        "declined": True,
+                    },
+                ), _CallEffect.CANCELLED
             return ToolResult(
                 tool_id=call.tool_id,
                 tool_name=call.tool_name,
@@ -861,8 +881,8 @@ class AgentLoop:
             ), _CallEffect.CANCELLED
 
         # A granted answer ran above and an invalid one never settles,
-        # so the verdict here is FEEDBACK or DENIED.
-        if meaning is AnswerVerdict.FEEDBACK:
+        # so the recorded verdict here is FEEDBACK or DENIED.
+        if pending.meaning is AnswerVerdict.FEEDBACK:
             error = "The user did not approve this call; it was not executed."
             content = (
                 pending.answers[0].content

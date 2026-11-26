@@ -1977,13 +1977,19 @@ class TestUserQuestions:
         assert len(ends) == 1
         assert not ends[0].result.success
         assert "cancelled" in ends[0].result.error.lower()
+        # The cancelled result keeps the questions as its durable record
+        # even though the tool never ran.
+        assert ends[0].result.metadata["declined"] is True
+        assert [
+            question["title"]
+            for question in ends[0].result.metadata["questions"]
+        ] == ["Storage"]
 
         cancelled = [e for e in events if isinstance(e, AgentCancelled)]
         assert len(cancelled) == 1
         assert cancelled[0].tool_name == "ask_user"
         assert not [e for e in events if isinstance(e, AgentFinished)]
-        # The tool ran (it owns the cancelled wording), but the model
-        # never got a second call.
+        # The model never got a second call.
         assert llm.call_count == 1
 
     async def test_two_asks_in_one_response_pause_twice(

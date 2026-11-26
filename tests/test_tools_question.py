@@ -266,47 +266,6 @@ class TestQuestionsResult:
             {"choice": other, "content": "DuckDB"},
         ]
 
-    @pytest.mark.parametrize("content", [None, "", "   "])
-    def test_the_other_choice_needs_the_users_words(self, questions, content):
-        other = len(questions[0].choices) - 1
-        result = QuestionTool().questions_result(
-            questions, [PromptAnswer(choice=other, content=content)],
-        )
-        assert not result.success
-        assert "invalid answer" in result.error
-
-    def test_a_plain_choice_does_not_take_text(self, questions):
-        result = QuestionTool().questions_result(
-            questions, [PromptAnswer(choice=1, content="DuckDB")],
-        )
-        assert not result.success
-        assert "invalid answer" in result.error
-
-    def test_cancelled_is_a_failed_result_with_metadata(self, questions):
-        result = QuestionTool().questions_result(questions, None)
-        assert not result.success
-        assert "cancelled" in result.error.lower()
-        # Cancelling ends the turn — the model must not be told to guess.
-        assert "best judgment" not in result.error.lower()
-        assert result.metadata["declined"] is True
-        assert "answers" not in result.metadata
-
-    def test_rejects_a_count_mismatch(self, questions):
-        result = QuestionTool().questions_result(questions, [])
-        assert not result.success
-        assert "answers" in result.error
-
-    @pytest.mark.parametrize("answer", [3, -1, True, "0", None])
-    def test_rejects_an_out_of_range_or_non_integer_index(
-        self, questions, answer,
-    ):
-        result = QuestionTool().questions_result(
-            questions, [PromptAnswer(choice=answer)],
-        )
-        assert not result.success
-        assert "invalid answer" in result.error
-
-
 # ---------------------------------------------------------------------------
 # Call prompt
 # ---------------------------------------------------------------------------
@@ -350,11 +309,6 @@ class TestExecute:
         assert result.metadata["answers"] == [
             {"choice": 0, "content": None},
         ]
-
-    async def test_execute_with_no_answers_declines(self):
-        result = await QuestionTool().execute([_question()], None)
-        assert not result.success
-        assert result.metadata["declined"] is True
 
     async def test_execute_validates_the_questions_again(self):
         with pytest.raises(QuestionValidationError):
