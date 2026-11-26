@@ -820,8 +820,10 @@ async def git_file_action(  # noqa: C901 — guarded pipeline, see dispatch
                 return {"ok": True}
             # The path raced away between the state check and the operation.
             raise DiffError(409, _STALE_MESSAGE)
+        # git quotes the ref: "could not resolve 'HEAD'".  Compare with
+        # the quotes stripped rather than pinning that exact wording.
         if (
-            "could not resolve HEAD" in detail
+            "could not resolve HEAD" in detail.replace("'", "")
             and action in ("unstage", "discard")
         ):
             # Unborn branch — restore needs HEAD.  unstage drops the index
