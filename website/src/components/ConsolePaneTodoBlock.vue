@@ -5,9 +5,9 @@ defineProps<{
   block: Extract<Block, { kind: 'todo' }>
 }>()
 
-/** What each status puts inside its box: a star for the step running, a
+/** What each status puts inside its box: a star for the item running, a
  *  check for one that finished, nothing for one not started.  `failed` has
- *  no server producer today (PlanStepStatus is pending / in_progress /
+ *  no server producer today (TodoStatus is pending / in_progress /
  *  completed); it is spelled out so a status added later can never fall
  *  through to an empty box that reads pending. */
 const MARK: Record<string, string> = {
@@ -25,22 +25,22 @@ function label(status: string): string {
 </script>
 
 <template>
-  <!-- One list per plan_update call: the whole step set as it stood when
-       that call landed, so the console keeps a progress trail instead of
+  <!-- One list per todo update: the whole list as it stood when the
+       update landed, so the console keeps a progress trail instead of
        one rewritten list. -->
   <ul class="todo-list">
     <li
-      v-for="[id, description, status] in block.steps"
-      :key="id"
+      v-for="(item, index) in block.items"
+      :key="index"
       class="todo-item"
     >
       <span
         class="todo-box"
-        :class="status"
+        :class="item.status"
         role="img"
-        :aria-label="label(status)"
-      >{{ MARK[status] ?? '' }}</span>
-      <span class="todo-text">{{ description }}</span>
+        :aria-label="label(item.status)"
+      >{{ MARK[item.status] ?? '' }}</span>
+      <span class="todo-text">{{ item.content }}</span>
     </li>
   </ul>
 </template>

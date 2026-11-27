@@ -89,6 +89,9 @@ def _hello_frame(state: WebAppState) -> dict:
         # frontend re-renders its PlanCard from this instead of losing
         # the card on reconnect.
         "plan": state.runner.plan_snapshot,
+        # The session's current todo list — live todo_update frames keep
+        # it current; this restores it for a reconnecting or new tab.
+        "todos": [item.to_dict() for item in state.session_mgr.todos],
         "messages": messages,
     }
 

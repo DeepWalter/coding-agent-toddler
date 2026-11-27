@@ -6,7 +6,10 @@ import type {
   Frame,
   Mode,
   PlanDecision,
+  PlanStepRow,
   PromptAnswer,
+  TodoItem,
+  TodoStatus,
 } from '../types'
 
 /**
@@ -144,6 +147,14 @@ function foldText(fold: string, content: string): string {
   return content.trim().replace(/^\[/, '').replace(/\]$/, '')
 }
 
+/** Map a plan_step_update snapshot to the todo block's row shape. */
+function stepsAsTodos(steps: PlanStepRow[]): TodoItem[] {
+  return steps.map(([, description, status]) => ({
+    content: description,
+    status: status as TodoStatus,
+  }))
+}
+
 function apply(s: ConsoleState, action: ConsoleAction): void {
   switch (action.type) {
     case 'hello': {
@@ -211,14 +222,17 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
           decision: null,
           cancelled: false,
         })
-        // One checklist from the latest snapshot: a reconnecting tab sees
-        // the current progress, not the trail (the per-update blocks are
-        // live-only, like the plan line itself).  Kept unconditional — this
-        // is a state readout, not a milestone print, so the rule that
-        // filters the live trail has nothing to say here.
-        if (action.plan.steps.length) {
-          push(s, { kind: 'todo', steps: action.plan.steps })
-        }
+      }
+      // One progress checklist from the latest snapshot: a reconnecting
+      // tab sees the current state, not the trail (the per-update blocks
+      // are live-only).  Todos win — one progress surface, not two — and
+      // plan steps remain as the migration fallback.  This is a state
+      // readout, not a milestone print, so the live-trail rule does not
+      // apply.
+      if (action.busy && action.todos.length) {
+        push(s, { kind: 'todo', items: action.todos })
+      } else if (action.busy && action.plan && action.plan.steps.length) {
+        push(s, { kind: 'todo', items: stepsAsTodos(action.plan.steps) })
       }
       break
     }
@@ -361,11 +375,33 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
       // (the CLI's plan panel folds the same snapshots).
       const last = [...s.blocks].reverse().find((b) => b.kind === 'plan')
       if (last && last.kind === 'plan') last.steps = action.steps
-      const started = action.steps.some(([, , st]) => st === 'in_progress')
+      const items = stepsAsTodos(action.steps)
+      const started = items.some((item) => item.status === 'in_progress')
       const allDone =
-        action.steps.length > 0
-        && action.steps.every(([, , st]) => st === 'completed')
-      if (started || allDone) push(s, { kind: 'todo', steps: action.steps })
+        items.length > 0
+        && items.every((item) => item.status === 'completed')
+      if (started || allDone) push(s, { kind: 'todo', items })
+      break
+    }
+    case 'todo_update': {
+      // The todo_write call that produced this frame is hidden on the
+      // wire — no tool_call_start reaches a badge — so this is the only
+      // signal that the response carrying the call has ended: close its
+      // prose and thought the way a visible tool call would.
+      closeThinking(s)
+      closeAssistant(s)
+      // Print a checklist at the moments worth reading: an item starting,
+      // or the whole list done.  A completion that is not the last only
+      // moves one box, which the next snapshot shows anyway.
+      const started = action.todos.some(
+        (item) => item.status === 'in_progress',
+      )
+      const allDone =
+        action.todos.length > 0
+        && action.todos.every((item) => item.status === 'completed')
+      if (started || allDone) {
+        push(s, { kind: 'todo', items: action.todos })
+      }
       break
     }
     case 'local_plan_decision': {

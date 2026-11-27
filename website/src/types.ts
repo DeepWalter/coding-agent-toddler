@@ -202,6 +202,15 @@ export interface Plan {
 /** plan_step_update snapshot rows: [id, description, status]. */
 export type PlanStepRow = [string, string, string]
 
+/** Todo statuses, mirroring the server's TodoStatus vocabulary. */
+export type TodoStatus = 'pending' | 'in_progress' | 'completed'
+
+/** One row of the todo list, as `todo_update` and hello carry it. */
+export interface TodoItem {
+  content: string
+  status: TodoStatus
+}
+
 export interface TokenUsage {
   input_tokens: number | null
   output_tokens: number | null
@@ -224,6 +233,9 @@ export type Frame =
       busy: boolean
       paused: PausedFrame | null
       plan: PlanSnapshot | null
+      /** The session's current todo list (empty when none).  It is
+       *  session-scoped, so a reconnecting tab restores the latest list. */
+      todos: TodoItem[]
       messages: ReplayMessage[]
     }
   | { type: 'turn_started' }
@@ -283,6 +295,7 @@ export type Frame =
     }
   | { type: 'plan_proposed'; plan: Plan }
   | { type: 'plan_step_update'; steps: PlanStepRow[] }
+  | { type: 'todo_update'; todos: TodoItem[] }
   | {
       type: 'agent_paused'
       tool_id: string
@@ -392,10 +405,10 @@ export type Block =
   | {
       id: number
       kind: 'todo'
-      /** The whole step list as it stood when a `plan_update` tool call
-       *  landed — one printed snapshot per call, so the console keeps a
-       *  progress trail instead of one rewritten list. */
-      steps: PlanStepRow[]
+      /** The whole list as it stood when a todo update landed — one
+       *  printed snapshot per update, so the console keeps a progress
+       *  trail instead of one rewritten list. */
+      items: TodoItem[]
     }
   | { id: number; kind: 'error'; message: string }
   | { id: number; kind: 'notice'; message: string }
