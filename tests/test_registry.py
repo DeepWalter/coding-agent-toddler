@@ -24,7 +24,9 @@ BUILTIN_NAMES = {
 
 #: What registers itself at import time — the default tools plus the ones a
 #: session arms for a phase of its own.
-CATALOG_NAMES = BUILTIN_NAMES | {"plan_update", "todo_write"}
+CATALOG_NAMES = BUILTIN_NAMES | {
+    "plan_update", "propose_plan", "todo_write",
+}
 
 
 class EchoTool(BaseTool):
@@ -202,10 +204,13 @@ class TestHiddenToolNames:
 
     def test_hidden_is_not_the_same_question_as_not_default(self):
         """Two declarations, two questions: what a session is handed, and
-        what the front-ends draw.  ``plan_update`` and ``todo_write`` are
-        hidden and not shipped; ``ask_user`` is visible and shipped — the
+        what the front-ends draw.  ``plan_update``, ``propose_plan`` and
+        ``todo_write`` are hidden and not shipped; ``ask_user`` is visible
+        and shipped — the
         two declarations are independent."""
-        assert set(HIDDEN_TOOL_NAMES) == {"plan_update", "todo_write"}
+        assert set(HIDDEN_TOOL_NAMES) == {
+            "plan_update", "propose_plan", "todo_write",
+        }
         assert set(create_default_registry().list_names()) == BUILTIN_NAMES
 
 

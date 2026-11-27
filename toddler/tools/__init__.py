@@ -13,7 +13,13 @@ from toddler.tools.executor import (
 )
 from toddler.tools.files import EditFile, ReadFile, WriteFile
 from toddler.tools.git import GitBranch, GitCommit, GitDiff, GitLog, GitStatus
-from toddler.tools.plan import Plan, PlanState, PlanStep, PlanUpdateTool
+from toddler.tools.plan import (
+    Plan,
+    PlanState,
+    PlanStep,
+    PlanUpdateTool,
+    ProposePlanTool,
+)
 from toddler.tools.policy import (
     Decision,
     FileScope,
@@ -83,6 +89,7 @@ __all__ = [
     "PlanStep",
     "PlanState",
     "PlanUpdateTool",
+    "ProposePlanTool",
     # Questions
     "QuestionTool",
     # Todos
