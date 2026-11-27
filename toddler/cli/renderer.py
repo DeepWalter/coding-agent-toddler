@@ -46,6 +46,7 @@ from toddler.agent.events import (
     PlanStepUpdate,
     ReasoningDelta,
     RecoverableAgentError,
+    TodoUpdate,
     ToolCallEnd,
     ToolCallStart,
     ToolUseStart,
@@ -56,6 +57,7 @@ from toddler.tools.base import CALL_DESCRIPTION_PARAM
 from toddler.tools.plan import PlanStepStatus
 from toddler.tools.prompts import ChoiceType
 from toddler.tools.shell import Shell
+from toddler.tools.todo import TodoItem, TodoStatus
 from toddler.utils.format import estimate_tokens, format_span, format_tokens
 
 if TYPE_CHECKING:
@@ -114,6 +116,19 @@ _PLAN_STYLES = {
     PlanStepStatus.COMPLETED: "bold green",
 }
 
+# Keyed by TodoStatus members so the display maps can't drift from the
+# todo vocabulary; the glyphs match the plan panel's.
+_TODO_ICONS = {
+    TodoStatus.PENDING: "⬜",
+    TodoStatus.IN_PROGRESS: "▶️",
+    TodoStatus.COMPLETED: "✅",
+}
+_TODO_STYLES = {
+    TodoStatus.PENDING: "dim",
+    TodoStatus.IN_PROGRESS: "bold yellow",
+    TodoStatus.COMPLETED: "bold green",
+}
+
 
 # ---------------------------------------------------------------------------
 # Dynamic panel-height budgeting
@@ -161,6 +176,21 @@ def _plan_snapshot_worth_rendering(
         if status != PlanStepStatus.PENDING:
             return status == PlanStepStatus.IN_PROGRESS
     return False
+
+
+def _todo_snapshot_worth_rendering(items: tuple[TodoItem, ...]) -> bool:
+    """Return True when a one-shot ``TodoUpdate`` should print.
+
+    Mirrors the plan-step policy: an item running is the live state, and
+    an all-completed list is the closing snapshot.  An all-pending list
+    says nothing new, and an empty list clears a display the one-shot
+    renderer never builds.
+    """
+    if not items:
+        return False
+    if all(item.status is TodoStatus.COMPLETED for item in items):
+        return True
+    return any(item.status is TodoStatus.IN_PROGRESS for item in items)
 
 
 # ---------------------------------------------------------------------------
@@ -461,6 +491,23 @@ class Renderer(ABC):
                 )
             )
 
+    def on_todo_update(self, event: TodoUpdate) -> None:
+        """Print the complete todo list, one line per item.
+
+        Events always carry the whole list, so each arrival prints the
+        current picture.  When a snapshot prints is the concrete
+        renderer's display policy, matching :meth:`on_plan_step_update`.
+        An empty list clears the display and prints nothing.
+        """
+        for item in event.items:
+            icon = _TODO_ICONS.get(item.status, "⬜")
+            self._console.print(
+                Text(
+                    f"{icon} {item.content}",
+                    style=_TODO_STYLES.get(item.status, ""),
+                )
+            )
+
     # ------------------------------------------------------------------
     # Confirmation (abstract)
     # ------------------------------------------------------------------
@@ -622,11 +669,12 @@ class StreamingRenderer(Renderer):
         # _compute_dynamic_panel_height().
         self._max_tools_visible: int = 0
         self._max_errors_visible: int = 0
-        # Plan panel snapshot — (step id, description, status) tuples,
-        # None while no plan is executing.  No Plan reference is kept so
-        # a stale plan can never outlive the turn.
+        # Progress panel snapshot — todos win when present; plan steps
+        # remain while the plan workflow still emits them.  No Plan
+        # reference is kept so a stale plan can never outlive the turn.
         self._plan_steps: list[tuple[str, str, str]] | None = None
-        # Plan rows visible under the current height budget.
+        self._todos: list[TodoItem] | None = None
+        # Progress rows visible under the current height budget.
         self._max_plan_visible: int = 0
         # Ids of calls to tools that declare themselves invisible.  Held by
         # id because the end event has to be recognised after the fact —
@@ -693,6 +741,7 @@ class StreamingRenderer(Renderer):
         self._max_tools_visible = 0
         self._max_errors_visible = 0
         self._plan_steps = None
+        self._todos = None
         self._max_plan_visible = 0
         self._hidden_ids.clear()
         self._live.start()
@@ -727,9 +776,11 @@ class StreamingRenderer(Renderer):
         # Disable panel-height clipping so that flush_to_console()
         # renders the full markdown into the terminal scrollback.
         self._max_panel_height = 0
-        # Show every plan row in the final flush as well.
-        if self._plan_steps:
-            self._max_plan_visible = len(self._plan_steps)
+        # Show every progress row in the final flush as well — todos when
+        # present, otherwise the plan steps.
+        progress = self._todos if self._todos else self._plan_steps
+        if progress:
+            self._max_plan_visible = len(progress)
 
     def _build_truncation_notice(self, filepath: Path) -> Panel:
         """Build a clickable truncation notice with OSC 8 file link."""
@@ -1037,6 +1088,15 @@ class StreamingRenderer(Renderer):
         self._plan_steps = list(event.steps)
         self._refresh()
 
+    def on_todo_update(self, event: TodoUpdate) -> None:
+        """Replace the progress panel's todo snapshot.
+
+        An empty list is a real snapshot: it clears the panel (or falls
+        back to plan steps during the migration).
+        """
+        self._todos = list(event.items)
+        self._refresh()
+
     # ------------------------------------------------------------------
     # Streaming event handlers
     # ------------------------------------------------------------------
@@ -1218,8 +1278,8 @@ class StreamingRenderer(Renderer):
             # and show all tools / errors (no capping).
             self._max_tools_visible = len(self._tools)
             self._max_errors_visible = len(self._errors)
-            if self._plan_steps is not None:
-                self._max_plan_visible = len(self._plan_steps)
+            progress = self._todos if self._todos else self._plan_steps
+            self._max_plan_visible = len(progress) if progress else 0
             return self._configured_max_panel_height
 
         # Budget after reserving the output panel's own chrome.
@@ -1242,17 +1302,16 @@ class StreamingRenderer(Renderer):
         )
         remaining = allocatable - self._max_errors_visible * _ERR_PANEL_LINES
 
-        # Plan next — rows only, no fixed header.  Prioritized over the
-        # tools panel so step statuses stay visible on small terminals.
+        # Progress next — todo rows when present, plan-step rows during
+        # the migration.  Rows only, no fixed header.  Prioritized over
+        # the tools panel so statuses stay visible on small terminals.
         # The guard demands room for at least one row past the chrome, and
         # the chrome is charged only when a row is shown — a chrome-only
         # allocation would eat the budget for a panel that renders nothing.
-        if (
-            self._plan_steps is not None
-            and remaining >= _PANEL_CHROME_LINES + 1
-        ):
+        progress = self._todos if self._todos else self._plan_steps
+        if progress and remaining >= _PANEL_CHROME_LINES + 1:
             self._max_plan_visible = min(
-                len(self._plan_steps), remaining - _PANEL_CHROME_LINES,
+                len(progress), remaining - _PANEL_CHROME_LINES,
             )
             if self._max_plan_visible > 0:
                 remaining -= _PANEL_CHROME_LINES + self._max_plan_visible
@@ -1424,30 +1483,46 @@ class StreamingRenderer(Renderer):
             border_style="yellow",
         )
 
-    def _build_plan_panel(self) -> Panel | None:
-        """Build the plan step list panel, or ``None`` when hidden.
+    def _build_progress_panel(self) -> Panel | None:
+        """Build the progress panel, or ``None`` when hidden.
 
-        Shows the most recent steps within the height cap (tail-first, so
-        the current step stays visible as the list grows).  Rows are
-        single-line (no wrap, ellipsis-truncated) so the panel never
-        exceeds the line budget computed by
+        Todos win when the list is non-empty; plan steps remain while the
+        plan workflow still emits them.  Shows the most recent rows within
+        the height cap (tail-first, so the current item stays visible as
+        the list grows).  Rows are single-line (no wrap, ellipsis-
+        truncated) so the panel never exceeds the line budget computed by
         :meth:`_compute_dynamic_panel_height`.
         """
-        if self._plan_steps is None or self._max_plan_visible <= 0:
+        if self._max_plan_visible <= 0:
             return None
-        plan_lines = [
-            Text(
-                f"{_PLAN_ICONS.get(status, '⬜')} {step_id}: {description}",
-                style=_PLAN_STYLES.get(status, ""),
-                no_wrap=True,
-                overflow="ellipsis",
-            )
-            for step_id, description, status
-            in self._plan_steps[-self._max_plan_visible:]
-        ]
+        if self._todos:
+            rows = [
+                Text(
+                    f"{_TODO_ICONS.get(item.status, '⬜')} {item.content}",
+                    style=_TODO_STYLES.get(item.status, ""),
+                    no_wrap=True,
+                    overflow="ellipsis",
+                )
+                for item in self._todos[-self._max_plan_visible:]
+            ]
+            title = "Todos"
+        elif self._plan_steps is not None:
+            rows = [
+                Text(
+                    f"{_PLAN_ICONS.get(status, '⬜')} {step_id}: {description}",
+                    style=_PLAN_STYLES.get(status, ""),
+                    no_wrap=True,
+                    overflow="ellipsis",
+                )
+                for step_id, description, status
+                in self._plan_steps[-self._max_plan_visible:]
+            ]
+            title = "Plan"
+        else:
+            return None
         return Panel(
-            Group(*plan_lines),
-            title="Plan",
+            Group(*rows),
+            title=title,
             title_align="left",
             border_style="cyan",
         )
@@ -1510,9 +1585,9 @@ class StreamingRenderer(Renderer):
             ))
         elements.append(main_panel)
 
-        plan_panel = self._build_plan_panel()
-        if plan_panel is not None:
-            elements.append(plan_panel)
+        progress_panel = self._build_progress_panel()
+        if progress_panel is not None:
+            elements.append(progress_panel)
 
         if self._tools and self._max_tools_visible > 0:
             table = Table(show_header=True, box=None, padding=(0, 1))
@@ -1811,6 +1886,17 @@ class NonStreamingRenderer(Renderer):
             return
         self._last_printed = list(event.steps)
         super().on_plan_step_update(event)
+
+    def on_todo_update(self, event: TodoUpdate) -> None:
+        """Print the complete list when the snapshot is worth showing.
+
+        The one-shot mode has no throttle, so it follows
+        :func:`_todo_snapshot_worth_rendering`: an item starting or the
+        whole list done prints; an all-pending list says nothing new.
+        """
+        if not _todo_snapshot_worth_rendering(event.items):
+            return
+        super().on_todo_update(event)
 
     def on_plan_proposed(self, event: PlanProposed) -> None:
         """Show the proposed plan and start a fresh display context.

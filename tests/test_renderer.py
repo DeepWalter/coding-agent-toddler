@@ -17,11 +17,11 @@ from toddler.agent.events import (
     PlanProposed,
     PlanStepUpdate,
     ReasoningDelta,
+    TodoUpdate,
     ToolCallEnd,
     ToolCallStart,
     ToolUseStart,
 )
-from toddler.tools.plan import Plan, PlanStep
 from toddler.cli.renderer import (
     ConfirmResult,
     NonStreamingRenderer,
@@ -29,7 +29,9 @@ from toddler.cli.renderer import (
 )
 from toddler.llm.responses import TokenUsage
 from toddler.tools.base import ToolResult
+from toddler.tools.plan import Plan, PlanStep
 from toddler.tools.prompts import Question, QuestionChoice, ToolCallPrompt
+from toddler.tools.todo import TodoItem, TodoStatus
 
 
 class _FakeClock:
@@ -228,6 +230,44 @@ class TestNonStreamingPlanStepUpdates:
         assert "step-" not in buf.getvalue()
 
 
+class TestNonStreamingTodoUpdates:
+    """The one-shot todo policy prints live and closing snapshots only."""
+
+    def _renderer(self):
+        buf = io.StringIO()
+        return NonStreamingRenderer(console=Console(file=buf)), buf
+
+    def test_a_running_item_prints_the_whole_list(self):
+        renderer, buf = self._renderer()
+        renderer.on_todo_update(TodoUpdate(items=(
+            TodoItem("First thing", TodoStatus.IN_PROGRESS),
+            TodoItem("Second thing", TodoStatus.PENDING),
+        )))
+        output = buf.getvalue()
+        assert "▶️ First thing" in output
+        assert "⬜ Second thing" in output
+
+    def test_an_all_completed_list_prints(self):
+        renderer, buf = self._renderer()
+        renderer.on_todo_update(TodoUpdate(items=(
+            TodoItem("First thing", TodoStatus.COMPLETED),
+            TodoItem("Second thing", TodoStatus.COMPLETED),
+        )))
+        assert "✅ First thing" in buf.getvalue()
+
+    def test_an_all_pending_list_is_folded(self):
+        renderer, buf = self._renderer()
+        renderer.on_todo_update(TodoUpdate(items=(
+            TodoItem("First thing", TodoStatus.PENDING),
+        )))
+        assert buf.getvalue() == ""
+
+    def test_an_empty_list_prints_nothing(self):
+        renderer, buf = self._renderer()
+        renderer.on_todo_update(TodoUpdate(items=()))
+        assert buf.getvalue() == ""
+
+
 class TestStreamingPlanStepUpdates:
     """The TUI handler replaces its step snapshot from each event; the
     panel is built later.
@@ -263,7 +303,7 @@ class TestStreamingPlanStepUpdates:
 
     def test_plan_panel_hidden_without_updates(self):
         renderer = self._renderer()
-        assert renderer._build_plan_panel() is None
+        assert renderer._build_progress_panel() is None
 
     def test_plan_panel_rows_show_id_status_and_do_not_wrap(self):
         renderer = self._renderer()
@@ -271,7 +311,7 @@ class TestStreamingPlanStepUpdates:
             PlanStepUpdate(steps=[("step-1", "First thing", "in_progress")])
         )
         renderer._max_plan_visible = 1
-        panel = renderer._build_plan_panel()
+        panel = renderer._build_progress_panel()
         assert panel is not None
         rows = panel.renderable.renderables
         assert len(rows) == 1
@@ -280,6 +320,59 @@ class TestStreamingPlanStepUpdates:
         # Single-line contract: the height budget counts one line per row.
         assert row.no_wrap is True
         assert row.overflow == "ellipsis"
+
+    def test_todo_update_seeds_the_list(self):
+        renderer = self._renderer()
+        renderer.on_todo_update(TodoUpdate(items=(
+            TodoItem("First thing", TodoStatus.IN_PROGRESS),
+        )))
+        assert renderer._todos == [
+            TodoItem("First thing", TodoStatus.IN_PROGRESS),
+        ]
+
+    def test_progress_panel_prefers_todos_over_plan_steps(self):
+        renderer = self._renderer()
+        renderer.on_plan_step_update(
+            PlanStepUpdate(steps=[("step-1", "First thing", "in_progress")])
+        )
+        renderer.on_todo_update(TodoUpdate(items=(
+            TodoItem("Todo one", TodoStatus.IN_PROGRESS),
+        )))
+        renderer._max_plan_visible = 1
+        panel = renderer._build_progress_panel()
+        assert panel is not None
+        assert str(panel.title) == "Todos"
+        rows = panel.renderable.renderables
+        assert len(rows) == 1
+        assert rows[0].plain == "▶️ Todo one"
+        assert rows[0].no_wrap is True
+
+    def test_progress_panel_falls_back_to_plan_steps(self):
+        renderer = self._renderer()
+        renderer.on_plan_step_update(
+            PlanStepUpdate(steps=[("step-1", "First thing", "in_progress")])
+        )
+        renderer._max_plan_visible = 1
+        panel = renderer._build_progress_panel()
+        assert panel is not None
+        assert str(panel.title) == "Plan"
+        assert panel.renderable.renderables[0].plain == (
+            "▶️ step-1: First thing"
+        )
+
+    def test_cleared_todos_fall_back_to_plan_steps(self):
+        renderer = self._renderer()
+        renderer.on_plan_step_update(
+            PlanStepUpdate(steps=[("step-1", "First thing", "in_progress")])
+        )
+        renderer.on_todo_update(TodoUpdate(items=(
+            TodoItem("Todo one", TodoStatus.IN_PROGRESS),
+        )))
+        renderer.on_todo_update(TodoUpdate(items=()))
+        renderer._max_plan_visible = 1
+        panel = renderer._build_progress_panel()
+        assert panel is not None
+        assert str(panel.title) == "Plan"
 
 
 class TestDynamicPanelHeightBudget:
@@ -307,6 +400,15 @@ class TestDynamicPanelHeightBudget:
         assert renderer._max_plan_visible == 1
         # The plan panel (chrome + 1 row) is charged, leaving output at
         # its 5-line minimum.
+        assert output_height == 5
+
+    def test_todo_rows_charge_the_progress_panel(self):
+        renderer = self._renderer(height=14)
+        renderer.on_todo_update(TodoUpdate(items=(
+            TodoItem("First thing", TodoStatus.IN_PROGRESS),
+        )))
+        output_height = renderer._compute_dynamic_panel_height()
+        assert renderer._max_plan_visible == 1
         assert output_height == 5
 
     def test_chrome_only_budget_never_charges_the_plan_panel(self):
