@@ -310,7 +310,6 @@ class AgentLoop:
         """
         # --- build/append to the message list via the context ---
         await self._ctx.prepare_turn(user_input, mode)
-        tools = self._registry.to_api_schemas()
 
         max_iter = (
             max_iterations
@@ -338,6 +337,10 @@ class AgentLoop:
                 return
 
             # -- call LLM (context auto-compacts before returning messages) ---
+            # Rebuilt every iteration, not once per run: a tool registered
+            # mid-run — plan mode's propose_plan → todo_write swap — must
+            # reach the next request.
+            tools = self._registry.to_api_schemas()
             messages = await self._ctx.get_messages()
             logger.debug(
                 f"Iteration {stop_checker.iteration} — "

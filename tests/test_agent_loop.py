@@ -73,6 +73,7 @@ class MockLLMProvider(BaseLLMProvider):
         self.responses: list[LLMResponse] = responses or []
         self.call_count: int = 0
         self.messages_history: list[list[Message]] = []
+        self.tools_history: list[list[dict]] = []
 
     async def generate(
         self,
@@ -88,6 +89,7 @@ class MockLLMProvider(BaseLLMProvider):
         request_title: bool = False,
     ) -> AsyncIterator[StreamEvent] | LLMResponse:
         self.messages_history.append(messages)
+        self.tools_history.append(tools)
         if self.call_count < len(self.responses):
             resp = self.responses[self.call_count]
             self.call_count += 1
@@ -2399,6 +2401,66 @@ class TestTurnStopping:
         )
         assert not result.success
         assert effect is _CallEffect.CONTINUE
+
+
+class TestDynamicToolSchemas:
+    """The tool list is rebuilt for every request, not once per run."""
+
+    async def test_tool_registered_mid_turn_reaches_next_request(
+        self, registry, executor, settings, conv_ctx,
+    ):
+        class LateTool(BaseTool):
+            name = "late_tool"
+            description = "Registered while the turn is running"
+            parameters = {"type": "object", "properties": {}}
+
+            async def execute(self, **kwargs) -> ToolResult:
+                return ToolResult(
+                    tool_id="",
+                    tool_name="late_tool",
+                    success=True,
+                    output="late",
+                )
+
+        class RegisteringTool(BaseTool):
+            name = "register_late_tool"
+            description = "Registers LateTool"
+            parameters = {"type": "object", "properties": {}}
+
+            async def execute(self, **kwargs) -> ToolResult:
+                if "late_tool" not in registry:
+                    registry.register(LateTool())
+                return ToolResult(
+                    tool_id="",
+                    tool_name="register_late_tool",
+                    success=True,
+                    output="registered",
+                )
+
+        registry.register(RegisteringTool())
+        llm = MockLLMProvider(
+            responses=[
+                _make_llm_response(
+                    tool_blocks=[
+                        _make_tool_use_block("c1", "register_late_tool"),
+                    ],
+                    stop_reason="tool_use",
+                ),
+                _make_llm_response(text="done", stop_reason="end_turn"),
+            ]
+        )
+        loop = AgentLoop(
+            llm, registry, executor, settings,
+            context=conv_ctx, permission_manager=PermissionManager(),
+        )
+        await _collect_events(
+            loop.run("register please", config=TEST_TURN_CONFIG),
+        )
+
+        first = {t["function"]["name"] for t in llm.tools_history[0]}
+        second = {t["function"]["name"] for t in llm.tools_history[1]}
+        assert "late_tool" not in first
+        assert "late_tool" in second
 
 
 def test_persona_points_at_ask_user():
