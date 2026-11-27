@@ -114,9 +114,12 @@ class ContextManager:
         # Most-recent compaction result (cleared on load).
         self._last_compaction: CompactionResult | None = None
 
-        # Current mode — set by prepare_turn(), used by _auto_compact()
-        # so the compact system prompt keeps the right instructions.
-        self._mode: str = "execute"
+        # Current mode — set by prepare_turn()/set_mode(), used by
+        # _auto_compact() so the compact system prompt keeps the right
+        # instructions.  ``None`` means "not established since load": the
+        # next prepare_turn() rebuilds, so a prompt read from storage
+        # cannot pin a stale mode.
+        self._mode: str | None = None
 
         # Cross-conversation context — set by the session layer before
         # the first prepare_turn() of a turn, consumed by prepare_turn().
@@ -138,6 +141,9 @@ class ContextManager:
         self._baseline_count = len(messages)
         self._has_compacted = False
         self._last_compaction = None
+        # The stored prompt's mode is unknown; force a rebuild on the next
+        # turn rather than trusting whatever mode it was written under.
+        self._mode = None
         self._window_mgr.reset_baseline()
 
     def set_cross_conversation_context(
@@ -226,6 +232,30 @@ class ContextManager:
     # Turn preparation
     # ------------------------------------------------------------------
 
+    def set_mode(self, mode: str) -> None:
+        """Switch the mode-specific instructions mid-conversation.
+
+        Called by the session when one run moves between modes — plan
+        approval is the case today.  The leading system message is rebuilt
+        so the instructions match the phase actually running; the
+        persisted copy is refreshed on the next load, where the first turn
+        rebuilds anyway.
+
+        An empty buffer only records the mode: the next
+        :meth:`prepare_turn` builds from it.
+        """
+        if mode == self._mode:
+            return
+        self._mode = mode
+        if not self._messages:
+            return
+        self._replace_system_messages(
+            self._prompt_builder.build(
+                mode,
+                prior_conversation_summaries=self._prior_titles,
+            )
+        )
+
     async def prepare_turn(
         self,
         user_input: str,
@@ -237,11 +267,16 @@ class ContextManager:
         cross-conversation summaries from
         :meth:`set_cross_conversation_context`), then appends *user_input*.
 
-        On subsequent turns: appends *user_input* to the existing history.
+        On a later turn whose mode differs from the previous one, the
+        leading system message is replaced with the new mode's prompt —
+        the old instructions would contradict the phase now running.  A
+        reloaded conversation always rebuilds, because :meth:`load` clears
+        the remembered mode.
 
         After this returns, :attr:`messages` is ready for LLM calls and
         :meth:`append` can be used to add assistant/tool messages.
         """
+        mode_changed = self._mode != mode
         self._mode = mode
 
         if not self._messages:
@@ -251,6 +286,13 @@ class ContextManager:
                 prior_conversation_summaries=self._prior_titles,
             )
             self._messages = [Message.system(sys_text)]
+        elif mode_changed:
+            self._replace_system_messages(
+                self._prompt_builder.build(
+                    mode,
+                    prior_conversation_summaries=self._prior_titles,
+                )
+            )
 
         self._messages.append(Message.user(user_input))
 
@@ -340,7 +382,7 @@ class ContextManager:
             # Rebuild system prompt with compact variant,
             # preserving the current mode's instructions.
             compact_sys = self._prompt_builder.build_compact(
-                mode=self._mode,
+                mode=self._mode or "execute",
                 prior_conversation_summaries=self._prior_titles,
             )
 
