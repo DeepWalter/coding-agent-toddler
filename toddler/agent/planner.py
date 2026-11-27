@@ -1,4 +1,4 @@
-"""Planner — plan data models and orchestration loop.
+"""Planner — plan orchestration loop.
 
 The Planner owns the plan lifecycle (explore → propose → wait) and is
 symmetric to :class:`AgentLoop`: both are async generators in the agent
@@ -16,11 +16,8 @@ the plan, the caller runs :class:`AgentLoop` directly with
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import uuid
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from toddler.agent.events import (
@@ -34,6 +31,7 @@ from toddler.agent.state_machine import AgentMode, AgentStateMachine
 from toddler.config.models import TurnConfig
 from toddler.llm import Message
 from toddler.llm.responses import LLMResponse
+from toddler.tools.plan import Plan, PlanStep
 
 if TYPE_CHECKING:
     from toddler.agent.loop import AgentLoop
@@ -50,253 +48,6 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
-
-
-# ============================================================================
-# Plan data models
-# ============================================================================
-
-
-def _single_line(text: str) -> str:
-    """Collapse whitespace and newlines in *text* to single spaces.
-
-    Plan title/summary/description render as ``Prefix: {value}`` one-liners
-    in the prompt and as single rows in the renderer Plan panel, so
-    multi-line values from LLM-generated JSON would break both.
-    """
-    return " ".join(str(text).split())
-
-
-@dataclass
-class PlanStep:
-    """A single step in an execution plan.
-
-    Parameters
-    ----------
-    id:
-        Canonical step identifier, e.g. ``"step-1"``.  Assigned from
-        position at parse time (see :meth:`Plan.from_json`) — ids
-        proposed by the LLM are ignored, so duplicates and missing ids
-        cannot reach tracking.
-    description:
-        Human-readable description of what this step accomplishes, e.g.
-        ``"Read auth.py to understand the current login flow"``.
-    tool_calls_expected:
-        Tool names that are likely to be called during this step.
-    files_affected:
-        File paths expected to be read or modified.
-    """
-
-    id: str
-    description: str
-    tool_calls_expected: list[str] = field(default_factory=list)
-    files_affected: list[str] = field(default_factory=list)
-
-    @classmethod
-    def from_dict(cls, d: dict, *, step_id: str) -> PlanStep:
-        """Build a ``PlanStep`` from a JSON-decoded dict.
-
-        *step_id* is the canonical, position-derived id — stray keys in
-        *d* (``"id"``, legacy ``"depends_on"``) are deliberately ignored.
-        """
-        return cls(
-            id=step_id,
-            description=_single_line(d.get("description", "")),
-            tool_calls_expected=d.get("tool_calls_expected", []),
-            files_affected=d.get("files_affected", []),
-        )
-
-    def to_dict(self) -> dict:
-        """Serialize to a plain dict for JSON storage."""
-        return {
-            "id": self.id,
-            "description": self.description,
-            "tool_calls_expected": self.tool_calls_expected,
-            "files_affected": self.files_affected,
-        }
-
-
-@dataclass
-class Plan:
-    """A structured execution plan proposed by the agent.
-
-    Parameters
-    ----------
-    id:
-        Unique plan identifier (UUID4).
-    title:
-        Short title, e.g. ``"Fix authentication bug in auth.py"``.
-    summary:
-        2-3 sentence overview of what the plan aims to achieve.
-    steps:
-        Ordered list of :class:`PlanStep` objects.
-    rationale:
-        Why this approach was chosen over alternatives.
-    risks:
-        Known risks or things that could go wrong.
-    estimated_files_touched:
-        Rough count of files that will be modified.
-    """
-
-    id: str
-    title: str
-    summary: str
-    steps: list[PlanStep] = field(default_factory=list)
-    rationale: str = ""
-    risks: list[str] = field(default_factory=list)
-    estimated_files_touched: int = 0
-
-    # ------------------------------------------------------------------
-    # Factory / serialization
-    # ------------------------------------------------------------------
-
-    @classmethod
-    def create(cls, title: str, summary: str) -> Plan:
-        """Create a new plan with a fresh UUID."""
-        return cls(
-            id=uuid.uuid4().hex,
-            title=title,
-            summary=summary,
-        )
-
-    @classmethod
-    def from_json(cls, raw: str) -> Plan | None:
-        """Parse a JSON string into a :class:`Plan`.
-
-        Strips markdown code fences (`` ```json `` / `` ``` ``) if present,
-        then parses the inner JSON.
-
-        Returns ``None`` when parsing fails so callers can feed the error
-        back to the LLM rather than crashing.
-        """
-        # Strip markdown code fences if present.
-        json_str = raw.strip()
-        if json_str.startswith("```"):
-            first_nl = json_str.find("\n")
-            if first_nl != -1:
-                json_str = json_str[first_nl + 1:]
-            if json_str.endswith("```"):
-                json_str = json_str[:-3]
-        json_str = json_str.strip()
-
-        try:
-            data = json.loads(json_str)
-        except json.JSONDecodeError as exc:
-            logger.warning(f"Failed to parse plan JSON: {exc}")
-            return None
-
-        if not isinstance(data, dict):
-            logger.warning("Plan JSON is not a dict.")
-            return None
-
-        steps_data = data.get("steps", [])
-        # Step ids are canonical, position-derived: LLM-proposed ids are
-        # ignored, so duplicates and missing ids cannot collapse rows in
-        # PlanState tracking or mismatch the execution prompt.
-        steps = [
-            PlanStep.from_dict(s, step_id=f"step-{i}")
-            for i, s in enumerate(steps_data, 1)
-        ]
-
-        return cls(
-            # Coerce to str — a numeric id from the LLM would otherwise
-            # never match the string plan_id passed to approve/reject
-            # (int != str), making every decision stale input.
-            id=str(data.get("id") or uuid.uuid4().hex),
-            title=_single_line(data.get("title", "Untitled Plan")),
-            summary=_single_line(data.get("summary", "")),
-            steps=steps,
-            rationale=_single_line(data.get("rationale", "")),
-            risks=[_single_line(r) for r in data.get("risks", [])],
-            # Default to 0 (matching the dataclass default) when the LLM
-            # omits the field — falling back to the step count would
-            # misreport an 8-step, 2-file refactor as 8 files touched.
-            estimated_files_touched=data.get(
-                "estimated_files_touched", 0,
-            ),
-        )
-
-    def to_json(self) -> str:
-        """Serialize the plan to a JSON string for storage."""
-        return json.dumps(
-            {
-                "id": self.id,
-                "title": self.title,
-                "summary": self.summary,
-                "steps": [s.to_dict() for s in self.steps],
-                "rationale": self.rationale,
-                "risks": self.risks,
-                "estimated_files_touched": self.estimated_files_touched,
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
-
-    # ------------------------------------------------------------------
-    # Display helpers
-    # ------------------------------------------------------------------
-
-    def format_for_display(self) -> str:
-        """Render the plan as a markdown string for user display."""
-        lines: list[str] = [
-            f"## Plan: {self.title}",
-            "",
-            self.summary,
-            "",
-        ]
-
-        if self.rationale:
-            lines.append(f"**Rationale**: {self.rationale}")
-            lines.append("")
-
-        if self.risks:
-            lines.append("**Risks**:")
-            for r in self.risks:
-                lines.append(f"- {r}")
-            lines.append("")
-
-        lines.append(f"**Steps** ({len(self.steps)}):")
-        for i, step in enumerate(self.steps, 1):
-            files = (
-                f" [{', '.join(step.files_affected)}]"
-                if step.files_affected
-                else ""
-            )
-            lines.append(f"{i}. **{step.description}**{files}")
-
-        lines.append("")
-        lines.append(
-            f"Estimated files touched: {self.estimated_files_touched}"
-        )
-        return "\n".join(lines)
-
-    def format_for_prompt(self) -> str:
-        """Render the full execution prompt: instructions plus the plan.
-
-        Used during ``PLAN_EXECUTING`` mode as the user message that kicks
-        off execution — it tells the agent to run the steps in order and
-        report progress per the ``plan_update`` tool description (the
-        single source for the reporting protocol), then appends the plan
-        body.  The plan body is frozen at approval time; live step
-        statuses are tracked separately at runtime and never rendered
-        here.
-        """
-        plan_lines: list[str] = [
-            f"## Approved Plan: {self.title}",
-            f"Summary: {self.summary}",
-            "",
-            "Steps:",
-        ]
-        for step in self.steps:
-            plan_lines.append(f"  {step.id}: {step.description}")
-        plan_text = "\n".join(plan_lines)
-
-        return (
-            "I have reviewed and approved the following plan. "
-            "Execute it step by step, reporting progress per the "
-            "plan_update tool "
-            f"description:\n\n{plan_text}"
-        )
 
 
 # ============================================================================

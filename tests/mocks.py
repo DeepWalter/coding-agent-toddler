@@ -14,7 +14,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 
-from toddler.agent.planner import Plan
+from toddler.tools.plan import Plan
 from toddler.config.models import TurnConfig
 from toddler.llm import (
     LLMResponse,

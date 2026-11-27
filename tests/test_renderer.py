@@ -21,7 +21,7 @@ from toddler.agent.events import (
     ToolCallStart,
     ToolUseStart,
 )
-from toddler.agent.planner import Plan, PlanStep
+from toddler.tools.plan import Plan, PlanStep
 from toddler.cli.renderer import (
     ConfirmResult,
     NonStreamingRenderer,

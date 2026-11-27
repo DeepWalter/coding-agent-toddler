@@ -22,7 +22,7 @@ from toddler.agent.events import (
     ToolCallEnd,
 )
 from toddler.agent.loop import AgentLoop
-from toddler.agent.planner import Plan, Planner
+from toddler.agent.planner import Planner
 from toddler.agent.state_machine import AgentStateMachine
 from toddler.checkpoint import create_checkpoint_callback
 from toddler.checkpoint.manager import CheckpointManager
@@ -45,7 +45,7 @@ from toddler.session.storage import StorageManager
 from toddler.tools import create_default_registry
 from toddler.tools.base import ToolResult
 from toddler.tools.executor import ToolExecutor
-from toddler.tools.plan import PlanState, PlanUpdateTool
+from toddler.tools.plan import Plan, PlanState, PlanUpdateTool
 from toddler.tools.policy import (
     FileScopePolicy,
     PermissionManager,

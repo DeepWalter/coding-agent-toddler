@@ -6,10 +6,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from toddler.agent.planner import Plan
     from toddler.llm import TokenUsage
     from toddler.tools.base import ToolResult
-    from toddler.tools.plan import PlanStepStatus
+    from toddler.tools.plan import Plan, PlanStepStatus
     from toddler.tools.prompts import ToolCallPrompt
 
 

@@ -23,7 +23,7 @@ from tests.mocks import (
     text_response,
     tool_use_response,
 )
-from toddler.agent.planner import Plan, PlanStep
+from toddler.tools.plan import Plan, PlanStep
 from toddler.agent.state_machine import AgentMode
 from toddler.cli.commands import CommandResult
 from toddler.config.settings import Settings

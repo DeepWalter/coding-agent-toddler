@@ -19,7 +19,7 @@ from toddler.agent.events import (
     ToolCallStart,
     ToolUseStart,
 )
-from toddler.agent.planner import Plan, PlanStep
+from toddler.tools.plan import Plan, PlanStep
 from toddler.llm import TokenUsage
 from toddler.llm.messages import Message, MessageBlock
 from toddler.tools.base import ToolResult
