@@ -1,5 +1,9 @@
 # Toddler — Custom Python Coding Agent Architecture & Development Plan
 
+> **Note:** The plan-mode sections of this document describe the original
+> two-loop design.  The current workflow is documented in
+> [tool-driven-plan-mode.md](tool-driven-plan-mode.md).
+
 ## Overview
 
 A custom Python CLI coding agent built from scratch for personal coding assistance and code review. No agent frameworks (no Claude Agent SDK, no LangChain) — just Python, the OpenAI-compatible API, and terminal libraries.

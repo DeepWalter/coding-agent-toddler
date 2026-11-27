@@ -1,5 +1,11 @@
 # Plan Mode Implementation Plan
 
+> **Superseded:** The two-loop Planner described here was replaced by the
+> tool-driven design in [tool-driven-plan-mode.md](tool-driven-plan-mode.md):
+> exploration, proposal, approval, and execution now run in one agent loop,
+> with `propose_plan` and `todo_write` as tools.  This document is kept as a
+> historical record.
+
 ## Context
 
 Plan mode is designed to give Toddler a structured workflow for complex tasks:

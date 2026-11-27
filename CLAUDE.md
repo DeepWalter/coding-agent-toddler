@@ -9,7 +9,7 @@ Rich-based terminal UI, and prompt-toolkit for input.
 ```
 toddler/
   main.py             CLI entry point, arg parsing, component wiring
-  agent/              Agent loop, planner, state machine, event handling,
+  agent/              Agent loop, state machine, event handling,
                       stop conditions
   cli/                Terminal app, commands, display, input handler, renderer
   config/             Settings (env + CLI overrides), defaults

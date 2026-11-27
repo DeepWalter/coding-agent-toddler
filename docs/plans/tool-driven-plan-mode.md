@@ -146,14 +146,15 @@ carry `ChoiceLevel.APPROVE`. `approve_plan(permission_mode=…)` sets gating
 and answers with the matching row index; the tool never needs to
 distinguish them.
 
-**6. Approval folds plan execution into `EXECUTING`.** `ToolCallEnd` fires
-for any approval path and lands before the loop's next request. The session
-transitions `PLAN → EXECUTING`, calls
-`ContextManager.set_mode("execute")`, deregisters `propose_plan` and
-registers `todo_write`. There is no plan-execution mode: the only
-plan-specific guidance (follow the approved plan in order; stop and explain
-rather than deviate) rides in the tool result, and the ordinary EXECUTE
-prompt is the only execution prompt. No plan-step state is armed.
+**6. Approval folds plan execution into `EXECUTING`.** The approve facade
+arms execution *before* answering the pause — transition `PLAN →
+EXECUTING`, `ContextManager.set_mode("execute")`, deregister
+`propose_plan`, register `todo_write` — so observers see the mode switch
+before the gating flip.  `ToolCallEnd` arms as a fallback for an approval
+answered directly through the loop.  There is no plan-execution mode: the
+only plan-specific guidance (follow the approved plan in order; stop and
+explain rather than deviate) rides in the tool result, and the ordinary
+EXECUTE prompt is the only execution prompt. No plan-step state is armed.
 
 **7. The todo list is session-scoped and in-memory.** It survives turns
 within a conversation, is cleared when the model writes `[]` and on
@@ -378,11 +379,11 @@ The core switch; deletes the `Planner`.
       `PlanProposed(plan=_proposed_plan)` instead of the pause. The pause
       is already answerable: `_pending` is set before `AgentPaused` is
       yielded ([loop.py:640-647](toddler/agent/loop.py#L640-L647)).
-    - `ToolCallEnd(propose_plan)` with `result.success` → transition
-      `PLAN_EXPLORING → EXECUTING`, call
-      `self._ctx.set_mode("execute")`, deregister `propose_plan`,
-      register `todo_write`, clear `_plan_tool_id`. No `PlanState`
-      activation.
+    - `ToolCallEnd(propose_plan)` with `result.success` → `_arm_execution()`
+      (the approve facade normally got here first): transition
+      `PLAN_EXPLORING → EXECUTING`, call `self._ctx.set_mode("execute")`,
+      deregister `propose_plan`, register `todo_write`, clear
+      `_plan_tool_id`. No `PlanState` activation.
     - `finally`: `_deactivate_execution_tools()` and
       `_deactivate_plan_exploration()` (both idempotent).
   - `approve_plan(*, plan_id, permission_mode=None)`: return `False` when
