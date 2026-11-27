@@ -296,6 +296,17 @@ class TestSessionManagerPlanWorkflow:
         assert llm.call_count == 2
         assert len([e for e in remaining if isinstance(e, AgentFinished)]) == 1
 
+        # The approved call resolves and runs: its tool result is the
+        # approval ack, not the executor's unknown-tool error.
+        ends = [
+            e for e in remaining
+            if isinstance(e, ToolCallEnd) and e.tool_name == "propose_plan"
+        ]
+        assert len(ends) == 1
+        assert ends[0].result is not None
+        assert ends[0].result.success
+        assert "approved" in ends[0].result.output
+
         second_tools = {t["function"]["name"] for t in llm.tools_history[1]}
         assert "todo_write" in second_tools
         assert "propose_plan" not in second_tools

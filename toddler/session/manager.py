@@ -938,6 +938,10 @@ class SessionManager:
         calls it again for an approval answered directly through the
         agent loop.  Idempotent: a second call finds the turn already
         executing and does nothing.
+
+        ``propose_plan`` stays registered here: the loop still has to
+        resolve the paused call to run it.  :meth:`_finish_proposal`
+        removes it once the call has completed — before the next request.
         """
         if (
             self._proposed_plan is None
@@ -948,21 +952,23 @@ class SessionManager:
             return
         if self._ctx is not None:
             self._ctx.set_mode("execute")
-        self._registry.deregister(PROPOSE_PLAN_NAME)
         self._activate_todo_tools()
         self._plan_tool_id = None
         self._proposed_plan = None
 
     def _finish_proposal(self, event: ToolCallEnd) -> None:
-        """Arm execution after an approved proposal's call completes.
+        """Finish the proposal call and hide the tool for execution.
 
         The tool runs only when the pause was granted, so a successful
-        result *is* the approval.  The facade normally got here first;
-        this covers an approval answered directly through the loop.
+        result *is* the approval.  The facade normally armed execution
+        before answering; this covers an approval answered directly
+        through the loop.  Either way the tool is deregistered only now —
+        the loop needs it registered to resolve and run the call.
         """
         if event.result is None or not event.result.success:
             return
         self._arm_execution()
+        self._registry.deregister(PROPOSE_PLAN_NAME)
 
     # ------------------------------------------------------------------
     # Todo tools

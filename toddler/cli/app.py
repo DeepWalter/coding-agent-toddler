@@ -20,6 +20,7 @@ from toddler.agent.events import (
     PlanProposed,
     ReasoningDelta,
     RecoverableAgentError,
+    TodoUpdate,
     ToolCallEnd,
     ToolCallStart,
     ToolUseStart,
@@ -249,6 +250,9 @@ class CLIApp:
 
                 case ToolCallEnd():
                     self._renderer.on_tool_call_end(event)
+
+                case TodoUpdate():
+                    self._renderer.on_todo_update(event)
 
                 case AgentPaused():
                     choices = event.prompt.choices
