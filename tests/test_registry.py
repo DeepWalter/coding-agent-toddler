@@ -24,7 +24,7 @@ BUILTIN_NAMES = {
 
 #: What registers itself at import time — the default tools plus the ones a
 #: session arms for a phase of its own.
-CATALOG_NAMES = BUILTIN_NAMES | {"plan_update"}
+CATALOG_NAMES = BUILTIN_NAMES | {"plan_update", "todo_write"}
 
 
 class EchoTool(BaseTool):
@@ -202,10 +202,10 @@ class TestHiddenToolNames:
 
     def test_hidden_is_not_the_same_question_as_not_default(self):
         """Two declarations, two questions: what a session is handed, and
-        what the front-ends draw.  ``plan_update`` is hidden and not
-        shipped; ``ask_user`` is visible and shipped — the two
-        declarations are independent."""
-        assert set(HIDDEN_TOOL_NAMES) == {"plan_update"}
+        what the front-ends draw.  ``plan_update`` and ``todo_write`` are
+        hidden and not shipped; ``ask_user`` is visible and shipped — the
+        two declarations are independent."""
+        assert set(HIDDEN_TOOL_NAMES) == {"plan_update", "todo_write"}
         assert set(create_default_registry().list_names()) == BUILTIN_NAMES
 
 
@@ -252,8 +252,8 @@ class TestDefaultRegistry:
         assert first.get("shell") is not second.get("shell")
 
     def test_mutating_a_session_registry_leaves_the_catalog_intact(self):
-        """``plan_update`` churn and test doubles must not reach the
-        definitions the next session is built from."""
+        """``plan_update`` / ``todo_write`` churn and test doubles must not
+        reach the definitions the next session is built from."""
         registry = create_default_registry()
 
         registry.deregister("shell")

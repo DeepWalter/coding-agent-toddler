@@ -36,6 +36,12 @@ from toddler.tools.question import QuestionTool
 from toddler.tools.registry import TOOL_CATALOG, ToolRegistry
 from toddler.tools.search import Glob, Grep
 from toddler.tools.shell import Shell
+from toddler.tools.todo import (
+    TodoItem,
+    TodoState,
+    TodoStatus,
+    TodoWriteTool,
+)
 
 __all__ = [
     # Base
@@ -79,6 +85,11 @@ __all__ = [
     "PlanUpdateTool",
     # Questions
     "QuestionTool",
+    # Todos
+    "TodoItem",
+    "TodoState",
+    "TodoStatus",
+    "TodoWriteTool",
     # Git tools
     "GitStatus",
     "GitDiff",

@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from toddler.tools.base import ToolResult
     from toddler.tools.plan import Plan, PlanStepStatus
     from toddler.tools.prompts import ToolCallPrompt
+    from toddler.tools.todo import TodoItem
 
 
 # ---------------------------------------------------------------------------
@@ -124,6 +125,18 @@ class PlanStepUpdate(AgentEvent):
     """
 
     steps: list[tuple[str, str, PlanStepStatus]]  # (id, description, status)
+
+
+@dataclass
+class TodoUpdate(AgentEvent):
+    """The todo list changed.
+
+    Always carries the complete list — an empty one clears the display —
+    so renderers replace their snapshot without diffing.  Produced by the
+    session after a ``todo_write`` call whenever the list changed.
+    """
+
+    items: tuple[TodoItem, ...]
 
 
 # ---------------------------------------------------------------------------

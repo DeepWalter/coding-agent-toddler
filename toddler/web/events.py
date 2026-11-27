@@ -5,7 +5,7 @@ subclass (or payload type) to its protocol frame.  Frame ``type`` strings
 are the snake_case event class names — that is the wire contract the
 frontend switches on.
 
-:class:`~toddler.agent.planner.Plan`, :class:`~toddler.tools.base.ToolResult`
+:class:`~toddler.tools.plan.Plan`, :class:`~toddler.tools.base.ToolResult`
 and :class:`~toddler.llm.TokenUsage` have no ``to_dict``, so their fields
 are mapped explicitly here.
 """
@@ -25,6 +25,7 @@ from toddler.agent.events import (
     PlanStepUpdate,
     ReasoningDelta,
     RecoverableAgentError,
+    TodoUpdate,
     ToolCallEnd,
     ToolCallStart,
     ToolUseStart,
@@ -326,6 +327,13 @@ def serialize_event(event: AgentEvent, root: Path) -> dict | None:  # noqa: C901
                     [step_id, description, status.value]
                     for step_id, description, status in steps
                 ],
+            }
+
+        case TodoUpdate(items=items):
+            # Complete snapshot; an empty list clears the checklist.
+            return {
+                "type": "todo_update",
+                "todos": [item.to_dict() for item in items],
             }
 
         case AgentPaused(prompt=prompt, tool_id=tool_id):

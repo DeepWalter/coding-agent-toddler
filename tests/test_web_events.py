@@ -15,15 +15,15 @@ from toddler.agent.events import (
     PlanStepUpdate,
     ReasoningDelta,
     RecoverableAgentError,
+    TodoUpdate,
     ToolCallEnd,
     ToolCallStart,
     ToolUseStart,
 )
-from toddler.tools.plan import Plan, PlanStep
 from toddler.llm import TokenUsage
 from toddler.llm.messages import Message, MessageBlock
 from toddler.tools.base import ToolResult
-from toddler.tools.plan import PlanStepStatus
+from toddler.tools.plan import Plan, PlanStep, PlanStepStatus
 from toddler.tools.prompts import (
     ChoiceType,
     PromptChoices,
@@ -31,6 +31,7 @@ from toddler.tools.prompts import (
     QuestionChoice,
     ToolCallPrompt,
 )
+from toddler.tools.todo import TodoItem, TodoStatus
 from toddler.web.events import (
     serialize_event,
     serialize_plan,
@@ -331,6 +332,19 @@ class TestSerializeEvent:
             "steps": [
                 ["step-1", "Read the code", "in_progress"],
                 ["step-2", "Edit", "pending"],
+            ],
+        }
+
+    def test_todo_update(self):
+        frame = serialize_event(TodoUpdate(items=(
+            TodoItem("Read the code", TodoStatus.IN_PROGRESS),
+            TodoItem("Edit", TodoStatus.PENDING),
+        )), ROOT)
+        assert frame == {
+            "type": "todo_update",
+            "todos": [
+                {"content": "Read the code", "status": "in_progress"},
+                {"content": "Edit", "status": "pending"},
             ],
         }
 

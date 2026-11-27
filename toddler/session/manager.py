@@ -19,6 +19,7 @@ from toddler.agent.events import (
     ConversationTitle,
     FatalAgentError,
     PlanStepUpdate,
+    TodoUpdate,
     ToolCallEnd,
 )
 from toddler.agent.loop import AgentLoop
@@ -50,6 +51,12 @@ from toddler.tools.policy import (
     FileScopePolicy,
     PermissionManager,
     PermissionMode,
+)
+from toddler.tools.todo import (
+    TODO_TOOL_NAME,
+    TodoItem,
+    TodoState,
+    TodoWriteTool,
 )
 
 logger = logging.getLogger(__name__)
@@ -113,6 +120,11 @@ class SessionManager:
         # completed tool call to emit PlanStepUpdate.  Only armed while
         # a plan runs.
         self._plan_state = PlanState()
+
+        # Shared todo list — the todo_write tool mutates it during
+        # execution phases; the manager diffs it after each completed
+        # tool call to emit TodoUpdate.  Session-scoped and in memory.
+        self._todo_state = TodoState()
 
         # Where the tools' files live — the working directory the registry
         # hands to every tool, so a tool can place the paths a call names
@@ -292,6 +304,11 @@ class SessionManager:
     def scope_policy(self) -> FileScopePolicy:
         """Where this session's workspace and restricted paths are."""
         return self._scope_policy
+
+    @property
+    def todos(self) -> tuple[TodoItem, ...]:
+        """The current todo list — session-scoped and in memory only."""
+        return self._todo_state.items
 
     @property
     def mode_label(self) -> str:
@@ -832,6 +849,10 @@ class SessionManager:
             if isinstance(event, (AgentFinished, AgentCancelled)):
                 usage = event.usage
             yield event
+            if isinstance(event, ToolCallEnd):
+                update = self._todo_state.take_update()
+                if update is not None:
+                    yield TodoUpdate(items=update)
 
         # Persist after the phase completes.
         await self._maybe_persist_phase(usage)
@@ -883,6 +904,7 @@ class SessionManager:
         try:
             if plan_mode:
                 self._activate_plan_execution(self.planner.plan)
+            self._activate_todo_tools()
 
             async for event in self._run_phase(
                 user_input, mode_hint, config=config,
@@ -895,6 +917,7 @@ class SessionManager:
                 if update is not None:
                     yield PlanStepUpdate(steps=update)
         finally:
+            self._deactivate_todo_tools()
             self._deactivate_plan_execution()
 
     def _activate_plan_execution(self, plan: Plan) -> None:
@@ -923,6 +946,28 @@ class SessionManager:
         self._registry.deregister("plan_update")
         self._plan_state.deactivate()
 
+    # ------------------------------------------------------------------
+    # Todo tools
+    # ------------------------------------------------------------------
+
+    def _activate_todo_tools(self) -> None:
+        """Register ``todo_write`` for an execution phase.
+
+        It is not a default tool — it mutates the session's shared
+        ``TodoState`` — and plan exploration must not see it, so the
+        execution phase is the only place it is armed.
+        """
+        if TODO_TOOL_NAME not in self._registry:
+            self._registry.register(
+                TodoWriteTool(
+                    self._todo_state, scope_policy=self._scope_policy,
+                )
+            )
+
+    def _deactivate_todo_tools(self) -> None:
+        """Idempotently remove ``todo_write`` after the phase."""
+        self._registry.deregister(TODO_TOOL_NAME)
+
     # ==================================================================
     # Conversation management
     # ==================================================================
@@ -939,6 +984,10 @@ class SessionManager:
         """
         if self._ctx is None:
             return
+
+        # The todo list belongs to the conversation; a new one starts
+        # without any (it is never persisted).
+        self._todo_state.reset()
 
         if title and self._conv:
             self._conv.title = title.strip() or None
@@ -1039,6 +1088,7 @@ class SessionManager:
         # Reactivate the resumed conversation.
         conv.status = "active"
         self._conv = conv
+        self._todo_state.reset()
         await self._activate_context()
 
     async def switch_session(self, session_id: str) -> None:
@@ -1093,6 +1143,7 @@ class SessionManager:
         # both hold the one they were built with.
         self._agent_impl = None
         self._planner = None
+        self._todo_state.reset()
 
         if self._ckpt_mgr is not None:
             self._ckpt_mgr.set_session(self._session.id)
