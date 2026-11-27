@@ -79,8 +79,8 @@ class ToolRegistry:
         if tool is None:
             def decorator(tool_cls: _ToolClass) -> _ToolClass:
                 # No-argument construction is the decorator's contract —
-                # a tool that needs state (``PlanUpdateTool`` and its
-                # ``PlanState``) is registered explicitly instead.
+                # a tool that needs session state (``TodoWriteTool`` and
+                # its ``TodoState``) is registered explicitly instead.
                 self._do_register(tool_cls())
                 return tool_cls
 
@@ -156,6 +156,6 @@ class ToolRegistry:
 #:
 #: A catalog of definitions, not a registry to run with: a session gets its
 #: own, built from here by :func:`~toddler.tools.create_default_registry`,
-#: so the tools that come and go at runtime — ``plan_update`` registered for
+#: so the tools that come and go at runtime — ``todo_write`` registered for
 #: a plan phase alone, test doubles — never touch the definitions.
 TOOL_CATALOG = ToolRegistry(name="catalog")

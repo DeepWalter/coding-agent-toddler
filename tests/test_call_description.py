@@ -25,21 +25,24 @@ from toddler.tools.base import (
 )
 from toddler.tools.executor import ToolExecutor
 from toddler.tools.files import ReadFile
-from toddler.tools.plan import PLAN_UPDATE_USAGE, PlanState, PlanUpdateTool
+from toddler.tools.plan import ProposePlanTool
 from toddler.tools.policy import Permission
 from toddler.tools.registry import ToolRegistry
 from toddler.tools.shell import Shell
+from toddler.tools.todo import TODO_WRITE_USAGE, TodoState, TodoWriteTool
 
 
 def _every_tool() -> list[BaseTool]:
     """Every tool the agent can offer.
 
-    The registry factory covers the built-ins; ``plan_update`` is the one
-    tool registered outside it, dynamically, while a plan executes.
+    The registry factory covers the built-ins; ``propose_plan`` and
+    ``todo_write`` are registered outside it, by the session, for a plan
+    turn or an execution phase.
     """
     return [
         *create_default_registry().list_all(),
-        PlanUpdateTool(PlanState()),
+        ProposePlanTool(),
+        TodoWriteTool(TodoState()),
     ]
 
 
@@ -89,11 +92,11 @@ class TestSchemaInjection:
             description = tool.to_api_schema()["function"]["description"]
             assert CALL_DESCRIPTION_USAGE in description, tool.name
 
-    def test_plan_update_keeps_its_own_usage_prose(self):
-        """The reporting protocol is the plan tool's description to carry —
+    def test_todo_write_keeps_its_own_usage_prose(self):
+        """The reporting protocol is the todo tool's description to carry —
         no appended line displaces it."""
-        schema = PlanUpdateTool(PlanState()).to_api_schema()
-        assert PLAN_UPDATE_USAGE in schema["function"]["description"]
+        schema = TodoWriteTool(TodoState()).to_api_schema()
+        assert TODO_WRITE_USAGE in schema["function"]["description"]
 
 
 # ---------------------------------------------------------------------------
@@ -172,8 +175,8 @@ class TestOptOut:
         opts out is a decision, not a default, so one that stops doing so
         has to fail here rather than in the model's schema."""
         assert {t.name for t in _opted_out_tools()} == {
-            "read_file", "write_file", "edit_file", "plan_update",
-            "ask_user",
+            "read_file", "write_file", "edit_file", "propose_plan",
+            "todo_write", "ask_user",
         }
 
     def test_no_description_property_is_injected(self):

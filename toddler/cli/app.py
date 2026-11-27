@@ -18,7 +18,6 @@ from toddler.agent.events import (
     ContentDelta,
     FatalAgentError,
     PlanProposed,
-    PlanStepUpdate,
     ReasoningDelta,
     RecoverableAgentError,
     ToolCallEnd,
@@ -250,9 +249,6 @@ class CLIApp:
 
                 case ToolCallEnd():
                     self._renderer.on_tool_call_end(event)
-
-                case PlanStepUpdate():
-                    self._renderer.on_plan_step_update(event)
 
                 case AgentPaused():
                     choices = event.prompt.choices

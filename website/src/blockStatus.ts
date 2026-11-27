@@ -45,15 +45,10 @@ export function blockStatus(
       return result.success ? 'ok' : 'error'
     }
     case 'plan': {
-      const steps = block.steps.map(([, , status]) => status)
-      // No producer for 'failed' today — PlanStepStatus is pending /
-      // in_progress / completed.  Kept so a dead step can never leave a
-      // spinner turning if a status is ever added server-side.
-      if (steps.includes('failed')) return 'error'
       // The mark reads the *decision*, not the execution: the proposal is
       // one unit, and it settles the moment the user answers it —
       // approved (ok) or denied (error).  A plan running under an approval
-      // keeps this ✓ for the rest of the turn; how far the steps have got
+      // keeps this ✓ for the rest of the turn; how far the work has got
       // is the todo trail's reading, printed beside it.
       //
       // A cancelled turn overrides that: the plan cannot be answered any
@@ -63,11 +58,8 @@ export function blockStatus(
       if (block.cancelled) return 'error'
       if (block.decision === 'rejected') return 'error'
       if (block.decision !== null) return 'ok'
-      // No decision in this tab: a plan whose steps are all still pending
-      // is the one the dock is asking about (running); anything past
-      // pending was decided from another tab or replayed by hello, and
-      // settles the way an approval here would.
-      return steps.some((s) => s !== 'pending') ? 'ok' : 'running'
+      // No decision in this tab: the dock is asking about it.
+      return 'running'
     }
     case 'error':
       return 'error'

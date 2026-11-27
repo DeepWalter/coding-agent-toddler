@@ -76,11 +76,6 @@ function openFeedback() {
         </svg>
       </button>
     </div>
-    <div v-if="block.plan.summary" class="plan-ask-summary">
-      {{ block.plan.summary }}
-      <span class="plan-ask-meta">~{{ block.plan.estimated_files_touched }} file(s) touched</span>
-    </div>
-
     <div v-if="!showFeedback" class="plan-ask-actions">
       <button
         ref="approveEl"

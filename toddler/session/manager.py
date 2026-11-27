@@ -53,8 +53,6 @@ from toddler.tools.plan import (
     PLAN_CHOICE_REJECT,
     PROPOSE_PLAN_NAME,
     Plan,
-    PlanState,
-    PlanUpdateTool,
     PlanValidationError,
     ProposePlanTool,
 )
@@ -126,12 +124,6 @@ class SessionManager:
         # reference, so mode changes (via /mode or plan approval) take
         # effect immediately without rebuilding.
         self._perm_mgr = PermissionManager()
-
-        # Shared plan step-status tracker — the plan_update tool mutates
-        # it during PLAN_EXECUTING; the manager diffs it after each
-        # completed tool call to emit PlanStepUpdate.  Only armed while
-        # a plan runs.
-        self._plan_state = PlanState()
 
         # Shared todo list — the todo_write tool mutates it during
         # execution phases; the manager diffs it after each completed
@@ -971,32 +963,6 @@ class SessionManager:
         if event.result is None or not event.result.success:
             return
         self._arm_execution()
-
-    def _activate_plan_execution(self, plan: Plan) -> None:
-        """Arm plan tracking.
-
-        Captures *plan*'s steps in the shared :class:`PlanState` (arming
-        update detection) and registers the tool so the LLM sees it only
-        during this phase.
-        """
-        self._plan_state.activate(plan)
-        if "plan_update" not in self._registry:
-            self._registry.register(
-                PlanUpdateTool(
-                    self._plan_state, scope_policy=self._scope_policy
-                )
-            )
-
-    def _deactivate_plan_execution(self) -> None:
-        """Tear down plan tracking after the execution phase.
-
-        Idempotent — safe to call even when no plan was activated this
-        turn (deregister silently pops a missing name; deactivate just
-        re-clears).  Unconditional so a partially completed activation
-        can never leak ``plan_update`` into a later turn.
-        """
-        self._registry.deregister("plan_update")
-        self._plan_state.deactivate()
 
     # ------------------------------------------------------------------
     # Todo tools

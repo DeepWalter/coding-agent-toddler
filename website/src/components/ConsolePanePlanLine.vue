@@ -18,9 +18,9 @@ function open() {
 
 <template>
   <!-- One line, read like a file call's: "Plan" over the plan's title, the
-       title opening the full plan in the editor.  The steps are not here —
-       they stream as todo blocks beside it — and neither is the decision:
-       the dock's ask is the one place a plan is approved. -->
+       title opening the full plan in the editor.  Progress is not here —
+       the todo list streams as blocks beside it — and neither is the
+       decision: the dock's ask is the one place a plan is approved. -->
   <div class="tool-call-heading">
     <span class="tool-call-name">Plan</span>
     <button

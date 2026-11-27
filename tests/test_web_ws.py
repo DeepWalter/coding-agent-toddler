@@ -28,7 +28,7 @@ from toddler.cli.commands import CommandResult
 from toddler.config.settings import Settings
 from toddler.llm import LLMResponse, Message, MessageBlock, TokenUsage
 from toddler.session.models import MAX_TITLE_LENGTH
-from toddler.tools.plan import Plan, PlanStep
+from toddler.tools.plan import Plan
 from toddler.web.app import create_app
 
 # ============================================================================
@@ -118,11 +118,11 @@ def _plan() -> Plan:
     return Plan(
         id="plan-1",
         title="Refactor thing",
-        summary="Move the logic.",
-        steps=[
-            PlanStep(id="step-1", description="Read the code"),
-            PlanStep(id="step-2", description="Edit the code"),
-        ],
+        markdown=(
+            "## Plan: Refactor thing\n\n"
+            "1. Read the code\n"
+            "2. Edit the code"
+        ),
     )
 
 
@@ -908,7 +908,6 @@ class TestPlanFlow:
             proposed = _wait_for(ws, "plan_proposed")
             assert proposed["plan"]["id"] == "plan-1"
             assert proposed["plan"]["title"] == "Refactor thing"
-            assert proposed["plan"]["steps"] == []
             assert proposed["plan"]["markdown"].startswith(
                 "## Plan: Refactor thing"
             )
@@ -1219,7 +1218,6 @@ class TestPlanReconnect:
                 assert hello2["plan"]["plan"]["markdown"].startswith(
                     "## Plan: "
                 )
-                assert hello2["plan"]["steps"] == []
                 # The pill is frozen while the plan awaits approval.
                 assert hello2["session"]["gating_editable"] is False
 
@@ -1276,7 +1274,6 @@ class TestPlanReconnect:
                 hello2 = tab2.receive_json()
                 assert hello2["busy"] is True
                 assert hello2["plan"]["plan"]["id"] == "plan-1"
-                assert hello2["plan"]["steps"] == []
                 assert hello2["todos"] == [{
                     "content": "First thing",
                     "status": "in_progress",

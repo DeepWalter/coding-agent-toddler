@@ -36,7 +36,6 @@ def test_from_arguments_builds_a_markdown_plan():
     assert plan.title == "Fix auth"
     assert plan.markdown == "## Plan\n\nDo the thing."
     assert plan.format_for_display() == plan.markdown
-    assert plan.steps == []
 
 
 def test_from_arguments_rejects_an_empty_title():

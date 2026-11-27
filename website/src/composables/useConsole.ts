@@ -6,10 +6,7 @@ import type {
   Frame,
   Mode,
   PlanDecision,
-  PlanStepRow,
   PromptAnswer,
-  TodoItem,
-  TodoStatus,
 } from '../types'
 
 /**
@@ -116,17 +113,13 @@ function closeOpenTools(s: ConsoleState): void {
   }
 }
 
-/** Settle the plan a cancelled turn was carrying.  Only the last plan block
- *  is touched — earlier ones were answered — and only while it still had
- *  steps to run: a plan whose steps all completed survived the cancel, with
- *  just the closing summary cut. */
+/** Settle the plan a cancelled turn was carrying.  Only the last plan
+ *  block is touched — earlier ones were answered. */
 function cancelPlan(s: ConsoleState): void {
   for (let i = s.blocks.length - 1; i >= 0; i--) {
     const b = s.blocks[i]
     if (b.kind !== 'plan') continue
-    const done =
-      b.steps.length > 0 && b.steps.every(([, , st]) => st === 'completed')
-    if (!done) b.cancelled = true
+    b.cancelled = true
     return
   }
 }
@@ -145,14 +138,6 @@ const FOLD_LABELS: Record<'cancelled' | 'compacted', string> = {
 function foldText(fold: string, content: string): string {
   if (fold === 'cancelled' || fold === 'compacted') return FOLD_LABELS[fold]
   return content.trim().replace(/^\[/, '').replace(/\]$/, '')
-}
-
-/** Map a plan_step_update snapshot to the todo block's row shape. */
-function stepsAsTodos(steps: PlanStepRow[]): TodoItem[] {
-  return steps.map(([, description, status]) => ({
-    content: description,
-    status: status as TodoStatus,
-  }))
 }
 
 function apply(s: ConsoleState, action: ConsoleAction): void {
@@ -210,29 +195,24 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
           push(s, { kind: 'assistant', content: msg.content, closed: true })
         }
       }
-      // A plan proposed mid-turn is snapshotted server-side (proposal +
-      // latest step statuses); re-render the card so a reconnecting or
-      // new tab can still see and approve it.  Same busy gate as paused
-      // — the snapshot can outlive the turn by a race.
+      // A plan proposed mid-turn is snapshotted server-side; re-render
+      // the card so a reconnecting or new tab can still see and approve
+      // it.  Same busy gate as paused — the snapshot can outlive the turn
+      // by a race.
       if (action.busy && action.plan) {
         push(s, {
           kind: 'plan',
           plan: action.plan.plan,
-          steps: action.plan.steps,
           decision: null,
           cancelled: false,
         })
       }
       // One progress checklist from the latest snapshot: a reconnecting
       // tab sees the current state, not the trail (the per-update blocks
-      // are live-only).  Todos win — one progress surface, not two — and
-      // plan steps remain as the migration fallback.  This is a state
-      // readout, not a milestone print, so the live-trail rule does not
-      // apply.
+      // are live-only).  This is a state readout, not a milestone print,
+      // so the live-trail rule does not apply.
       if (action.busy && action.todos.length) {
         push(s, { kind: 'todo', items: action.todos })
-      } else if (action.busy && action.plan && action.plan.steps.length) {
-        push(s, { kind: 'todo', items: stepsAsTodos(action.plan.steps) })
       }
       break
     }
@@ -354,35 +334,10 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
       push(s, {
         kind: 'plan',
         plan: action.plan,
-        steps: [],
         decision: null,
         cancelled: false,
       })
       break
-    case 'plan_step_update': {
-      // The plan_update call that produced this frame is hidden on the wire
-      // — no tool_call_start reaches a badge — so this is the only signal
-      // that the response carrying the call has ended: close its prose and
-      // thought the way a visible tool call would, or a step's text would
-      // keep its spinner for the rest of the turn.
-      closeThinking(s)
-      closeAssistant(s)
-      // The plan line's own rows stay current — awaitingPlan, blockStatus
-      // and the ack rollback all read them — while the console also gets a
-      // checklist, printed at the two moments worth reading: a step
-      // starting, and the whole plan done.  A completion that is not the
-      // last only moves one box, which the next start's list shows anyway
-      // (the CLI's plan panel folds the same snapshots).
-      const last = [...s.blocks].reverse().find((b) => b.kind === 'plan')
-      if (last && last.kind === 'plan') last.steps = action.steps
-      const items = stepsAsTodos(action.steps)
-      const started = items.some((item) => item.status === 'in_progress')
-      const allDone =
-        items.length > 0
-        && items.every((item) => item.status === 'completed')
-      if (started || allDone) push(s, { kind: 'todo', items })
-      break
-    }
     case 'todo_update': {
       // The todo_write call that produced this frame is hidden on the
       // wire — no tool_call_start reaches a badge — so this is the only
@@ -485,17 +440,12 @@ function apply(s: ConsoleState, action: ConsoleAction): void {
       break
     case 'ack': {
       // A refused plan decision means the server had already decided (another
-      // tab, or the machine moved on) — undo the optimistic mark while the
-      // block is still fully pending, so it reads undecided instead of lying
-      // "approved…" and re-offers.  Steps running means our decision was real.
+      // tab, or the machine moved on) — undo the optimistic mark so the block
+      // reads undecided instead of lying "approved…" and re-offers.
       if (!action.accepted && ['approve_plan', 'reject_plan'].includes(action.cmd)) {
         for (let i = s.blocks.length - 1; i >= 0; i--) {
           const b = s.blocks[i]
-          if (
-            b.kind === 'plan'
-            && b.decision !== null
-            && b.steps.every(([, , st]) => st === 'pending')
-          ) {
+          if (b.kind === 'plan' && b.decision !== null) {
             b.decision = null
             break
           }

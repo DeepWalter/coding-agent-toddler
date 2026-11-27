@@ -7,8 +7,9 @@ import pytest
 
 from toddler.tools import HIDDEN_TOOL_NAMES, create_default_registry
 from toddler.tools.base import BaseTool, ToolResult
-from toddler.tools.plan import PlanUpdateTool
+from toddler.tools.plan import ProposePlanTool
 from toddler.tools.registry import TOOL_CATALOG, ToolRegistry
+from toddler.tools.todo import TodoWriteTool
 
 #: Every tool :func:`create_default_registry` is expected to hand a session.
 #: Spelled out rather than derived from the catalog: adding a tool without
@@ -24,9 +25,7 @@ BUILTIN_NAMES = {
 
 #: What registers itself at import time — the default tools plus the ones a
 #: session arms for a phase of its own.
-CATALOG_NAMES = BUILTIN_NAMES | {
-    "plan_update", "propose_plan", "todo_write",
-}
+CATALOG_NAMES = BUILTIN_NAMES | {"propose_plan", "todo_write"}
 
 
 class EchoTool(BaseTool):
@@ -184,11 +183,13 @@ class TestHiddenToolNames:
     declaration, read off the catalog — not a name list either of them
     carries."""
 
-    def test_the_plan_tool_declares_itself_invisible(self):
-        """Its statuses arrive as plan step updates, so a row for the call
-        itself would repeat them."""
-        assert PlanUpdateTool.visible is False
-        assert "plan_update" in HIDDEN_TOOL_NAMES
+    def test_the_session_tools_declare_themselves_invisible(self):
+        """Their effects arrive as frames of their own — the plan card and
+        the todo list — so a row for the call would repeat them."""
+        assert TodoWriteTool.visible is False
+        assert ProposePlanTool.visible is False
+        assert "todo_write" in HIDDEN_TOOL_NAMES
+        assert "propose_plan" in HIDDEN_TOOL_NAMES
 
     def test_a_tool_that_declares_nothing_is_drawn(self):
         assert "shell" not in HIDDEN_TOOL_NAMES
@@ -204,13 +205,10 @@ class TestHiddenToolNames:
 
     def test_hidden_is_not_the_same_question_as_not_default(self):
         """Two declarations, two questions: what a session is handed, and
-        what the front-ends draw.  ``plan_update``, ``propose_plan`` and
-        ``todo_write`` are hidden and not shipped; ``ask_user`` is visible
-        and shipped — the
+        what the front-ends draw.  ``propose_plan`` and ``todo_write`` are
+        hidden and not shipped; ``ask_user`` is visible and shipped — the
         two declarations are independent."""
-        assert set(HIDDEN_TOOL_NAMES) == {
-            "plan_update", "propose_plan", "todo_write",
-        }
+        assert set(HIDDEN_TOOL_NAMES) == {"propose_plan", "todo_write"}
         assert set(create_default_registry().list_names()) == BUILTIN_NAMES
 
 
@@ -231,9 +229,13 @@ class TestDefaultRegistry:
         assert set(create_default_registry().list_names()) == BUILTIN_NAMES
 
     def test_a_session_only_tool_is_filtered_out(self):
-        assert PlanUpdateTool.in_default_registry is False
-        assert "plan_update" in TOOL_CATALOG
-        assert "plan_update" not in create_default_registry()
+        for tool_class, name in (
+            (ProposePlanTool, "propose_plan"),
+            (TodoWriteTool, "todo_write"),
+        ):
+            assert tool_class.in_default_registry is False
+            assert name in TOOL_CATALOG
+            assert name not in create_default_registry()
 
     def test_the_opt_out_is_what_does_the_filtering(self):
         """The mechanism itself, not just the one tool using it today."""
@@ -257,8 +259,8 @@ class TestDefaultRegistry:
         assert first.get("shell") is not second.get("shell")
 
     def test_mutating_a_session_registry_leaves_the_catalog_intact(self):
-        """``plan_update`` / ``todo_write`` churn and test doubles must not
-        reach the definitions the next session is built from."""
+        """Session-tool churn and test doubles must not reach the
+        definitions the next session is built from."""
         registry = create_default_registry()
 
         registry.deregister("shell")

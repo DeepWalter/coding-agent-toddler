@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from toddler.llm import TokenUsage
     from toddler.tools.base import ToolResult
-    from toddler.tools.plan import Plan, PlanStepStatus
+    from toddler.tools.plan import Plan
     from toddler.tools.prompts import ToolCallPrompt
     from toddler.tools.todo import TodoItem
 
@@ -111,20 +111,6 @@ class PlanProposed(AgentEvent):
     """The agent is presenting a plan for user approval."""
 
     plan: Plan  # forward reference to tools.plan.Plan
-
-
-@dataclass
-class PlanStepUpdate(AgentEvent):
-    """Plan step statuses should be (re)displayed.
-
-    Always carries the complete ``(id, description, status)`` triple
-    list, so renderers replace their snapshot without diffing.  The
-    session manager emits it after each ``ToolCallEnd`` that left the shared
-    state changed; adjacent frames are coalesced by the streaming
-    renderer's repaint throttle.
-    """
-
-    steps: list[tuple[str, str, PlanStepStatus]]  # (id, description, status)
 
 
 @dataclass

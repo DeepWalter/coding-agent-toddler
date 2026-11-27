@@ -32,7 +32,6 @@ from toddler.agent.events import (
     AgentPaused,
     FatalAgentError,
     PlanProposed,
-    PlanStepUpdate,
     ToolCallEnd,
 )
 from toddler.agent.state_machine import AgentStateMachine
@@ -168,10 +167,9 @@ class TurnRunner:
         # cleared once answered or when the turn ends.
         self._paused_snapshot: dict | None = None
 
-        # Snapshot of the pending PlanProposed frame ({"plan": ..., "steps":
-        # latest plan_step_update rows, [] before execution starts}) — a
-        # reconnecting or new tab re-renders its PlanCard from this instead
-        # of losing the card mid-approval.  Cleared when the turn ends.
+        # Snapshot of the pending PlanProposed frame — a reconnecting or
+        # new tab re-renders its PlanCard from this instead of losing the
+        # card mid-approval.  Cleared when the turn ends.
         self._plan_snapshot: dict | None = None
 
     # ------------------------------------------------------------------
@@ -342,12 +340,8 @@ class TurnRunner:
                 if isinstance(event, AgentPaused):
                     self._paused_snapshot = frame
                 elif isinstance(event, PlanProposed):
-                    # Snapshot for reconnecters: the plan plus empty step
-                    # statuses; plan_step_update merges in as they stream.
-                    self._plan_snapshot = {"plan": frame["plan"], "steps": []}
-                elif isinstance(event, PlanStepUpdate):
-                    if self._plan_snapshot is not None:
-                        self._plan_snapshot["steps"] = frame["steps"]
+                    # Snapshot for reconnecters: the plan document only.
+                    self._plan_snapshot = {"plan": frame["plan"]}
                 elif isinstance(event, (
                     AgentFinished, AgentCancelled, FatalAgentError,
                 )):

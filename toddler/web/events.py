@@ -22,7 +22,6 @@ from toddler.agent.events import (
     ContentDelta,
     FatalAgentError,
     PlanProposed,
-    PlanStepUpdate,
     ReasoningDelta,
     RecoverableAgentError,
     TodoUpdate,
@@ -53,24 +52,13 @@ __all__ = [
 def serialize_plan(plan: Plan) -> dict:
     """Serialize a :class:`Plan` to its JSON frame.
 
-    ``Plan`` has no ``to_dict`` (only ``to_json``), so fields are mapped
-    explicitly.  ``PlanStep`` has ``to_dict`` and is reused as-is.
-
-    ``markdown`` is the plan pre-rendered by
-    :meth:`Plan.format_for_display` for the browser's document view — the
-    same text the CLI prints, so the client never re-renders the format.
-    It is computed once, here, at proposal time: ``plan_step_update``
-    frames carry the live statuses, and the document itself stays frozen.
+    The plan is markdown; the browser's document view renders the same
+    body the CLI prints, frozen at proposal time.
     """
     return {
         "id": plan.id,
         "title": plan.title,
-        "summary": plan.summary,
-        "steps": [step.to_dict() for step in plan.steps],
-        "rationale": plan.rationale,
-        "risks": plan.risks,
-        "estimated_files_touched": plan.estimated_files_touched,
-        "markdown": plan.format_for_display(),
+        "markdown": plan.markdown,
     }
 
 
@@ -318,16 +306,6 @@ def serialize_event(event: AgentEvent, root: Path) -> dict | None:  # noqa: C901
 
         case PlanProposed(plan=plan):
             return {"type": "plan_proposed", "plan": serialize_plan(plan)}
-
-        case PlanStepUpdate(steps=steps):
-            # Complete snapshot — the frontend replaces, not diffs.
-            return {
-                "type": "plan_step_update",
-                "steps": [
-                    [step_id, description, status.value]
-                    for step_id, description, status in steps
-                ],
-            }
 
         case TodoUpdate(items=items):
             # Complete snapshot; an empty list clears the checklist.

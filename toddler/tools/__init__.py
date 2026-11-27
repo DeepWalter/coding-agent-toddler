@@ -13,13 +13,7 @@ from toddler.tools.executor import (
 )
 from toddler.tools.files import EditFile, ReadFile, WriteFile
 from toddler.tools.git import GitBranch, GitCommit, GitDiff, GitLog, GitStatus
-from toddler.tools.plan import (
-    Plan,
-    PlanState,
-    PlanStep,
-    PlanUpdateTool,
-    ProposePlanTool,
-)
+from toddler.tools.plan import Plan, ProposePlanTool
 from toddler.tools.policy import (
     Decision,
     FileScope,
@@ -86,9 +80,6 @@ __all__ = [
     "Shell",
     # Plan
     "Plan",
-    "PlanStep",
-    "PlanState",
-    "PlanUpdateTool",
     "ProposePlanTool",
     # Questions
     "QuestionTool",
@@ -142,7 +133,7 @@ def create_default_registry(
     :attr:`~toddler.tools.base.BaseTool.in_default_registry`.
 
     Every call builds new instances: the caller owns the registry it gets,
-    free to add ``plan_update`` for a plan phase or drop a tool, without
+    free to add ``todo_write`` for an execution phase or drop a tool, without
     reaching the definitions or any other session.  *scope_policy* is the
     session's, handed to each tool so it can place the files a call names;
     a tool that never receives one falls back to the working directory.

@@ -158,12 +158,10 @@ export interface Question {
 }
 
 /** A plan awaiting (or already running under) approval, as replayed by
- * hello.plan — the server snapshots plan_proposed + the latest
- * plan_step_update so a reconnecting tab re-renders its plan line and the
- * latest step snapshot. */
+ * hello.plan — the server snapshots plan_proposed so a reconnecting tab
+ * re-renders its plan line and document. */
 export interface PlanSnapshot {
   plan: Plan
-  steps: PlanStepRow[]
 }
 
 // ---------------------------------------------------------------------------
@@ -178,29 +176,12 @@ export interface ToolResult {
   metadata: Record<string, unknown> | null
 }
 
-export interface PlanStep {
-  id: string
-  description: string
-  tool_calls_expected: number
-  files_affected: number
-}
-
 export interface Plan {
   id: string
   title: string
-  summary: string | null
-  steps: PlanStep[]
-  rationale: string | null
-  risks: string[] | null
-  estimated_files_touched: number
-  /** The plan pre-rendered by the server's `Plan.format_for_display()` —
-   *  the document view's content.  Frozen at proposal time: step updates
-   *  stream beside it and never rewrite it. */
+  /** The plan document, written as markdown.  Frozen at proposal time. */
   markdown: string
 }
-
-/** plan_step_update snapshot rows: [id, description, status]. */
-export type PlanStepRow = [string, string, string]
 
 /** Todo statuses, mirroring the server's TodoStatus vocabulary. */
 export type TodoStatus = 'pending' | 'in_progress' | 'completed'
@@ -294,7 +275,6 @@ export type Frame =
       result: ToolResult | null
     }
   | { type: 'plan_proposed'; plan: Plan }
-  | { type: 'plan_step_update'; steps: PlanStepRow[] }
   | { type: 'todo_update'; todos: TodoItem[] }
   | {
       type: 'agent_paused'
@@ -392,14 +372,12 @@ export type Block =
       id: number
       kind: 'plan'
       plan: Plan
-      steps: PlanStepRow[]
       /** null until this tab decides (hello rebuilds and live proposals both
        *  start undecided).  The server never replays a decision. */
       decision: PlanDecision | null
       /** True once a `turn_cancelled` frame settled this plan's fate: the
-       *  turn carrying it was cut short, so its steps never ran to the end
-       *  and the dock's ask is gone.  Reads as failed, like an abandoned
-       *  tool call. */
+       *  turn carrying it was cut short, so the dock's ask is gone.  Reads
+       *  as failed, like an abandoned tool call. */
       cancelled: boolean
     }
   | {

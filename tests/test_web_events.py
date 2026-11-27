@@ -12,7 +12,6 @@ from toddler.agent.events import (
     ContentDelta,
     FatalAgentError,
     PlanProposed,
-    PlanStepUpdate,
     ReasoningDelta,
     RecoverableAgentError,
     TodoUpdate,
@@ -23,7 +22,7 @@ from toddler.agent.events import (
 from toddler.llm import TokenUsage
 from toddler.llm.messages import Message, MessageBlock
 from toddler.tools.base import ToolResult
-from toddler.tools.plan import Plan, PlanStep, PlanStepStatus
+from toddler.tools.plan import Plan
 from toddler.tools.prompts import (
     ChoiceType,
     PromptChoices,
@@ -62,18 +61,7 @@ def _plan() -> Plan:
     return Plan(
         id="plan-1",
         title="Refactor thing",
-        summary="Move the logic.",
-        steps=[
-            PlanStep(
-                id="step-1",
-                description="Read the code",
-                tool_calls_expected=["read_file"],
-                files_affected=["src/a.py"],
-            ),
-        ],
-        rationale="Cleaner.",
-        risks=["Risky"],
-        estimated_files_touched=2,
+        markdown="## Plan: Refactor thing\n\n1. Read the code\n2. Edit",
     )
 
 
@@ -286,22 +274,22 @@ class TestSerializeEvent:
         assert frame["path_abs"] is None
 
     def test_quiet_tool_call_gets_no_frame(self):
-        """The plan bookkeeping call is hidden by its own declaration: the
-        browser learns what it did from the ``plan_step_update`` frames,
-        so a card for the call itself would only repeat them."""
+        """The todo bookkeeping call is hidden by its own declaration: the
+        browser learns what it did from the ``todo_update`` frames, so a
+        card for the call itself would only repeat them."""
         assert serialize_event(ToolUseStart(
-            tool_id="t1", tool_name="plan_update",
+            tool_id="t1", tool_name="todo_write",
         ), ROOT) is None
         assert serialize_event(ToolCallStart(
-            tool_id="t1", tool_name="plan_update",
-            input={"step_id": "step-1"},
+            tool_id="t1", tool_name="todo_write",
+            input={"todos": []},
         ), ROOT) is None
         assert serialize_event(ToolCallEnd(
-            tool_id="t1", tool_name="plan_update",
-            input={"step_id": "step-1"},
+            tool_id="t1", tool_name="todo_write",
+            input={"todos": []},
             result=ToolResult(
-                tool_id="t1", tool_name="plan_update", success=True,
-                output="Step step-1 → in_progress.",
+                tool_id="t1", tool_name="todo_write", success=True,
+                output="Todo list cleared.",
             ),
         ), ROOT) is None
 
@@ -312,27 +300,10 @@ class TestSerializeEvent:
             "type": "plan_proposed",
             "plan": serialize_plan(plan),
         }
-        assert frame["plan"]["steps"] == [{
-            "id": "step-1",
-            "description": "Read the code",
-            "tool_calls_expected": ["read_file"],
-            "files_affected": ["src/a.py"],
-        }]
-        # The browser's document view reads the display markdown, not the
-        # prompt spelling — pin the shape, not just the key's presence.
-        assert frame["plan"]["markdown"].startswith("## Plan: Refactor thing")
-
-    def test_plan_step_update(self):
-        frame = serialize_event(PlanStepUpdate(steps=[
-            ("step-1", "Read the code", PlanStepStatus.IN_PROGRESS),
-            ("step-2", "Edit", PlanStepStatus.PENDING),
-        ]), ROOT)
-        assert frame == {
-            "type": "plan_step_update",
-            "steps": [
-                ["step-1", "Read the code", "in_progress"],
-                ["step-2", "Edit", "pending"],
-            ],
+        assert frame["plan"] == {
+            "id": "plan-1",
+            "title": "Refactor thing",
+            "markdown": "## Plan: Refactor thing\n\n1. Read the code\n2. Edit",
         }
 
     def test_todo_update(self):
@@ -746,27 +717,27 @@ class TestSerializeTranscript:
         }
 
     def test_quiet_tool_call_is_not_replayed(self):
-        """The plan bookkeeping call stays in the stored transcript — the
+        """The todo bookkeeping call stays in the stored transcript — the
         model's context needs it — but no card is rebuilt for it on a
-        reload: its statuses arrive as plan step updates instead.  The
-        prose the model wrote alongside it is untouched."""
+        reload: its list arrives as todo updates instead.  The prose the
+        model wrote alongside it is untouched."""
         messages = [
             Message.assistant([
-                MessageBlock.content_block("marking step 1 in progress"),
+                MessageBlock.content_block("marking the list"),
                 MessageBlock.tool_use_block(
-                    "t1", "plan_update",
-                    {"step_id": "step-1", "status": "in_progress"},
+                    "t1", "todo_write",
+                    {"todos": []},
                 ),
             ]),
             Message.tool([
                 MessageBlock.tool_result_block(
-                    "t1", "Step step-1 → in_progress.",
+                    "t1", "Todo list cleared.",
                 ),
             ]),
         ]
         assert serialize_transcript(messages, ROOT) == [{
             "role": "assistant",
-            "content": "marking step 1 in progress",
+            "content": "marking the list",
         }]
 
     def test_reasoning_entry_ordered_before_its_tool_entries(self):
@@ -817,12 +788,7 @@ class TestSerializePayloads:
         assert serialize_plan(plan) == {
             "id": "plan-1",
             "title": "Refactor thing",
-            "summary": "Move the logic.",
-            "steps": [step.to_dict() for step in plan.steps],
-            "rationale": "Cleaner.",
-            "risks": ["Risky"],
-            "estimated_files_touched": 2,
-            "markdown": plan.format_for_display(),
+            "markdown": "## Plan: Refactor thing\n\n1. Read the code\n2. Edit",
         }
 
     def test_serialize_tool_result_with_error(self):

@@ -106,7 +106,7 @@ const awaitingPlan = computed<Extract<Block, { kind: 'plan' }> | null>(() => {
   for (let i = state.blocks.length - 1; i >= 0; i--) {
     const b = state.blocks[i]
     if (b.kind !== 'plan') continue
-    if (b.decision === null && b.steps.every(([, , st]) => st === 'pending')) return b
+    if (b.decision === null) return b
     return null // a later, decided plan supersedes any earlier undecided one
   }
   return null

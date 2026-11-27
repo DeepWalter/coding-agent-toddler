@@ -172,22 +172,22 @@ class BaseTool(ABC):
 
     #: Whether :meth:`to_api_schema` injects the call-description
     #: parameter.  A tool whose arguments already say what the call does —
-    #: ``read_file`` names the file, ``plan_update`` the step and its new
-    #: status — sets this ``False``, and its schema carries the tool's own
-    #: parameters alone.
+    #: ``read_file`` names the file, ``todo_write`` the whole list — sets
+    #: this ``False``, and its schema carries the tool's own parameters
+    #: alone.
     require_description_parameter: bool = True
 
     #: Whether :func:`~toddler.tools.create_default_registry` hands this
     #: tool to every session.  Default tools declare nothing; a tool that
-    #: only makes sense once a session arms it — ``plan_update``, live for
-    #: a plan phase alone — sets this ``False``.  It still registers itself
+    #: only makes sense once a session arms it — ``todo_write``, live for
+    #: execution phases alone — sets this ``False``.  It still registers itself
     #: at definition time either way, so the catalog stays a complete
     #: inventory of the toolbox.
     in_default_registry: bool = True
 
     #: Whether the console draws a card for calls to this tool.  A tool
     #: whose effect already reaches the browser as a frame of its own —
-    #: ``plan_update``, whose statuses arrive as ``plan_step_update`` —
+    #: ``todo_write``, whose list arrives as ``todo_update`` —
     #: sets this ``False``, so the console says it once rather than twice.
     #: The call is still made, executed, and stored in the transcript;
     #: only its card is withheld.
