@@ -18,17 +18,17 @@ from tests.mocks import (
     ask_user_response,
     make_mock_llm,
     pause_on_write,
-    plan_proposal_response,
+    propose_plan_response,
     reasoning_response,
     text_response,
     tool_use_response,
 )
-from toddler.tools.plan import Plan, PlanStep
 from toddler.agent.state_machine import AgentMode
 from toddler.cli.commands import CommandResult
 from toddler.config.settings import Settings
 from toddler.llm import LLMResponse, Message, MessageBlock, TokenUsage
 from toddler.session.models import MAX_TITLE_LENGTH
+from toddler.tools.plan import Plan, PlanStep
 from toddler.web.app import create_app
 
 # ============================================================================
@@ -894,8 +894,7 @@ class TestMultiTab:
 class TestPlanFlow:
     def test_plan_approve_acks_and_executes(self, tmp_path):
         llm = make_mock_llm(
-            text_response("Exploring..."),
-            plan_proposal_response(_plan()),
+            propose_plan_response(_plan()),
             text_response("Executing plan."),
         )
         app = _app(tmp_path, llm)
@@ -909,9 +908,10 @@ class TestPlanFlow:
             proposed = _wait_for(ws, "plan_proposed")
             assert proposed["plan"]["id"] == "plan-1"
             assert proposed["plan"]["title"] == "Refactor thing"
-            assert [s["id"] for s in proposed["plan"]["steps"]] == [
-                "step-1", "step-2",
-            ]
+            assert proposed["plan"]["steps"] == []
+            assert proposed["plan"]["markdown"].startswith(
+                "## Plan: Refactor thing"
+            )
 
             ws.send_json({
                 "cmd": "approve_plan",
@@ -933,8 +933,7 @@ class TestPlanFlow:
         """A complexity-classified plan turn pushes session_info so the
         frontend's badge/pill follow the state machine mid-turn."""
         llm = make_mock_llm(
-            text_response("Exploring..."),
-            plan_proposal_response(_plan()),
+            propose_plan_response(_plan()),
             text_response("Executing plan."),
         )
         app = _app(tmp_path, llm)
@@ -968,8 +967,7 @@ class TestPlanFlow:
         """Approve-with-auto flips the pill to auto — gating changes are
         not state-machine transitions, so the runner pushes them too."""
         llm = make_mock_llm(
-            text_response("Exploring..."),
-            plan_proposal_response(_plan()),
+            propose_plan_response(_plan()),
             text_response("Executing plan."),
         )
         app = _app(tmp_path, llm)
@@ -992,7 +990,9 @@ class TestPlanFlow:
             info = _wait_for(ws, "session_info")
             while info["session"]["permission_mode"] != "auto":
                 info = _wait_for(ws, "session_info")
-            assert info["session"]["mode_label"] == "PLAN"
+            # Approval moves the turn to ordinary EXECUTING, so the pill
+            # reads the gating label, not PLAN.
+            assert info["session"]["mode_label"] == "AUTO"
             assert info["session"]["gating_editable"] is True
             _wait_for(ws, "agent_finished")
 
@@ -1000,8 +1000,7 @@ class TestPlanFlow:
         """Cancelling a plan turn resets the machine to IDLE, so the
         frozen pill unfreezes — mode_label drops back to the gate."""
         llm = make_mock_llm(
-            text_response("Exploring..."),
-            plan_proposal_response(_plan()),
+            propose_plan_response(_plan()),
         )
         app = _app(tmp_path, llm)
         with TestClient(app) as client, client.websocket_connect("/ws") as ws:
@@ -1039,8 +1038,7 @@ class TestPlanFlow:
         """A cancelled turn leaves a marker in the context — the next
         turn's LLM call knows the previous turn was cut short."""
         llm = make_mock_llm(
-            text_response("Exploring..."),
-            plan_proposal_response(_plan()),
+            propose_plan_response(_plan()),
             text_response("Continuing."),
         )
         app = _app(tmp_path, llm)
@@ -1144,8 +1142,7 @@ class TestPlanFlow:
 
     def test_plan_reject_acks_and_finishes(self, tmp_path):
         llm = make_mock_llm(
-            text_response("Exploring..."),
-            plan_proposal_response(_plan()),
+            propose_plan_response(_plan()),
         )
         app = _app(tmp_path, llm)
         with TestClient(app) as client, client.websocket_connect("/ws") as ws:
@@ -1171,8 +1168,9 @@ class TestPlanFlow:
 
             finished = _wait_for(ws, "agent_finished")
             assert finished["reason"] == "Plan rejected by user."
-            # No further LLM calls after the rejection.
-            assert llm.call_count == 2
+            # The proposal was the only request: the denial ends the turn
+            # before another LLM call.
+            assert llm.call_count == 1
 
     def test_approve_plan_invalid_mode(self, tmp_path):
         llm = make_mock_llm(text_response("Hi"))
@@ -1197,8 +1195,7 @@ class TestPlanFlow:
 class TestPlanReconnect:
     def test_second_tab_sees_pending_plan(self, tmp_path):
         llm = make_mock_llm(
-            text_response("Exploring..."),
-            plan_proposal_response(_plan()),
+            propose_plan_response(_plan()),
         )
         app = _app(tmp_path, llm)
         with TestClient(app) as client, client.websocket_connect("/ws") as watcher:
@@ -1242,16 +1239,17 @@ class TestPlanReconnect:
             finished = _wait_for(watcher, "agent_finished")
             assert finished["reason"] == "LLM finished its turn."
 
-    def test_second_tab_joins_mid_execution_with_step_statuses(self, tmp_path):
+    def test_second_tab_joins_mid_execution_with_todos(self, tmp_path):
         llm = make_mock_llm(
-            text_response("Exploring..."),
-            plan_proposal_response(_plan()),
-            # Step statuses move only via the plan_update tool — call it
-            # to stream a plan_step_update during execution.
+            propose_plan_response(_plan()),
+            # Progress is the todo list now — call todo_write to stream a
+            # todo_update during execution.
             tool_use_response(
-                "plan_update",
-                {"step_id": "step-1", "status": "in_progress"},
-                tool_id="call_update",
+                "todo_write",
+                {"todos": [
+                    {"content": "First thing", "status": "in_progress"},
+                ]},
+                tool_id="call_todo",
             ),
             pause_on_write(str(tmp_path / "out.txt")),
         )
@@ -1269,21 +1267,21 @@ class TestPlanReconnect:
                 "plan_id": "plan-1",
                 "mode": "manual",
             })
-            # Execution: plan_update (READ — no pause under MANUAL) flips
-            # step-1 to in_progress and streams the status update; the
-            # write step then parks the turn on approval.
-            _wait_for(watcher, "plan_step_update")
+            # Execution: todo_write (READ — no pause under MANUAL) lands
+            # the current list; the write step then parks the turn.
+            _wait_for(watcher, "todo_update")
             _wait_for(watcher, "agent_paused")
 
             with client.websocket_connect("/ws") as tab2:
                 hello2 = tab2.receive_json()
                 assert hello2["busy"] is True
                 assert hello2["plan"]["plan"]["id"] == "plan-1"
-                assert any(
-                    status != "pending"
-                    for _, _, status in hello2["plan"]["steps"]
-                )
-                # The card is decided (steps running) — and the paused
+                assert hello2["plan"]["steps"] == []
+                assert hello2["todos"] == [{
+                    "content": "First thing",
+                    "status": "in_progress",
+                }]
+                # The card is decided (work running) — and the paused
                 # write tool is still answerable from the new tab.
                 assert hello2["paused"]["type"] == "agent_paused"
 
@@ -1297,8 +1295,7 @@ class TestPlanReconnect:
 
     def test_plan_wait_auto_cancels_when_last_watcher_leaves(self, tmp_path):
         llm = make_mock_llm(
-            text_response("Exploring..."),
-            plan_proposal_response(_plan()),
+            propose_plan_response(_plan()),
         )
         app = _app(tmp_path, llm)
         with TestClient(app) as client:
@@ -1936,8 +1933,7 @@ class TestSimpleCommands:
         """Gating is pinned to manual while a plan awaits approval — a
         flip is rejected with a frozen error, whichever tab clicks."""
         llm = make_mock_llm(
-            text_response("Exploring..."),
-            plan_proposal_response(_plan()),
+            propose_plan_response(_plan()),
         )
         app = _app(tmp_path, llm)
         with TestClient(app) as client, client.websocket_connect("/ws") as ws:

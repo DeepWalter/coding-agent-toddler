@@ -5,9 +5,9 @@ transitions.  Provides the plan-mode workflow (explore → propose → approve �
 execute) plus the complexity heuristic that can auto-trigger plan mode for
 non-trivial requests.
 
-The :class:`~toddler.agent.planner.Planner` owns the actual Plan/PlanStep
-data models and lifecycle — the state machine only tracks the current
-operational mode and validates transitions.
+The plan data model and the proposal/approval workflow live with their
+tools; the state machine only tracks the current operational mode and
+validates transitions.
 
 State diagram (see ``docs/plans/plan.md``):
 
@@ -229,7 +229,8 @@ class AgentStateMachine:
         },
         AgentMode.PLAN_EXPLORING: {
             AgentMode.PLAN_PROPOSING,
-            AgentMode.FINISHED,  # agent gives up / error
+            AgentMode.EXECUTING,   # plan approved — execution is ordinary
+            AgentMode.FINISHED,    # agent gives up / error
         },
         AgentMode.PLAN_PROPOSING: {
             AgentMode.PLAN_WAITING,

@@ -16,15 +16,15 @@ from toddler.agent.events import (
     AgentCancelled,
     AgentEvent,
     AgentFinished,
+    AgentPaused,
     ConversationTitle,
-    FatalAgentError,
-    PlanStepUpdate,
+    PlanProposed,
     TodoUpdate,
     ToolCallEnd,
+    ToolCallStart,
 )
 from toddler.agent.loop import AgentLoop
-from toddler.agent.planner import Planner
-from toddler.agent.state_machine import AgentStateMachine
+from toddler.agent.state_machine import AgentMode, AgentStateMachine
 from toddler.checkpoint import create_checkpoint_callback
 from toddler.checkpoint.manager import CheckpointManager
 from toddler.checkpoint.models import (
@@ -46,12 +46,24 @@ from toddler.session.storage import StorageManager
 from toddler.tools import create_default_registry
 from toddler.tools.base import ToolResult
 from toddler.tools.executor import ToolExecutor
-from toddler.tools.plan import Plan, PlanState, PlanUpdateTool
+from toddler.tools.plan import (
+    PLAN_CHOICE_APPROVE,
+    PLAN_CHOICE_APPROVE_AUTO,
+    PLAN_CHOICE_FEEDBACK,
+    PLAN_CHOICE_REJECT,
+    PROPOSE_PLAN_NAME,
+    Plan,
+    PlanState,
+    PlanUpdateTool,
+    PlanValidationError,
+    ProposePlanTool,
+)
 from toddler.tools.policy import (
     FileScopePolicy,
     PermissionManager,
     PermissionMode,
 )
+from toddler.tools.prompts import PromptAnswer
 from toddler.tools.todo import (
     TODO_TOOL_NAME,
     TodoItem,
@@ -145,8 +157,10 @@ class SessionManager:
             ),
         )
 
-        # Planner instance for the current turn (created in process_turn).
-        self._planner: Planner | None = None
+        # The plan proposal awaiting the user's decision: the tool call id
+        # is the plan's identity, and the parsed plan backs PlanProposed.
+        self._plan_tool_id: str | None = None
+        self._proposed_plan: Plan | None = None
 
         # Current session + context (set via resolve())
         self._session: Session | None = None
@@ -468,21 +482,20 @@ class SessionManager:
         """Run one complete agent turn — user input through to finish.
 
         Classification happens here so the full state-machine lifecycle is
-        visible in one place.  Simple requests go straight to execution;
-        complex ones are delegated to :class:`~toddler.agent.planner.Planner`
-        for the plan loop (explore → propose → wait), then executed.
+        visible in one place.  Complex requests run the plan loop inside the
+        same agent run: explore, call ``propose_plan``, wait for the user's
+        decision, then execute.  Simple requests go straight to execution.
 
-        Yields :class:`AgentEvent` objects for the CLI to render.  A plan
-        turn always ends with a terminal event (:class:`AgentFinished`,
-        :class:`AgentCancelled`, or :class:`FatalAgentError`) — the CLI
-        stops the streaming renderer on those, so ending otherwise would
-        strand the terminal in the alternate screen.
+        Yields :class:`AgentEvent` objects for the CLI to render.  The loop
+        always ends with a terminal event (:class:`AgentFinished`,
+        :class:`AgentCancelled`, or a fatal error) — the CLI stops the
+        streaming renderer on those, so ending otherwise would strand the
+        terminal in the alternate screen.
         """
         # --- Resolve the turn's model and effort ---
         # Read once, here, and threaded down as a parameter: every request
-        # this turn makes — exploration, the plan proposal, every execution
-        # round — carries this same pair, so a selection change mid-turn
-        # cannot split one turn across two models.
+        # this turn makes carries this same pair, so a selection change
+        # mid-turn cannot split one turn across two models.
         config = self._current_selection()
 
         # --- Conversation-start checkpoint (first turn only) ---
@@ -512,71 +525,25 @@ class SessionManager:
         if self._ctx is not None:
             self._ctx.set_cross_conversation_context(prior_titles)
 
-        # --- Plan path ---
-        # Track whether the plan loop emitted a terminal event.  The CLI
-        # stops the streaming renderer (exiting the alt screen) only on
-        # AgentFinished / AgentCancelled / FatalAgentError, so a plan
-        # turn must never end without one.
-        terminal_event_seen = False
+        # A turn never inherits the previous turn's proposal.
+        self._plan_tool_id = None
+        self._proposed_plan = None
+
+        # --- Arm the tools for the phase the turn starts in ---
         if self._sm.is_plan_exploring:
             # Every plan cycle starts from the safe baseline — the
             # approval UI then lets the user explicitly choose AUTO.
             # Goes through set_permission_mode so observers (the web
             # UI's session-info broadcaster) see the gating flip.
             self.set_permission_mode(PermissionMode.MANUAL)
+            self._activate_plan_exploration()
+        elif self._sm.is_executing:
+            self._activate_todo_tools()
 
-            async for event in self.planner.run(
-                user_input, config=config, request_title=request_title,
-            ):
-                if isinstance(event, ConversationTitle):
-                    self._apply_generated_title(
-                        event.title, title_baseline,
-                    )
-                    continue
-                if isinstance(event, (
-                    AgentFinished, AgentCancelled, FatalAgentError,
-                )):
-                    terminal_event_seen = True
-                if isinstance(event, (AgentFinished, AgentCancelled)):
-                    await self._maybe_persist_phase(event)
-                yield event
-
-            # Exploration consumed the one-shot title request; a later
-            # execution phase must not ask again.
-            request_title = False
-
-            if self.planner.plan is None:
-                self._sm.mark_finished()
-                if not terminal_event_seen:
-                    # The plan loop ended without a terminal event
-                    # (e.g. an external caller moved the machine to
-                    # FINISHED mid-cycle).  Emit one so the CLI stops
-                    # the streaming renderer — the plan panel (if any)
-                    # re-entered the alt screen, and only a terminal
-                    # event tears it down.
-                    event = AgentFinished(
-                        reason="Plan cycle ended without a decision.",
-                        usage=None,
-                    )
-                    await self._maybe_persist_phase(event)
-                    yield event
-                return
-
-            # Approved — approve_plan() already moved the state machine
-            # to PLAN_EXECUTING, so no transition is needed here.
-            user_input = self.planner.plan.format_for_prompt()
-
-        # --- Execute ---
-        # Run the agent only when the machine says we're executing.  A
-        # failed approval transition leaves it in FINISHED — the turn
-        # then ends with a terminal event (when the plan loop didn't
-        # already emit one) rather than leaving the streaming renderer
-        # parked in the alt screen it re-entered for the plan panel.
-        if self._sm.is_executing:
-            async for event in self._run_execution(
+        try:
+            async for event in self._run_phase(
                 user_input,
                 self._sm.get_mode_hint(),
-                plan_mode=self._sm.is_plan_executing,
                 config=config,
                 request_title=request_title,
             ):
@@ -585,18 +552,49 @@ class SessionManager:
                         event.title, title_baseline,
                     )
                     continue
+
+                # The plan proposal is a tool call.  Its pause is
+                # translated into PlanProposed; the user's decision comes
+                # back through approve_plan()/reject_plan(), which answer
+                # the same pause.  A malformed plan never produces a pause
+                # — the loop returns the failed call to the model.
+                if (
+                    isinstance(event, ToolCallStart)
+                    and event.tool_name == PROPOSE_PLAN_NAME
+                ):
+                    self._remember_proposal(event)
+                elif (
+                    isinstance(event, AgentPaused)
+                    and event.tool_id
+                    and event.tool_id == self._plan_tool_id
+                    and self._proposed_plan is not None
+                ):
+                    yield PlanProposed(plan=self._proposed_plan)
+                    continue
+                elif (
+                    isinstance(event, ToolCallEnd)
+                    and event.tool_name == PROPOSE_PLAN_NAME
+                ):
+                    self._finish_proposal(event)
+
+                if (
+                    isinstance(event, AgentFinished)
+                    and event.stopped
+                    and self._sm.current_mode is AgentMode.PLAN_EXPLORING
+                ):
+                    # The loop reports the denied tool generically; in a
+                    # plan turn that denial *is* the plan decision.
+                    event = AgentFinished(
+                        reason="Plan rejected by user.",
+                        usage=event.usage,
+                        stopped=True,
+                    )
+
                 yield event
-        elif not terminal_event_seen:
-            logger.debug(
-                "Skipping execution; state machine is in %s mode.",
-                self._sm.current_mode.value,
-            )
-            event = AgentFinished(
-                reason="Plan did not proceed to execution.",
-                usage=None,
-            )
-            await self._maybe_persist_phase(event)
-            yield event
+        finally:
+            self._deactivate_todo_tools()
+            self._deactivate_plan_exploration()
+
         self._sm.mark_finished()
 
     async def cancel_turn(self) -> list[ToolCallEnd]:
@@ -625,6 +623,8 @@ class SessionManager:
             else []
         )
         await self.save()
+        self._plan_tool_id = None
+        self._proposed_plan = None
         self._sm.reset()
         self._sm.notify_observers()
         return [
@@ -661,36 +661,55 @@ class SessionManager:
     ) -> bool:
         """Approve the plan with *plan_id* and unblock :meth:`process_turn`.
 
-        Returns ``True`` only when the approval took effect.  When
-        *permission_mode* is given, the gating mode is switched to it only
-        for an accepted approval, just before execution begins (e.g.
-        "approve with auto accept") — a stale approval must not flip
-        gating, since that would auto-approve the re-exploration's tool
-        calls.
+        Answers the ``propose_plan`` pause the same way any tool pause is
+        answered; the loop then runs the approved call.  Returns ``True``
+        only when the answer settled the pause.  When *permission_mode* is
+        given, gating switches to it for an accepted approval, just before
+        execution begins (e.g. "approve with auto accept") — a stale
+        approval must not flip gating.
         """
-        if self._planner is None:
+        if self._plan_tool_id is None or plan_id != self._plan_tool_id:
             return False
-        accepted = self._planner.approve_plan(plan_id=plan_id)
-        if accepted and permission_mode is not None:
+        choice = (
+            PLAN_CHOICE_APPROVE_AUTO
+            if permission_mode is PermissionMode.AUTO
+            else PLAN_CHOICE_APPROVE
+        )
+        accepted = self.agent.answer_tool_call(
+            plan_id, [PromptAnswer(choice=choice)],
+        )
+        if not accepted:
+            return False
+        # Arm execution before the gating flip so observers see the
+        # transition first, then the new permission mode.  No await sits
+        # between the answer and these calls, so the loop cannot resume
+        # in between.
+        self._arm_execution()
+        if permission_mode is not None:
             self.set_permission_mode(permission_mode)
-        return accepted
+        return True
 
     def reject_plan(self, *, plan_id: str, feedback: str = "") -> bool:
         """Reject the plan with *plan_id* and unblock :meth:`process_turn`.
 
-        When *feedback* is provided the agent will re-explore and propose
-        a revised plan.  Otherwise the turn finishes.
-
-        Returns ``True`` only when the rejection took effect.  Rejection
-        is honored only while the machine is parked in ``PLAN_WAITING`` —
-        a rejection arriving while a plan is executing is ignored
-        (``False``) and the execution phase runs to completion.
+        When *feedback* is provided the tool result carries it and the
+        model revises the plan in the same turn.  Otherwise the denied
+        call ends the turn.  Returns ``True`` only when the answer settled
+        the pause; a stale plan id or a turn past the decision returns
+        ``False`` and changes nothing.
         """
-        if self._planner is None:
+        if self._plan_tool_id is None or plan_id != self._plan_tool_id:
             return False
-        return self._planner.reject_plan(
-            plan_id=plan_id, feedback=feedback,
+        answer = (
+            PromptAnswer(choice=PLAN_CHOICE_FEEDBACK, content=feedback)
+            if feedback
+            else PromptAnswer(choice=PLAN_CHOICE_REJECT)
         )
+        accepted = self.agent.answer_tool_call(plan_id, [answer])
+        if accepted:
+            self._plan_tool_id = None
+            self._proposed_plan = None
+        return accepted
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -863,9 +882,9 @@ class SessionManager:
     ) -> None:
         """Persist token usage and context after a phase completes.
 
-        Accepts a terminal event — :class:`AgentFinished` or
-        :class:`AgentCancelled`, used when iterating over Planner events
-        — or a plain :class:`TokenUsage` (used by :meth:`_run_phase`).
+        Accepts a terminal event (:class:`AgentFinished` or
+        :class:`AgentCancelled`) or a plain :class:`TokenUsage` — the
+        path :meth:`_run_phase` uses.
         """
         usage: TokenUsage | None
         if isinstance(event_or_usage, (AgentFinished, AgentCancelled)):
@@ -884,41 +903,74 @@ class SessionManager:
     # Plan execution tracking
     # ------------------------------------------------------------------
 
-    async def _run_execution(
-        self, user_input: str, mode_hint: str, *,
-        plan_mode: bool, config: TurnConfig, request_title: bool = False,
-    ) -> AsyncIterator[AgentEvent]:
-        """Run the execution phase, with plan tracking on plan turns.
+    # ------------------------------------------------------------------
+    # Plan proposal
+    # ------------------------------------------------------------------
 
-        Plan tracking is armed inside the guard so an early consumer exit
-        can never leak a stale ``plan_update`` tool into the next turn.
-        The shared :class:`PlanState` is asked for updates only after
-        :class:`ToolCallEnd` — statuses change only while a tool executes,
-        so polling earlier (text deltas, a tool-call start) would only
-        rebuild an O(steps) snapshot for nothing.  Every mutation
-        emits as its own full-list ``PlanStepUpdate`` (no trigger
-        filter), so nothing is ever held back and no phase-end flush is
-        needed: each change lands before the turn's terminal event, which
-        streaming mode stops its Live display on.
+    def _activate_plan_exploration(self) -> None:
+        """Register ``propose_plan`` for a plan turn.
+
+        The tool is session-registered rather than a default: only a plan
+        turn should see it, and the loop rebuilds its tool list every
+        request, so deregistering on approval hides it for execution.
         """
-        try:
-            if plan_mode:
-                self._activate_plan_execution(self.planner.plan)
-            self._activate_todo_tools()
+        if PROPOSE_PLAN_NAME not in self._registry:
+            self._registry.register(
+                ProposePlanTool(scope_policy=self._scope_policy)
+            )
 
-            async for event in self._run_phase(
-                user_input, mode_hint, config=config,
-                request_title=request_title,
-            ):
-                yield event
-                if not isinstance(event, ToolCallEnd):
-                    continue
-                update = self._plan_state.take_update()
-                if update is not None:
-                    yield PlanStepUpdate(steps=update)
-        finally:
-            self._deactivate_todo_tools()
-            self._deactivate_plan_execution()
+    def _deactivate_plan_exploration(self) -> None:
+        """Idempotently remove ``propose_plan`` after the turn."""
+        self._registry.deregister(PROPOSE_PLAN_NAME)
+
+    def _remember_proposal(self, event: ToolCallStart) -> None:
+        """Parse a proposal call's arguments for the PlanProposed event.
+
+        A malformed plan stores ``None``; the loop will fail the call's
+        prompt build and return the error to the model, so no pause — and
+        no PlanProposed — is ever produced for it.
+        """
+        self._plan_tool_id = event.tool_id
+        try:
+            self._proposed_plan = Plan.from_arguments(
+                event.input, plan_id=event.tool_id,
+            )
+        except PlanValidationError:
+            self._proposed_plan = None
+
+    def _arm_execution(self) -> None:
+        """Switch the turn from planning to execution, once.
+
+        The approve facade calls this before answering the pause, so the
+        mode transition lands before the gating flip.  ``ToolCallEnd``
+        calls it again for an approval answered directly through the
+        agent loop.  Idempotent: a second call finds the turn already
+        executing and does nothing.
+        """
+        if (
+            self._proposed_plan is None
+            or self._sm.current_mode is not AgentMode.PLAN_EXPLORING
+        ):
+            return
+        if not self._sm.transition(AgentMode.EXECUTING):
+            return
+        if self._ctx is not None:
+            self._ctx.set_mode("execute")
+        self._registry.deregister(PROPOSE_PLAN_NAME)
+        self._activate_todo_tools()
+        self._plan_tool_id = None
+        self._proposed_plan = None
+
+    def _finish_proposal(self, event: ToolCallEnd) -> None:
+        """Arm execution after an approved proposal's call completes.
+
+        The tool runs only when the pause was granted, so a successful
+        result *is* the approval.  The facade normally got here first;
+        this covers an approval answered directly through the loop.
+        """
+        if event.result is None or not event.result.success:
+            return
+        self._arm_execution()
 
     def _activate_plan_execution(self, plan: Plan) -> None:
         """Arm plan tracking.
@@ -1139,10 +1191,9 @@ class SessionManager:
             lock.release()
             raise
 
-        # Reset the agent and the planner so they capture the new context —
-        # both hold the one they were built with.
+        # Reset the agent so it captures the new context — it holds the
+        # one it was built with.
         self._agent_impl = None
-        self._planner = None
         self._todo_state.reset()
 
         if self._ckpt_mgr is not None:
@@ -1262,23 +1313,6 @@ class SessionManager:
                 permission_manager=self._perm_mgr,
             )
         return self._agent_impl
-
-    @property
-    def planner(self) -> Planner:
-        """Lazily build and return the plan-mode orchestrator.
-
-        Same lazy-init pattern as :attr:`agent` — dependencies are stable
-        references so the Planner is created once and reused across turns.
-        """
-        if self._planner is None:
-            self._planner = Planner(
-                llm_provider=self._llm,
-                context=self._ctx,
-                settings=self._settings,
-                agent_loop=self.agent,
-                state_machine=self._sm,
-            )
-        return self._planner
 
     @property
     def storage_manager(self) -> StorageManager:

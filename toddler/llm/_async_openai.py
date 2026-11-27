@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import re
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
@@ -29,55 +28,32 @@ _PROJECT_ROOT = _THIS_FILE.parents[2]
 _README_FILE = _PROJECT_ROOT / "README.md"
 
 # ---------------------------------------------------------------------------
-# Plan-workflow markers — the canned plan responses key on the prompts the
-# plan workflow sends, not on a typed keyword: the proposal arrives as
-# ``plan_proposal_prompt()``'s text, execution opens with
-# ``Plan.format_for_prompt()``'s text, and progress arrives as the
-# ``plan_update`` tool's own output (the ``"Step <id> → <status>."`` line
-# ``PlanUpdateTool.execute`` returns).  Each marker names its producer, so
-# a prompt rewording points here.
+# Plan-workflow markers — the canned plan responses key on the tools the
+# plan workflow calls, not on a typed keyword: the proposal is a
+# ``propose_plan`` call, approval is the tool result
+# ``ProposePlanTool.execute`` returns, and progress is the ``todo_write``
+# results the session echoes back.  Each marker names its producer, so a
+# message rewording points here.
 # ---------------------------------------------------------------------------
 
-_PLAN_PROPOSAL_MARKER = "propose a concrete execution plan"
-_PLAN_APPROVED_MARKER = "I have reviewed and approved the following plan"
+# The approval ack emitted by ProposePlanTool.execute.
+_PLAN_APPROVED_MARKER = "The user approved this plan"
 
-# One step line of the approved-plan text, e.g. ``  step-1: <description>``.
-_PLAN_STEP_LINE_RE = re.compile(r"^\s*(step-\d+):", re.MULTILINE)
-
-# A ``plan_update`` tool result, e.g. ``Step step-1 → completed.``
-_PLAN_UPDATE_RE = re.compile(
-    r"^Step (?P<step_id>\S+) → (?P<status>\w+)\.$"
-)
+# A todo_write result, e.g. "Todo list updated (2 items)."
+_TODO_RESULT_MARKER = "Todo list updated"
 
 # The canned plan the dummy proposes — two steps, so the execution phase
-# shows a step starting, completing and a closing summary.  Step ids are
-# position-derived (``step-1``, ``step-2``) by ``Plan.from_json``, but the
-# canned execution beats read them back from the approved-plan text rather
-# than assume them.
+# shows a todo item starting, completing and a closing summary.
 _PLAN_PROPOSAL = {
     "title": "Dummy plan — two canned steps",
-    "summary": (
-        "A canned two-step plan the dummy proposes so the plan workflow "
-        "can be exercised end to end: approval, step updates, summary."
+    "plan_markdown": (
+        "## Dummy plan — two canned steps\n\n"
+        "A canned plan the dummy proposes so the plan workflow can be "
+        "exercised end to end: approval, todo progress, summary.\n\n"
+        "1. Run dummy step 1 and report its output.\n"
+        "2. Run dummy step 2 and report its output.\n\n"
+        "**Risks**: none — every call this plan makes is canned.\n"
     ),
-    "steps": [
-        {
-            "description": "Run dummy step 1 and report its output",
-            "tool_calls_expected": ["plan_update"],
-            "files_affected": [],
-        },
-        {
-            "description": "Run dummy step 2 and report its output",
-            "tool_calls_expected": ["plan_update"],
-            "files_affected": [],
-        },
-    ],
-    "rationale": (
-        "Two steps are enough to show a step starting, completing and "
-        "the closing summary that follows the last one."
-    ),
-    "risks": ["None — every call this plan makes is canned."],
-    "estimated_files_touched": 0,
 }
 
 # The canned questions the dummy asks on "ask" / "question": two
@@ -195,19 +171,17 @@ if _TEST == "cli":
                       writes this file's content to
                       ``~/.toddler/test_write.py``.
                     * ``"edit"`` — emit an ``edit_file`` tool call that
-                      replaces the README path constant with
-                      ``/tmp/README.md`` in ``~/.toddler/test_write.py``.
+                      rewrites the canned plan's title in
+                      ``~/.toddler/test_write.py``.
                     * ``"ask"`` / ``"question"`` — emit an ``ask_user``
                       tool call with two three-choice questions, so the
                       tabbed question card can be exercised.
-                    * the plan proposal prompt — answer with the canned
-                      two-step plan JSON.
-                    * the approved-plan execution prompt — open the plan
-                      by starting its first step.
-                    * a ``plan_update`` tool result — answer with the
-                      canned plan's next beat: the step's marked text
-                      plus its completion call, the next step's start, or
-                      the closing summary.
+                    * ``"plan"`` — emit a ``propose_plan`` call carrying
+                      the canned markdown plan.
+                    * the propose_plan approval result — start the canned
+                      execution with a ``todo_write`` call.
+                    * a ``todo_write`` result — advance the canned todo
+                      list and finish with the closing summary.
                     * ``role == "tool"`` — stream a short acknowledgment and
                       finish.
 
@@ -257,11 +231,9 @@ if _TEST == "cli":
         def _build_chunks(self):
             """Inspect the last message and return the matching chunk list.
 
-            The plan branches come first: their markers are structural
-            (the prompts the plan workflow sends), so they hold whatever
-            keyword the turn was started with — and unlike a keyword
-            match they also fire on the non-streaming calls the workflow
-            makes.
+            Tool results come first: the plan workflow's approval and todo
+            results drive its canned beats, whatever keyword the turn was
+            started with.
             """
             last_msg = self._messages[-1] if self._messages else {}
             role = last_msg.get("role", "")
@@ -269,10 +241,6 @@ if _TEST == "cli":
 
             if role == "tool":
                 return self._chunks_for_tool_result(last_msg)
-            elif _PLAN_PROPOSAL_MARKER in content:
-                return self._chunks_for_plan_proposal()
-            elif _PLAN_APPROVED_MARKER in content:
-                return self._chunks_for_plan_start()
             elif content == "reason":
                 return self._chunks_for_reasoning()
             elif content == "plan":
@@ -490,7 +458,7 @@ if _TEST == "cli":
         @staticmethod
         def _chunks_for_edit():
             """Emit a text intro, then an ``edit_file`` tool call that
-            rewrites the README path in ``~/.toddler/test_write.py``.
+            rewrites the canned plan's title in ``~/.toddler/test_write.py``.
 
             The target only exists after the ``"write"`` response has run,
             so that turn is this one's setup.
@@ -499,56 +467,8 @@ if _TEST == "cli":
             # copies this file, so a verbatim literal here would make the
             # old string appear twice in the copy and ``edit_file`` would
             # reject the call as ambiguous.
-            old_string = '{' + '''
-    "title": "Dummy plan — two canned steps",
-    "summary": (
-        "A canned two-step plan the dummy proposes so the plan workflow "
-        "can be exercised end to end: approval, step updates, summary."
-    ),
-    "steps": [
-        {
-            "description": "Run dummy step 1 and report its output",
-            "tool_calls_expected": ["plan_update"],
-            "files_affected": [],
-        },
-        {
-            "description": "Run dummy step 2 and report its output",
-            "tool_calls_expected": ["plan_update"],
-            "files_affected": [],
-        },
-    ],
-    "rationale": (
-        "Two steps are enough to show a step starting, completing and "
-        "the closing summary that follows the last one."
-    ),
-    "risks": ["None — every call this plan makes is canned."],
-    "estimated_files_touched": 0,
-}'''  # noqa: E501
-            new_string = '''{
-    "title": "Example plan — two canned steps",
-    "summary": (
-        "A canned two-step plan the example proposes so the plan workflow "
-        "can be exercised end to end: approval, step updates, summary."
-    ),
-    "steps": [
-        {
-            "description": "Run example step 1 and report its output",
-            "tool_calls_expected": ["plan_update"],
-            "files_affected": [],
-        },
-        {
-            "description": "Run example step 2 and report its output",
-            "tool_calls_expected": ["plan_update"],
-            "files_affected": [],
-        },
-    ],
-    "rationale": (
-        "Two steps are enough to show a step starting, completing and "
-        "the closing summary that follows the last one."
-    ),
-    "risks": ["None — every call this plan makes is canned."],
-    "estimated_files_touched": 0,
-}'''  # noqa: E501
+            old_string = '"title": "' + 'Dummy plan — two canned steps",'
+            new_string = '"title": "' + 'Example plan — two canned steps",'
             args = json.dumps(
                 {
                     "file_path": "~/.toddler/test_write.py",
@@ -596,168 +516,134 @@ if _TEST == "cli":
 
         @staticmethod
         def _chunks_for_plan():
-            """Stream a text intro and finish — the plan workflow's
-            exploration phase.
+            """Emit a ``propose_plan`` call — the plan turn's endpoint.
 
-            The stop is what hands control to the proposal: a tool call
-            here would be answered by the generic acknowledgment, which
-            reads like the turn ending with nothing planned.
+            The plan body is markdown in the call's arguments; the loop
+            pauses on the call for the user's decision.  There is no
+            separate proposal request to answer.
             """
             blocks: list[tuple[str, str | None]] = [
                 (
                     "text",
                     "Let me put together a plan for this request.\n\n",
                 ),
-                ("finish", "stop"),
-            ]
-            return _DummyStream._materialize(blocks)
-
-        @staticmethod
-        def _chunks_for_plan_proposal():
-            """Answer the plan proposal prompt with the canned plan JSON.
-
-            The proposal call is non-streaming, so these blocks normally
-            reach the caller through :meth:`response` rather than
-            :meth:`__aiter__` — served from the one dispatch either way.
-            """
-            blocks: list[tuple[str, str | None]] = [
+                ("tool_name", "propose_plan"),
                 (
-                    "text",
-                    json.dumps(_PLAN_PROPOSAL, ensure_ascii=False, indent=2),
+                    "tool_args",
+                    json.dumps(_PLAN_PROPOSAL, ensure_ascii=False),
                 ),
-                ("finish", "stop"),
-            ]
-            return _DummyStream._materialize(blocks)
-
-        def _chunks_for_plan_start(self):
-            """Open the approved plan by starting its first step."""
-            step_ids = self._plan_step_ids()
-            if not step_ids:
-                blocks: list[tuple[str, str | None]] = [
-                    (
-                        "text",
-                        "[DummyAsyncOpenAI] The approved-plan prompt "
-                        "carried no step lines.\n",
-                    ),
-                    ("finish", "stop"),
-                ]
-                return _DummyStream._materialize(blocks)
-            return self._chunks_for_plan_call(step_ids[0], "in_progress")
-
-        def _plan_step_ids(self) -> list[str]:
-            """Return the approved plan's step ids, in plan order.
-
-            Parsed from the approved-plan message rather than assumed:
-            the canned execution beats then follow whatever plan the
-            session actually approved.
-            """
-            for msg in reversed(self._messages):
-                content = msg.get("content") or ""
-                if (
-                    msg.get("role") == "user"
-                    and _PLAN_APPROVED_MARKER in content
-                ):
-                    return _PLAN_STEP_LINE_RE.findall(content)
-            return []
-
-        def _chunks_for_plan_update(self, step_id: str, status: str):
-            """Return the canned plan's next beat after a ``plan_update``.
-
-            ``in_progress`` answers with the step's marked text plus its
-            completion call — the leading ``[step <id>]`` names the step
-            the update targets, per the tool's usage note.  A
-            ``completed`` answers with the next step's start, or, once
-            the last step is done, the closing summary.  ``None`` when
-            the line names a step the approved plan does not have, so the
-            caller falls back to the generic acknowledgment.
-            """
-            step_ids = self._plan_step_ids()
-            if step_id not in step_ids:
-                return None
-
-            if status == "in_progress":
-                index = step_ids.index(step_id) + 1
-                # The step's text and its completion share one response:
-                # text alone would end the execution turn, and the closing
-                # summary still follows the completion's tool result, so
-                # the last snapshot lands before the summary either way.
-                blocks: list[tuple[str, str | None]] = [
-                    (
-                        "text",
-                        f"[{step_id}] Dummy step {index} work output — "
-                        "the canned text for this step.\n\n",
-                    ),
-                    ("tool_name", "plan_update"),
-                    (
-                        "tool_args",
-                        self._plan_call_args(step_id, "completed"),
-                    ),
-                    ("finish", "tool_calls"),
-                ]
-                return _DummyStream._materialize(blocks)
-
-            if status == "completed":
-                remaining = step_ids[step_ids.index(step_id) + 1:]
-                if remaining:
-                    return self._chunks_for_plan_call(
-                        remaining[0], "in_progress",
-                    )
-                blocks = [
-                    (
-                        "text",
-                        "Both dummy plan steps completed — the approved "
-                        "plan ran end to end. Is there anything else you "
-                        "need?\n",
-                    ),
-                    ("finish", "stop"),
-                ]
-                return _DummyStream._materialize(blocks)
-
-            return None
-
-        @staticmethod
-        def _chunks_for_plan_call(step_id: str, status: str):
-            """Emit a bare ``plan_update`` call — no text alongside it."""
-            blocks: list[tuple[str, str | None]] = [
-                ("tool_name", "plan_update"),
-                ("tool_args", _DummyStream._plan_call_args(step_id, status)),
                 ("finish", "tool_calls"),
             ]
             return _DummyStream._materialize(blocks)
 
         @staticmethod
-        def _plan_call_args(step_id: str, status: str) -> str:
-            """Serialize ``plan_update`` arguments for *step_id* / *status* —
-            the call's own two params, the tool carrying no call-description
-            param."""
+        def _todo_args(todos: list[tuple[str, str]]) -> str:
+            """Serialize a whole ``todo_write`` list for (content, status)."""
             return json.dumps(
-                {"step_id": step_id, "status": status},
+                {
+                    "todos": [
+                        {"content": content, "status": status}
+                        for content, status in todos
+                    ],
+                },
                 ensure_ascii=False,
             )
+
+        @classmethod
+        def _chunks_for_todo(
+            cls, todos: list[tuple[str, str]], *, text: str = "",
+        ):
+            """Emit a bare ``todo_write`` call, with optional prose."""
+            blocks: list[tuple[str, str | None]] = []
+            if text:
+                blocks.append(("text", text))
+            blocks.extend([
+                ("tool_name", "todo_write"),
+                ("tool_args", cls._todo_args(todos)),
+                ("finish", "tool_calls"),
+            ])
+            return _DummyStream._materialize(blocks)
 
         # -- tool results and fallback --------------------------------------
 
         def _chunks_for_tool_result(self, last_msg: dict):
             """Answer a tool result.
 
-            A ``plan_update`` result drives the canned plan's next beat
-            (:meth:`_chunks_for_plan_update`); every other result gets a
+            The propose_plan approval opens the canned execution with a
+            todo_write call; the todo results that follow advance the list
+            and end with the closing summary.  Every other result gets a
             short acknowledgment.
             """
             tool_content = last_msg.get("content", "") or ""
-            match = _PLAN_UPDATE_RE.match(tool_content)
-            if match is not None:
-                plan_chunks = self._chunks_for_plan_update(
-                    match.group("step_id"), match.group("status"),
+            if tool_content.startswith(_PLAN_APPROVED_MARKER):
+                return _DummyStream._chunks_for_todo([
+                    (
+                        "Run dummy step 1 and report its output",
+                        "in_progress",
+                    ),
+                    (
+                        "Run dummy step 2 and report its output",
+                        "pending",
+                    ),
+                ])
+
+            if tool_content.startswith(_TODO_RESULT_MARKER):
+                # Count the todo results already in the transcript,
+                # including this one: 1 = step 1 done, 2 = the list closed,
+                # 3 = the closing summary.
+                results = sum(
+                    1 for msg in self._messages
+                    if msg.get("role") == "tool"
+                    and (msg.get("content") or "").startswith(
+                        _TODO_RESULT_MARKER
+                    )
                 )
-                if plan_chunks is not None:
-                    return plan_chunks
+                if results == 1:
+                    return _DummyStream._chunks_for_todo(
+                        [
+                            (
+                                "Run dummy step 1 and report its output",
+                                "completed",
+                            ),
+                            (
+                                "Run dummy step 2 and report its output",
+                                "in_progress",
+                            ),
+                        ],
+                        text=(
+                            "[step-1] Dummy step 1 work output — the "
+                            "canned text for this step.\n\n"
+                        ),
+                    )
+                if results == 2:
+                    return _DummyStream._chunks_for_todo([
+                        (
+                            "Run dummy step 1 and report its output",
+                            "completed",
+                        ),
+                        (
+                            "Run dummy step 2 and report its output",
+                            "completed",
+                        ),
+                    ])
+                if results == 3:
+                    blocks: list[tuple[str, str | None]] = [
+                        (
+                            "text",
+                            "Both dummy plan steps completed — the approved "
+                            "plan ran end to end. Is there anything else you "
+                            "need?\n",
+                        ),
+                        ("finish", "stop"),
+                    ]
+                    return _DummyStream._materialize(blocks)
+
             preview = (
                 tool_content[:80] + "..."
                 if len(tool_content) > 80
                 else tool_content
             )
-            blocks: list[tuple[str, str | None]] = [
+            blocks = [
                 (
                     "text",
                     f"Got tool result: {preview}\n\n"

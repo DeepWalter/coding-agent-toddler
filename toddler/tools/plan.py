@@ -291,34 +291,6 @@ class Plan:
         )
         return "\n".join(lines)
 
-    def format_for_prompt(self) -> str:
-        """Render the full execution prompt: instructions plus the plan.
-
-        Used during ``PLAN_EXECUTING`` mode as the user message that kicks
-        off execution — it tells the agent to run the steps in order and
-        report progress per the ``plan_update`` tool description (the
-        single source for the reporting protocol), then appends the plan
-        body.  The plan body is frozen at approval time; live step
-        statuses are tracked separately at runtime and never rendered
-        here.
-        """
-        plan_lines: list[str] = [
-            f"## Approved Plan: {self.title}",
-            f"Summary: {self.summary}",
-            "",
-            "Steps:",
-        ]
-        for step in self.steps:
-            plan_lines.append(f"  {step.id}: {step.description}")
-        plan_text = "\n".join(plan_lines)
-
-        return (
-            "I have reviewed and approved the following plan. "
-            "Execute it step by step, reporting progress per the "
-            "plan_update tool "
-            f"description:\n\n{plan_text}"
-        )
-
 
 class PlanStepStatus(StrEnum):
     """Canonical plan step status values — the single source of truth

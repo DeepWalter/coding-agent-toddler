@@ -56,25 +56,14 @@ _PLAN_EXPLORING_INSTRUCTIONS = """\
 
 RESEARCH only.  DO NOT make any changes to files or run mutating commands.
 Your goal is to understand the codebase and gather enough information to
-propose a concrete, actionable plan.
+write a concrete, actionable plan.
 
 - Read relevant files to understand the current implementation.
 - Search for patterns, usages, and related code.
 - Note which files will need to be modified and why.
-- When you have enough context, signal that you are ready to present a plan."""
-
-_PLAN_EXECUTING_INSTRUCTIONS = """\
-## Current Mode: PLAN (Execute)
-
-Follow the approved plan steps in order.  Report progress per the
-plan_update tool description.  If you encounter unexpected issues (files
-that don't exist, conflicting changes, errors), pause and report them —
-do not silently deviate from the plan.
-
-- Execute one step at a time, in dependency order.
-- If a step cannot be completed as planned, explain why and wait for guidance.
-- When all steps are complete, finish with a brief summary of what was
-  accomplished and any deviations from the plan."""
+- When you have enough context, call the propose_plan tool with the complete
+  plan as markdown.  Do not write the plan as prose or stop to ask in text —
+  the user decides on it there."""
 
 # ---------------------------------------------------------------------------
 # Compact variants — shorter versions for long conversations
@@ -89,10 +78,9 @@ _COMPACT_EXECUTING = (
     "Mode: EXECUTE — make changes, be concise; track multi-step work with "
     "todo_write."
 )
-_COMPACT_PLAN_EXPLORING = "Mode: PLAN (Research) — READ ONLY, gather context."
-_COMPACT_PLAN_EXECUTING = (
-    "Mode: PLAN (Execute) — follow plan steps in order; "
-    "mark each step with plan_update."
+_COMPACT_PLAN_EXPLORING = (
+    "Mode: PLAN (Research) — READ ONLY, gather context; call propose_plan "
+    "when ready."
 )
 
 # ---------------------------------------------------------------------------
@@ -160,9 +148,8 @@ class SystemPromptBuilder:
         Parameters
         ----------
         mode:
-            One of ``"execute"``, ``"plan_exploring"``, or
-            ``"plan_executing"``.  Controls which mode-specific
-            instructions are appended.
+            One of ``"execute"`` or ``"plan_exploring"``.  Controls which
+            mode-specific instructions are appended.
         prior_conversation_summaries:
             Optional list of ``"(title)"`` strings from earlier
             conversations in the same session.  When provided, a
@@ -366,11 +353,9 @@ class SystemPromptBuilder:
 _MODE_INSTRUCTIONS: dict[str, str] = {
     "execute": _EXECUTING_INSTRUCTIONS,
     "plan_exploring": _PLAN_EXPLORING_INSTRUCTIONS,
-    "plan_executing": _PLAN_EXECUTING_INSTRUCTIONS,
 }
 
 _COMPACT_MODE_INSTRUCTIONS: dict[str, str] = {
     "execute": _COMPACT_EXECUTING,
     "plan_exploring": _COMPACT_PLAN_EXPLORING,
-    "plan_executing": _COMPACT_PLAN_EXECUTING,
 }

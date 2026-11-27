@@ -4,27 +4,21 @@ serialization, tool gating, and session manager orchestration.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import uuid
-from collections.abc import AsyncIterator
 
 import pytest
 
-from tests.mocks import TEST_TURN_CONFIG
+from tests.mocks import (
+    text_response,
+    tool_use_response,
+)
 from toddler.agent.events import (
     AgentCancelled,
-    AgentError,
     AgentFinished,
     PlanProposed,
-    PlanStepUpdate,
-    RecoverableAgentError,
-)
-from toddler.agent.planner import (
-    PLAN_RESPONSE_FORMAT,
-    Plan,
-    PlanStep,
-    plan_proposal_prompt,
+    TodoUpdate,
+    ToolCallEnd,
 )
 from toddler.agent.state_machine import (
     AgentMode,
@@ -34,8 +28,12 @@ from toddler.agent.state_machine import (
 from toddler.cli.renderer import ConfirmResult
 from toddler.llm import LLMResponse, Message, MessageBlock, TokenUsage
 from toddler.llm.base import BaseLLMProvider
-from toddler.llm.provider import OpenAICompatibleProvider
-from toddler.tools.plan import PlanState, PlanUpdateTool
+from toddler.tools.plan import (
+    Plan,
+    PlanState,
+    PlanStep,
+    PlanUpdateTool,
+)
 from toddler.tools.policy import Decision, FileScope, Permission, PermissionMode
 
 # ============================================================================
@@ -53,79 +51,6 @@ def _plan(**kwargs) -> Plan:
     }
     defaults.update(kwargs)
     return Plan(**defaults)
-
-
-def _two_step_plan_json() -> dict:
-    """Proposal JSON for a two-step plan (for MockPlanLLMProvider)."""
-    return {
-        "title": "Two-Step Plan",
-        "summary": "A two-step mocked plan.",
-        "steps": [
-            {"id": "step-1", "description": "First thing"},
-            {"id": "step-2", "description": "Second thing"},
-        ],
-    }
-
-
-class _SilentPlanner:
-    """Planner stub whose plan loop ends without a terminal event.
-
-    Models the abnormal ends the session manager defends against (a failed
-    approval transition leaving the machine non-executing, or an
-    external caller finishing the machine mid-cycle): ``run`` returns,
-    but no :class:`AgentFinished` or :class:`FatalAgentError` was
-    emitted.  Used to pin the guarantee that a plan turn always ends
-    with a terminal event — the CLI stops the streaming renderer only
-    on those, and the plan panel re-enters the alternate screen.
-    """
-
-    def __init__(
-        self, plan: Plan | None, *,
-        emit_proposal: bool = False,
-        emit_recoverable_error: bool = False,
-    ):
-        self._plan = plan
-        self._emit_proposal = emit_proposal
-        self._emit_recoverable_error = emit_recoverable_error
-
-    @property
-    def plan(self) -> Plan | None:
-        return self._plan
-
-    async def run(
-        self, user_input: str, *, config, request_title: bool = False,
-    ):
-        # A recoverable error is NOT a terminal event — the CLI keeps
-        # the streaming renderer running on those (it only tears the
-        # alt screen down on AgentFinished / FatalAgentError).
-        if self._emit_recoverable_error:
-            yield RecoverableAgentError(
-                message="Simulated LLM hiccup.",
-            )
-        if self._emit_proposal:
-            yield PlanProposed(plan=self._plan)
-
-
-def _end_turn_response(text: str = "Research complete.") -> LLMResponse:
-    """Build a plain end-turn LLMResponse."""
-    return LLMResponse(
-        messages=[Message.assistant([MessageBlock.content_block(text)])],
-        stop_reason="end_turn",
-        usage=TokenUsage(input_tokens=10, output_tokens=5),
-    )
-
-
-def _tool_use_response(
-    tool_name: str, tool_input: dict, *, tool_id: str = "t1",
-) -> LLMResponse:
-    """Build a single tool_use LLMResponse."""
-    return LLMResponse(
-        messages=[Message.assistant([
-            MessageBlock.tool_use_block(tool_id, tool_name, tool_input),
-        ])],
-        stop_reason="tool_use",
-        usage=TokenUsage(input_tokens=10, output_tokens=5),
-    )
 
 
 def _plan_tool(
@@ -420,140 +345,6 @@ class TestPlanSerialization:
         assert "Testing is good" in output
         assert "Tests might fail" in output
 
-    def test_plan_format_for_prompt(self):
-        plan = _plan(
-            title="Execute Plan",
-            steps=[
-                PlanStep(id="1", description="Step one"),
-                PlanStep(id="2", description="Step two"),
-                PlanStep(id="3", description="Step three"),
-            ],
-        )
-        output = plan.format_for_prompt()
-        assert "Execute Plan" in output
-        assert "Step one" in output
-        # Execution instructions lead the prompt.
-        assert "plan_update" in output
-        assert output.startswith("I have reviewed and approved")
-
-
-# ============================================================================
-# plan_proposal_prompt() tests
-# ============================================================================
-
-
-class TestPlanProposalPrompt:
-
-    def test_prompt_includes_user_request(self):
-        prompt = plan_proposal_prompt(
-            "refactor the database layer",
-        )
-        assert "refactor the database layer" in prompt
-
-    def test_prompt_includes_research_context(self):
-        prompt = plan_proposal_prompt(
-            "refactor the database layer",
-            research_context="Found 15 files using the old DB API.",
-        )
-        assert "Found 15 files using the old DB API." in prompt
-
-    def test_prompt_asks_for_json_format(self):
-        prompt = plan_proposal_prompt("fix bugs")
-        assert "JSON" in prompt
-        assert "title" in prompt
-        assert "steps" in prompt
-
-    def test_prompt_does_not_ask_for_step_ids(self):
-        # Step ids are canonical, position-derived — the LLM must not
-        # invent ids that could collide or dangle.
-        prompt = plan_proposal_prompt("fix bugs")
-        assert '"id"' not in prompt
-
-    def test_prompt_without_context_omits_context_block(self):
-        prompt = plan_proposal_prompt("do something")
-        assert "Context gathered" not in prompt
-
-
-class TestPlanResponseFormat:
-    """The structured-output request sent with the proposal call."""
-
-    def test_asks_for_the_plan_schema(self):
-        assert PLAN_RESPONSE_FORMAT["type"] == "json_schema"
-        js = PLAN_RESPONSE_FORMAT["json_schema"]
-        assert js["name"] == "execution_plan"
-        assert js["strict"] is True
-
-    def test_objects_are_closed_and_fully_required(self):
-        """Strict mode rejects a schema whose objects allow extra keys or
-        declare a property that is not required — the API 400s on the
-        request itself, so this has to hold before anything is sent."""
-        schema = PLAN_RESPONSE_FORMAT["json_schema"]["schema"]
-        step = schema["properties"]["steps"]["items"]
-        for obj in (schema, step):
-            assert obj["additionalProperties"] is False
-            assert sorted(obj["required"]) == sorted(obj["properties"])
-
-    def test_properties_cover_the_plan_shape(self):
-        """Drift guard: the schema, the prompt example and ``to_json``
-        describe one shape.  ``id`` is absent on purpose — both plan and
-        step ids are canonical and assigned at parse time."""
-        schema = PLAN_RESPONSE_FORMAT["json_schema"]["schema"]
-        plan_keys = set(json.loads(Plan.create("T", "S").to_json()))
-        assert set(schema["properties"]) == plan_keys - {"id"}
-
-        step_schema = schema["properties"]["steps"]["items"]
-        step_keys = set(PlanStep("step-1", "Do it").to_dict())
-        assert set(step_schema["properties"]) == step_keys - {"id"}
-
-    def test_schema_shaped_payload_parses(self):
-        """A payload built to the schema is what the parser expects."""
-        payload = {
-            "title": "Fix auth",
-            "summary": "Repair the login flow.",
-            "steps": [{
-                "description": "Read auth.py",
-                "tool_calls_expected": ["read_file"],
-                "files_affected": ["auth.py"],
-            }],
-            "rationale": "Smallest change that works.",
-            "risks": [],
-            "estimated_files_touched": 1,
-        }
-        plan = Plan.from_json(json.dumps(payload))
-        assert plan is not None
-        assert plan.title == "Fix auth"
-        assert [s.id for s in plan.steps] == ["step-1"]
-        assert plan.steps[0].tool_calls_expected == ["read_file"]
-
-
-class TestPlanSchemaOnTheWire:
-    """What each API family actually receives — an unknown response_format
-    type is a 400, so the DeepSeek downgrade has to hold on the request."""
-
-    @staticmethod
-    def _parse(model: str) -> dict:
-        return OpenAICompatibleProvider._parse_params(
-            model,
-            max_completion_tokens=2048,
-            reasoning_effort=None,
-            response_format=PLAN_RESPONSE_FORMAT,
-            temperature=0.0,
-        )
-
-    def test_deepseek_gets_the_downgraded_request(self):
-        rf = self._parse("deepseek-v4-pro")["response_format"]
-        assert rf == {"type": "json_object"}
-
-    def test_other_endpoints_get_the_schema_verbatim(self):
-        rf = self._parse("gpt-5")["response_format"]
-        assert rf is PLAN_RESPONSE_FORMAT
-
-
-# ============================================================================
-# ============================================================================
-# Plan step progress tracking
-# ============================================================================
-
 
 class TestPlanStepTracking:
 
@@ -759,34 +550,21 @@ class TestPlanState:
 
 
 class MockPlanLLMProvider(BaseLLMProvider):
-    """Mock LLM that returns a valid plan JSON for plan proposal calls,
-    scripted responses for tool-carrying agent calls, and a simple
-    end-turn once the script is exhausted.
+    """Scripted responses for the tool-driven plan flow.
+
+    The sequence is consumed one response per LLM call; when it is
+    exhausted a plain end-turn follows.  Every call records the tool list
+    it was offered, so the phase swaps can be asserted.
     """
 
-    def __init__(
-        self,
-        plan_json: dict | None = None,
-        sequence: list[LLMResponse] | None = None,
-    ):
-        self._plan_json = plan_json or {
-            "title": "Mock Plan",
-            "summary": "A mocked plan for testing.",
-            "steps": [{"id": "step-1", "description": "Do the thing"}],
-        }
-        # Responses consumed by agent calls that carry tools (explore and
-        # execute phases, in order).  Plan-proposal calls (no tools)
-        # bypass the sequence.
+    def __init__(self, sequence: list[LLMResponse] | None = None):
         self._sequence = sequence or []
         self._seq_index = 0
         self.call_count = 0
         self.messages_history: list[list[Message]] = []
-        # ``(model, reasoning_effort)`` per call, in order.
         self.call_configs: list[tuple[str, str | None]] = []
-        # response_format of each plan-proposal call, in order.
-        self.plan_response_formats: list[dict | None] = []
-        # The ``request_title`` flag of each call, in order.
         self.title_requests: list[bool] = []
+        self.tools_history: list[list[dict]] = []
 
     async def generate(
         self, messages, tools, *, model, reasoning_effort=None,
@@ -796,26 +574,12 @@ class MockPlanLLMProvider(BaseLLMProvider):
         self.messages_history.append(messages)
         self.call_configs.append((model, reasoning_effort))
         self.title_requests.append(request_title)
+        self.tools_history.append(tools)
         self.call_count += 1
-
-        # Empty tools → plan proposal call (non-streaming).
-        if not tools:
-            self.plan_response_formats.append(response_format)
-            return LLMResponse(
-                messages=[Message.assistant([
-                    MessageBlock.content_block(json.dumps(self._plan_json)),
-                ])],
-                stop_reason="end_turn",
-                usage=TokenUsage(input_tokens=50, output_tokens=50),
-            )
-
-        # Scripted agent-call response.
         if self._seq_index < len(self._sequence):
             response = self._sequence[self._seq_index]
             self._seq_index += 1
             return response
-
-        # Standard agent call → simple end-turn.
         return LLMResponse(
             messages=[Message.assistant([
                 MessageBlock.content_block("Research complete."),
@@ -828,23 +592,43 @@ class MockPlanLLMProvider(BaseLLMProvider):
         return "compacted"
 
 
+def _mock_plan(
+    *, plan_id: str = "plan-1", title: str = "Mock Plan",
+) -> Plan:
+    return Plan(
+        id=plan_id,
+        title=title,
+        summary="A mocked plan.",
+        markdown="## Mock Plan\n\n1. Do the thing.",
+    )
+
+
+def _proposal(plan: Plan | None = None) -> LLMResponse:
+    plan = plan or _mock_plan()
+    return tool_use_response(
+        "propose_plan",
+        {
+            "title": plan.title,
+            "plan_markdown": plan.markdown or plan.format_for_display(),
+        },
+        tool_id=plan.id,
+    )
+
+
 class TestSessionManagerPlanWorkflow:
+    """The plan loop inside one AgentLoop run."""
 
     @pytest.fixture
     def settings(self, tmp_path):
         from toddler.config.settings import Settings
-        return Settings(
-            session_dir=tmp_path,
-            streaming_enabled=False,
-        )
+        return Settings(session_dir=tmp_path, streaming_enabled=False)
 
     @pytest.fixture
     def storage_mgr(self, tmp_path):
         from toddler.session.database import SQLiteDatabase
         from toddler.session.storage import StorageManager
 
-        db_path = tmp_path / "test_plan.db"
-        db = SQLiteDatabase(db_path)
+        db = SQLiteDatabase(tmp_path / "test_plan.db")
         db.open()
         return StorageManager(db)
 
@@ -870,944 +654,249 @@ class TestSessionManagerPlanWorkflow:
             events.append(event)
         return events
 
-    @pytest.mark.asyncio
-    async def test_simple_execution_path(self, session_mgr):
-        gen = session_mgr.process_turn("fix a typo")
-        events = await self._collect(gen)
-        has_plan = any(isinstance(e, PlanProposed) for e in events)
-        assert not has_plan, "Simple request should not trigger plan mode"
-        finished = [e for e in events if isinstance(e, AgentFinished)]
-        assert len(finished) == 1
-
-    @pytest.mark.asyncio
-    async def test_plan_mode_yields_plan_proposed(self, session_mgr):
-        """Collect events up to PlanProposed (avoids hanging on approval)."""
-        gen = session_mgr.process_turn("refactor the database layer")
+    async def _until_proposed(self, gen):
+        """Collect events through the first PlanProposed."""
         events = []
         async for event in gen:
             events.append(event)
             if isinstance(event, PlanProposed):
-                break
-        plan_events = [e for e in events if isinstance(e, PlanProposed)]
-        assert len(plan_events) == 1
-        assert plan_events[0].plan.title == "Mock Plan"
+                return events, event
+        return events, None
 
     @pytest.mark.asyncio
-    async def test_proposal_call_requests_the_plan_schema(self, session_mgr, llm):
-        """The proposal call asks for structured output — the schema object
-        itself, which the provider downgrades for endpoints without guided
-        decoding."""
+    async def test_simple_execution_path(self, session_mgr):
+        events = await self._collect(session_mgr.process_turn("fix a typo"))
+        assert not any(isinstance(e, PlanProposed) for e in events)
+        assert len([e for e in events if isinstance(e, AgentFinished)]) == 1
+
+    @pytest.mark.asyncio
+    async def test_plan_mode_yields_plan_proposed(self, session_mgr, llm):
+        llm._sequence = [_proposal()]
+        events, proposed = await self._until_proposed(
+            session_mgr.process_turn("refactor the database layer"),
+        )
+        assert proposed is not None
+        assert proposed.plan.id == "plan-1"
+        assert proposed.plan.title == "Mock Plan"
+        assert "Do the thing" in proposed.plan.markdown
+        # The proposal is a tool call in the same run — no tool-less
+        # proposal request follows it, and todo_write is not offered yet.
+        first_tools = {t["function"]["name"] for t in llm.tools_history[0]}
+        assert "propose_plan" in first_tools
+        assert "todo_write" not in first_tools
+
+    @pytest.mark.asyncio
+    async def test_approve_plan_executes_in_the_same_run(
+        self, session_mgr, llm,
+    ):
+        llm._sequence = [_proposal(), text_response("Executing plan.")]
         gen = session_mgr.process_turn("refactor the database layer")
-        async for event in gen:
-            if isinstance(event, PlanProposed):
-                break
-        assert llm.plan_response_formats == [PLAN_RESPONSE_FORMAT]
+        _, proposed = await self._until_proposed(gen)
+        assert proposed is not None
+        assert session_mgr.approve_plan(plan_id=proposed.plan.id) is True
+
+        remaining = await self._collect(gen)
+        assert llm.call_count == 2
+        assert len([e for e in remaining if isinstance(e, AgentFinished)]) == 1
+
+        second_tools = {t["function"]["name"] for t in llm.tools_history[1]}
+        assert "todo_write" in second_tools
+        assert "propose_plan" not in second_tools
+        assert "Current Mode: EXECUTE" in session_mgr.context.messages[0].content
 
     @pytest.mark.asyncio
     async def test_the_title_rides_only_the_first_request(
         self, session_mgr, llm,
     ):
-        """A plan turn asks on exploration; the proposal and execution
-        requests never ask again."""
+        first = _proposal()
+        first.title = "Plan the refactor"
+        llm._sequence = [first, text_response("Executing plan.")]
         gen = session_mgr.process_turn("refactor the database layer")
-        async for event in gen:
-            if isinstance(event, PlanProposed):
-                break
-        session_mgr.approve_plan(plan_id=event.plan.id)
+        _, proposed = await self._until_proposed(gen)
+        assert session_mgr.approve_plan(plan_id=proposed.plan.id) is True
         await self._collect(gen)
-
-        assert llm.title_requests[0] is True
-        assert not any(llm.title_requests[1:])
+        assert llm.title_requests == [True, False]
 
     @pytest.mark.asyncio
-    async def test_plan_generation_failure(self, session_mgr, llm):
-        """Zero-step plan is rejected as invalid — yields AgentError."""
-        llm._plan_json = {"title": "Bad", "steps": []}
+    async def test_double_approve_is_stale(self, session_mgr, llm):
+        llm._sequence = [_proposal(), text_response("Executing plan.")]
         gen = session_mgr.process_turn("refactor the database layer")
-        events = await self._collect(gen)
-        errors = [e for e in events if isinstance(e, AgentError)]
-        assert len(errors) >= 1
-
-    @pytest.mark.asyncio
-    async def test_approve_plan_executes(self, session_mgr):
-        gen = session_mgr.process_turn("refactor the database layer")
-        async for event in gen:
-            if isinstance(event, PlanProposed):
-                break
-        session_mgr.approve_plan(
-            plan_id=event.plan.id,
-        )
-        remaining = await self._collect(gen)
-        finished = [e for e in remaining if isinstance(e, AgentFinished)]
-        assert len(finished) == 1
-
-    @pytest.mark.asyncio
-    async def test_double_approve_executes_once(self, session_mgr, llm):
-        """A second approve_plan() is a no-op success — the plan is
-        already approved, so the turn still executes exactly once, with
-        plan tracking armed."""
-        gen = session_mgr.process_turn("refactor the database layer")
-        async for event in gen:
-            if isinstance(event, PlanProposed):
-                break
-        session_mgr.approve_plan(
-            plan_id=event.plan.id,
-        )
-        # Approving again is idempotent — the machine is already
-        # PLAN_EXECUTING, so the call is a no-op that must not fail the
-        # turn.
-        session_mgr.approve_plan(
-            plan_id=event.plan.id,
-        )
-        remaining = await self._collect(gen)
-        # Exactly one execution phase ran: explore + proposal + execute.
-        assert llm.call_count == 3
-        # Execution used the plan prompt, not the raw user request.
-        # (The stored list is mutated by the loop afterwards, so scan
-        # every message in the last call rather than just the tail.)
-        last_msgs = "\n".join(m.content for m in llm.messages_history[-1])
-        assert "I have reviewed and approved" in last_msgs
-        finished = [e for e in remaining if isinstance(e, AgentFinished)]
-        assert len(finished) == 1
+        _, proposed = await self._until_proposed(gen)
+        assert session_mgr.approve_plan(plan_id=proposed.plan.id) is True
+        assert session_mgr.approve_plan(plan_id=proposed.plan.id) is False
+        await self._collect(gen)
+        assert llm.call_count == 2
 
     @pytest.mark.asyncio
     async def test_reject_after_approve_is_ignored(self, session_mgr, llm):
-        """A rejection arriving after approval is stale input — ignored,
-        so the approved plan still executes."""
+        llm._sequence = [_proposal(), text_response("Executing plan.")]
         gen = session_mgr.process_turn("refactor the database layer")
-        async for event in gen:
-            if isinstance(event, PlanProposed):
-                break
-        session_mgr.approve_plan(
-            plan_id=event.plan.id,
-        )
-        # The contract is explicit: a rejection arriving while the plan
-        # executes is ignored (False) — there is no way to abort an
-        # executing plan through the decision API.
-        assert session_mgr.reject_plan(
-            plan_id=event.plan.id, feedback="too late",
-        ) is False
+        _, proposed = await self._until_proposed(gen)
+        assert session_mgr.approve_plan(plan_id=proposed.plan.id) is True
+        assert session_mgr.reject_plan(plan_id=proposed.plan.id) is False
         remaining = await self._collect(gen)
-        # The rejection didn't clobber the plan or the state machine.
-        assert session_mgr.planner.plan is not None
-        assert llm.call_count == 3
-        finished = [e for e in remaining if isinstance(e, AgentFinished)]
-        assert len(finished) == 1
+        assert len([e for e in remaining if isinstance(e, AgentFinished)]) == 1
 
     @pytest.mark.asyncio
-    async def test_double_reject_with_feedback_keeps_first_feedback(
-        self, session_mgr, llm,
-    ):
-        """A second reject_plan() while a decision is pending is stale
-        input — ignored, so the FIRST feedback survives and drives the
-        re-exploration."""
+    async def test_reject_outright_ends_the_turn(self, session_mgr, llm):
+        llm._sequence = [_proposal()]
         gen = session_mgr.process_turn("refactor the database layer")
-        async for event in gen:
-            if isinstance(event, PlanProposed):
-                break
+        _, proposed = await self._until_proposed(gen)
+        assert session_mgr.reject_plan(plan_id=proposed.plan.id) is True
+        remaining = await self._collect(gen)
+        finished = [e for e in remaining if isinstance(e, AgentFinished)]
+        assert len(finished) == 1
+        assert finished[0].stopped is True
+
+    @pytest.mark.asyncio
+    async def test_reject_with_feedback_reproposes(self, session_mgr, llm):
+        llm._sequence = [
+            _proposal(_mock_plan(plan_id="plan-1")),
+            _proposal(_mock_plan(plan_id="plan-2", title="Revised Plan")),
+            text_response("Done."),
+        ]
+        gen = session_mgr.process_turn("refactor the database layer")
+        _, proposed = await self._until_proposed(gen)
         assert session_mgr.reject_plan(
-            plan_id=event.plan.id, feedback="avoid sqlite",
+            plan_id=proposed.plan.id, feedback="avoid sqlite",
         ) is True
-        assert session_mgr.reject_plan(
-            plan_id=event.plan.id, feedback="stale feedback",
-        ) is False
-        second_plan = None
+
+        revised = None
         async for event in gen:
             if isinstance(event, PlanProposed):
-                second_plan = event
+                revised = event
                 break
-        assert second_plan is not None
-        # The feedback loop ran once: explore + propose + re-explore
-        # + re-propose.
-        assert llm.call_count == 4
-        # The re-exploration used the FIRST feedback — the stale second
-        # rejection never touched the state.
-        texts = "\n".join(m.content for m in session_mgr.context.messages)
-        assert "avoid sqlite" in texts
-        assert "stale feedback" not in texts
+        assert revised is not None
+        assert revised.plan.id == "plan-2"
+        assert revised.plan.title == "Revised Plan"
+        assert llm.call_count == 2
+        tool_results = [
+            block.tool_result_content or ""
+            for msg in session_mgr.context.messages
+            if msg.role == "tool"
+            for block in msg.blocks
+            if block.type == "tool_result"
+        ]
+        assert any("avoid sqlite" in text for text in tool_results)
+
+        assert session_mgr.approve_plan(plan_id=revised.plan.id) is True
+        remaining = await self._collect(gen)
+        assert len([e for e in remaining if isinstance(e, AgentFinished)]) == 1
 
     @pytest.mark.asyncio
-    async def test_approve_after_reject_with_feedback_is_ignored(
-        self, session_mgr, llm,
-    ):
-        """An approval arriving after a feedback rejection is stale input —
-        ignored, so the machine stays in the plan workflow and re-proposes
-        instead of being clobbered into FINISHED.  A stale approval must
-        not flip the permission gating either."""
+    async def test_approve_after_feedback_is_stale(self, session_mgr, llm):
+        llm._sequence = [
+            _proposal(_mock_plan(plan_id="plan-1")),
+            _proposal(_mock_plan(plan_id="plan-2")),
+        ]
         gen = session_mgr.process_turn("refactor the database layer")
-        async for event in gen:
-            if isinstance(event, PlanProposed):
-                first_plan = event.plan
-                break
+        _, proposed = await self._until_proposed(gen)
         assert session_mgr.reject_plan(
-            plan_id=first_plan.id, feedback="avoid sqlite",
+            plan_id=proposed.plan.id, feedback="try again",
         ) is True
-        # Stale approval — must not mark the machine FINISHED, and must
-        # not switch gating to AUTO (which would auto-approve the
-        # re-exploration's tool calls).
-        assert (
-            session_mgr.approve_plan(
-                plan_id=first_plan.id,
-                permission_mode=PermissionMode.AUTO,
-            )
-            is False
-        )
-        assert session_mgr.permission_mode == PermissionMode.MANUAL
-        # The feedback loop still runs: explore + propose + re-explore
-        # + re-propose.  (Before the guard, the approval clobbered the
-        # machine into FINISHED and the generator ended here silently.)
-        second_plan = None
+        assert session_mgr.approve_plan(plan_id=proposed.plan.id) is False
+
+        second = None
         async for event in gen:
             if isinstance(event, PlanProposed):
-                second_plan = event
+                second = event
                 break
-        assert second_plan is not None
-        assert second_plan.plan.title == "Mock Plan"
-        assert llm.call_count == 4
-        # The feedback still drove the re-exploration.
-        texts = "\n".join(m.content for m in session_mgr.context.messages)
-        assert "avoid sqlite" in texts
-        # An accepted approval for the CURRENT plan flips gating as usual.
-        assert (
-            session_mgr.approve_plan(
-                plan_id=second_plan.plan.id,
-                permission_mode=PermissionMode.AUTO,
-            )
-            is True
-        )
-        assert session_mgr.permission_mode == PermissionMode.AUTO
-        remaining = await self._collect(gen)
-        finished = [e for e in remaining if isinstance(e, AgentFinished)]
-        assert len(finished) == 1
+        assert second is not None
+        assert second.plan.id == "plan-2"
 
     @pytest.mark.asyncio
-    async def test_plan_proposed_but_not_executing_still_finishes(
-        self, session_mgr,
-    ):
-        """A plan turn that never executes (failed approval transition
-        leaves the machine non-executing) must still end with a terminal
-        event.  The plan panel re-enters the streaming renderer's alt
-        screen, and only AgentFinished stops it."""
-        plan = _plan(
-            title="Stale Plan",
-            steps=[PlanStep(id="step-1", description="Do it")],
-        )
-        # The plan loop ends with a PlanProposed but no terminal event,
-        # and the machine is left in a non-executing mode — the
-        # is_executing gate then skips the execution phase.
-        session_mgr._planner = _SilentPlanner(
-            plan, emit_proposal=True,
-        )
-
+    async def test_invalid_plan_returns_a_tool_error(self, session_mgr, llm):
+        llm._sequence = [
+            tool_use_response(
+                "propose_plan",
+                {"title": "", "plan_markdown": ""},
+                tool_id="bad-plan",
+            ),
+            text_response("Done."),
+        ]
         events = await self._collect(
             session_mgr.process_turn("refactor the database layer"),
         )
-        finished = [e for e in events if isinstance(e, AgentFinished)]
-        assert len(finished) == 1
-        assert finished[0].reason == "Plan did not proceed to execution."
-
-    @pytest.mark.asyncio
-    async def test_plan_loop_silent_finish_ends_with_terminal(
-        self, session_mgr,
-    ):
-        """A plan loop that returns without a plan AND without a
-        terminal event (e.g. an external caller finished the machine
-        mid-cycle) must still yield AgentFinished — the session manager
-        guarantees every plan turn ends with a terminal event."""
-        session_mgr._planner = _SilentPlanner(None)
-
-        events = await self._collect(
-            session_mgr.process_turn("refactor the database layer"),
-        )
-        finished = [e for e in events if isinstance(e, AgentFinished)]
-        assert len(finished) == 1
-        assert finished[0].reason == "Plan cycle ended without a decision."
-
-    @pytest.mark.asyncio
-    async def test_recoverable_error_before_silent_end_still_finishes(
-        self, session_mgr,
-    ):
-        """A recoverable error during exploration must NOT satisfy the
-        terminal-event guarantee — the CLI keeps the streaming renderer
-        running on :class:`RecoverableAgentError` (it tears the alt
-        screen down only on AgentFinished / FatalAgentError), so the
-        session manager's fallback :class:`AgentFinished` must still fire
-        when the plan loop ends silently after one."""
-        plan = _plan(
-            title="Stale Plan",
-            steps=[PlanStep(id="step-1", description="Do it")],
-        )
-        session_mgr._planner = _SilentPlanner(
-            plan, emit_proposal=True, emit_recoverable_error=True,
-        )
-
-        events = await self._collect(
-            session_mgr.process_turn("refactor the database layer"),
-        )
-        errors = [
-            e for e in events if isinstance(e, RecoverableAgentError)
+        assert not any(isinstance(e, PlanProposed) for e in events)
+        ends = [
+            e for e in events
+            if isinstance(e, ToolCallEnd) and e.tool_name == "propose_plan"
         ]
-        assert len(errors) == 1
-        finished = [e for e in events if isinstance(e, AgentFinished)]
-        assert len(finished) == 1
-        assert finished[0].reason == "Plan did not proceed to execution."
-
-    # ------------------------------------------------------------------
-    # Plan execution status tracking
-    # ------------------------------------------------------------------
+        assert len(ends) == 1
+        assert ends[0].result is not None
+        assert not ends[0].result.success
+        assert "Invalid propose_plan call" in (ends[0].result.error or "")
 
     @pytest.mark.asyncio
-    async def test_plan_execution_without_status_updates_emits_nothing(
-        self, session_mgr,
-    ):
-        """A plan run that never calls plan_update emits no step events."""
+    async def test_cancel_at_the_plan_pause(self, session_mgr, llm):
+        llm._sequence = [_proposal()]
         gen = session_mgr.process_turn("refactor the database layer")
-        async for event in gen:
-            if isinstance(event, PlanProposed):
-                break
-        session_mgr.approve_plan(
-            plan_id=event.plan.id,
-        )
+        _, proposed = await self._until_proposed(gen)
+        assert proposed is not None
+        assert session_mgr.agent.answer_tool_call(
+            proposed.plan.id, None,
+        ) is True
         remaining = await self._collect(gen)
-        updates = [e for e in remaining if isinstance(e, PlanStepUpdate)]
-        # No initial all-pending emission — it carries no information,
-        # and the final emission dedups against the activation baseline.
-        assert updates == []
-        finished = [e for e in remaining if isinstance(e, AgentFinished)]
-        assert len(finished) == 1
+        assert any(isinstance(e, AgentCancelled) for e in remaining)
 
     @pytest.mark.asyncio
-    async def test_plan_update_tool_advances_step_statuses(
-        self, session_mgr, llm,
-    ):
-        """plan_update tool calls surface as PlanStepUpdate events."""
+    async def test_todo_updates_during_execution(self, session_mgr, llm):
         llm._sequence = [
-            _end_turn_response(),  # explore phase
-            _tool_use_response(
-                "plan_update", {"step_id": "step-1", "status": "in_progress"},
-                tool_id="t1",
+            _proposal(),
+            tool_use_response(
+                "todo_write",
+                {"todos": [
+                    {"content": "Do the thing", "status": "in_progress"},
+                ]},
+                tool_id="todo-1",
             ),
-            _tool_use_response(
-                "plan_update", {"step_id": "step-1", "status": "completed"},
-                tool_id="t2",
-            ),
+            text_response("Done."),
         ]
         gen = session_mgr.process_turn("refactor the database layer")
-        async for event in gen:
-            if isinstance(event, PlanProposed):
-                break
-        session_mgr.approve_plan(
-            plan_id=event.plan.id,
-        )
-        remaining = await self._collect(gen)
-        updates = [e for e in remaining if isinstance(e, PlanStepUpdate)]
-        assert updates, "expected PlanStepUpdate events"
-        statuses = [
-            next(st[2] for st in e.steps if st[0] == "step-1")
-            for e in updates
-        ]
-        assert statuses == ["in_progress", "completed"]
-        # Every event carries the complete list — one emission per
-        # mutation, no folding or phase-end flush.
-        assert [st[0] for st in updates[-1].steps] == ["step-1"]
-        assert len(updates) == 2
+        _, proposed = await self._until_proposed(gen)
+        assert session_mgr.approve_plan(plan_id=proposed.plan.id) is True
 
-    @pytest.mark.asyncio
-    async def test_completed_then_in_progress_emits_twice(
-        self, session_mgr, llm,
-    ):
-        """A completed and the next step's start emit separate updates."""
-        llm._plan_json = _two_step_plan_json()
-        llm._sequence = [
-            _end_turn_response(),  # explore phase
-            _tool_use_response(
-                "plan_update", {"step_id": "step-1", "status": "completed"},
-                tool_id="t1",
-            ),
-            _tool_use_response(
-                "plan_update", {"step_id": "step-2", "status": "in_progress"},
-                tool_id="t2",
-            ),
-        ]
-        gen = session_mgr.process_turn("refactor the database layer")
-        async for event in gen:
-            if isinstance(event, PlanProposed):
-                break
-        session_mgr.approve_plan(
-            plan_id=event.plan.id,
-        )
-        remaining = await self._collect(gen)
-        updates = [e for e in remaining if isinstance(e, PlanStepUpdate)]
-        # Each mutation emits at its own ToolCallEnd — the streaming
-        # renderer's repaint throttle coalesces adjacent frames.
-        assert len(updates) == 2
-        assert [st[2] for st in updates[0].steps] == ["completed", "pending"]
-        assert [st[2] for st in updates[1].steps] == ["completed", "in_progress"]
-
-    @pytest.mark.asyncio
-    async def test_all_steps_completed_emits_closing_snapshot(
-        self, session_mgr, llm,
-    ):
-        """Completing the final step emits the closing snapshot once."""
-        llm._plan_json = _two_step_plan_json()
-        llm._sequence = [
-            _end_turn_response(),  # explore phase
-            _tool_use_response(
-                "plan_update", {"step_id": "step-1", "status": "in_progress"},
-                tool_id="t1",
-            ),
-            _tool_use_response(
-                "plan_update", {"step_id": "step-1", "status": "completed"},
-                tool_id="t2",
-            ),
-            _tool_use_response(
-                "plan_update", {"step_id": "step-2", "status": "in_progress"},
-                tool_id="t3",
-            ),
-            _tool_use_response(
-                "plan_update", {"step_id": "step-2", "status": "completed"},
-                tool_id="t4",
-            ),
-        ]
-        gen = session_mgr.process_turn("refactor the database layer")
-        async for event in gen:
-            if isinstance(event, PlanProposed):
-                break
-        session_mgr.approve_plan(
-            plan_id=event.plan.id,
-        )
-        remaining = await self._collect(gen)
-        updates = [e for e in remaining if isinstance(e, PlanStepUpdate)]
-        statuses = [[st[2] for st in e.steps] for e in updates]
-        assert statuses == [
-            ["in_progress", "pending"],
-            ["completed", "pending"],
-            ["completed", "in_progress"],
-            ["completed", "completed"],
-        ]
-        # One emission per mutation — no folding, no phase-end flush.
-        assert len(updates) == 4
-
-    @pytest.mark.asyncio
-    async def test_lone_completed_emits_before_agent_finished(
-        self, session_mgr, llm,
-    ):
-        """A completed with no follow-up emits at its own ToolCallEnd."""
-        llm._plan_json = _two_step_plan_json()
-        llm._sequence = [
-            _end_turn_response(),  # explore phase
-            _tool_use_response(
-                "plan_update", {"step_id": "step-1", "status": "completed"},
-                tool_id="t1",
-            ),
-        ]
-        gen = session_mgr.process_turn("refactor the database layer")
-        async for event in gen:
-            if isinstance(event, PlanProposed):
-                break
-        session_mgr.approve_plan(
-            plan_id=event.plan.id,
-        )
-        remaining = await self._collect(gen)
-        updates = [e for e in remaining if isinstance(e, PlanStepUpdate)]
-        # The lone completed renders on its own — nothing is held back
-        # for a phase-end flush.
-        assert len(updates) == 1
-        assert [st[2] for st in updates[0].steps] == ["completed", "pending"]
-        # The emission lands BEFORE AgentFinished so streaming mode can
-        # still paint it (its Live display stops on AgentFinished).
-        finished_idx = next(
-            i for i, e in enumerate(remaining) if isinstance(e, AgentFinished)
-        )
-        update_idx = next(
-            i for i, e in enumerate(remaining) if isinstance(e, PlanStepUpdate)
-        )
-        assert update_idx < finished_idx
-
-    @pytest.mark.asyncio
-    async def test_plan_tracking_torn_down_after_phase(self, session_mgr):
-        """The plan_update tool and shared plan are cleared after the turn."""
-        gen = session_mgr.process_turn("refactor the database layer")
-        async for event in gen:
-            if isinstance(event, PlanProposed):
-                break
-        session_mgr.approve_plan(
-            plan_id=event.plan.id,
-        )
-        await self._collect(gen)
-        assert session_mgr._registry.get("plan_update") is None
-        assert not session_mgr._plan_state.is_active
-
-    @pytest.mark.asyncio
-    async def test_simple_execution_has_no_plan_events(self, session_mgr):
-        """Non-plan turns emit no PlanStepUpdate and never register the tool."""
-        gen = session_mgr.process_turn("fix a typo")
         events = await self._collect(gen)
-        assert not any(isinstance(e, PlanStepUpdate) for e in events)
-        assert session_mgr._registry.get("plan_update") is None
+        updates = [e for e in events if isinstance(e, TodoUpdate)]
+        assert len(updates) == 1
+        assert updates[0].items[0].content == "Do the thing"
 
     @pytest.mark.asyncio
-    async def test_reject_plan_outright_finishes(self, session_mgr):
+    async def test_plan_entry_pins_manual_gating(self, session_mgr, llm):
+        llm._sequence = [_proposal()]
         gen = session_mgr.process_turn("refactor the database layer")
-        async for event in gen:
-            if isinstance(event, PlanProposed):
-                break
-        assert session_mgr.reject_plan(plan_id=event.plan.id) is True
-        remaining = await self._collect(gen)
-        finished = [e for e in remaining if isinstance(e, AgentFinished)]
-        assert len(finished) == 1
-        assert "rejected" in finished[0].reason.lower()
+        await self._until_proposed(gen)
+        assert session_mgr.permission_mode is PermissionMode.MANUAL
 
     @pytest.mark.asyncio
-    async def test_reject_with_feedback_loops(self, session_mgr):
+    async def test_approve_with_auto_flips_gating(self, session_mgr, llm):
+        llm._sequence = [_proposal(), text_response("Done.")]
         gen = session_mgr.process_turn("refactor the database layer")
-        async for event in gen:
-            if isinstance(event, PlanProposed):
-                break
-        assert session_mgr.reject_plan(
-            plan_id=event.plan.id, feedback="Add more steps",
+        _, proposed = await self._until_proposed(gen)
+        assert session_mgr.approve_plan(
+            plan_id=proposed.plan.id,
+            permission_mode=PermissionMode.AUTO,
         ) is True
-        second_plan = None
-        async for event in gen:
-            if isinstance(event, PlanProposed):
-                second_plan = event
-                break
-        assert second_plan is not None
-
-    # ------------------------------------------------------------------
-    # Permission mode integration with plan workflow
-    # ------------------------------------------------------------------
+        await self._collect(gen)
+        assert session_mgr.permission_mode is PermissionMode.AUTO
 
     @pytest.mark.asyncio
-    async def test_plan_entry_resets_permission_to_manual(self, session_mgr):
-        """Entering plan mode resets gating to MANUAL."""
+    async def test_simple_execution_keeps_auto(self, session_mgr):
         session_mgr.set_permission_mode(PermissionMode.AUTO)
-        assert session_mgr.permission_mode == PermissionMode.AUTO
-
-        gen = session_mgr.process_turn("refactor the database layer")
-        async for event in gen:
-            if isinstance(event, PlanProposed):
-                break
-
-        assert session_mgr.permission_mode == PermissionMode.MANUAL
-
-    @pytest.mark.asyncio
-    async def test_direct_execute_preserves_permission_auto(self, session_mgr):
-        """A simple request does NOT reset an explicitly-set AUTO mode."""
-        session_mgr.set_permission_mode(PermissionMode.AUTO)
-
-        gen = session_mgr.process_turn("hello")
-        events = []
-        async for event in gen:
-            events.append(event)
-
-        assert session_mgr.permission_mode == PermissionMode.AUTO
-        has_plan = any(isinstance(e, PlanProposed) for e in events)
-        assert not has_plan, "Simple request should not trigger plan"
+        events = await self._collect(session_mgr.process_turn("fix a typo"))
+        assert session_mgr.permission_mode is PermissionMode.AUTO
+        assert not any(isinstance(e, PlanProposed) for e in events)
 
     @pytest.mark.asyncio
     async def test_plan_pending_flag_resets_permission_to_manual(
-        self, session_mgr,
+        self, session_mgr, llm,
     ):
-        """When /plan is used, entry into plan mode resets to MANUAL."""
+        llm._sequence = [_proposal()]
         session_mgr.set_permission_mode(PermissionMode.AUTO)
         session_mgr.state_machine.flag_plan_pending()
-
-        gen = session_mgr.process_turn("do something")
-        async for event in gen:
-            if isinstance(event, PlanProposed):
-                break
-
-        assert session_mgr.permission_mode == PermissionMode.MANUAL
-
-
-# ============================================================================
-# Planner unit tests (mock AgentLoop + mock LLM)
-# ============================================================================
-
-
-class MockAgentLoop:
-    """Mock AgentLoop that yields a single AgentFinished event."""
-
-    def __init__(self):
-        self.run_calls: list[dict] = []
-
-    async def run(self, user_input: str, *, mode: str = "execute",
-                  max_iterations: int = 10, stream: bool = False,
-                  **kwargs) -> AsyncIterator[AgentFinished]:
-        self.run_calls.append({"user_input": user_input, "mode": mode})
-        yield AgentFinished(
-            reason="Mock phase complete.",
-            usage=TokenUsage(input_tokens=10, output_tokens=5),
-        )
-
-
-class _StoppingAgentLoop:
-    """Mock AgentLoop that yields one pre-built terminal event."""
-
-    def __init__(self, event) -> None:
-        self._event = event
-
-    async def run(self, user_input: str, **kwargs) -> AsyncIterator:  # noqa: ARG002
-        yield self._event
-
-
-class MockContextManager:
-    """Minimal mock of ContextManager for Planner tests."""
-
-    def __init__(self, messages: list[Message] | None = None):
-        self._messages: list[Message] = messages or []
-        self._appended: list[Message] = []
-
-    @property
-    def messages(self) -> list[Message]:
-        return self._messages
-
-    def append(self, msg: Message) -> None:
-        self._appended.append(msg)
-        self._messages.append(msg)
-
-
-class TestPlanner:
-    """Unit tests for Planner — plan loop logic with mocked dependencies."""
-
-    @pytest.fixture
-    def llm(self):
-        return MockPlanLLMProvider()
-
-    @pytest.fixture
-    def agent_loop(self):
-        return MockAgentLoop()
-
-    @pytest.fixture
-    def ctx(self):
-        return MockContextManager()
-
-    @pytest.fixture
-    def settings(self):
-        from toddler.config.settings import Settings
-        return Settings(streaming_enabled=False)
-
-    @staticmethod
-    def _plan_sm() -> AgentStateMachine:
-        """Create a state machine pre-transitioned to PLAN_EXPLORING."""
-        sm = AgentStateMachine()
-        sm.transition(AgentMode.PLAN_EXPLORING)
-        return sm
-
-    def _make_planner(self, settings, llm, ctx, agent_loop,
-                      state_machine=None):
-        if state_machine is None:
-            state_machine = self._plan_sm()
-        from toddler.agent.planner import Planner
-        return Planner(
-            llm_provider=llm,
-            context=ctx,
-            settings=settings,
-            agent_loop=agent_loop,
-            state_machine=state_machine,
-        )
-
-    async def _collect(self, gen) -> list:
-        events = []
-        async for event in gen:
-            events.append(event)
-        return events
-
-    @pytest.mark.asyncio
-    async def test_plan_mode_yields_plan_proposed(
-        self, settings, llm, agent_loop, ctx,
-    ):
-        """Complex input → yields PlanProposed with the expected plan."""
-        planner = self._make_planner(settings, llm, ctx, agent_loop)
-        gen = planner.run("refactor the database layer", config=TEST_TURN_CONFIG)
-        events = []
-        async for event in gen:
-            events.append(event)
-            if isinstance(event, PlanProposed):
-                break
-
-        plan_events = [e for e in events if isinstance(e, PlanProposed)]
-        assert len(plan_events) == 1
-        assert plan_events[0].plan.title == "Mock Plan"
-        assert planner._sm.current_mode == AgentMode.PLAN_WAITING
-
-    @pytest.mark.asyncio
-    async def test_a_cancelled_exploration_ends_the_plan_turn(
-        self, settings, llm, ctx,
-    ):
-        """A cancelled pause during exploration must not propose a plan —
-        the user stopped the turn, and the same rule applies here."""
-        event = AgentCancelled(tool_id="c1", tool_name="shell")
-        planner = self._make_planner(
-            settings, llm, ctx, _StoppingAgentLoop(event),
-        )
-
-        events = await self._collect(
-            planner.run("refactor the database layer", config=TEST_TURN_CONFIG),
-        )
-
-        assert events[-1] is event
-        assert not [e for e in events if isinstance(e, PlanProposed)]
-        assert planner.plan is None
-        assert planner._sm.current_mode == AgentMode.PLAN_EXPLORING
-
-    @pytest.mark.asyncio
-    async def test_an_all_denied_exploration_ends_the_plan_turn(
-        self, settings, llm, ctx,
-    ):
-        """A stopped finish is the user's doing, so exploration ends
-        instead of proposing a plan from partial research."""
-        event = AgentFinished(
-            reason="All tool calls were denied by the user.",
-            stopped=True,
-        )
-        planner = self._make_planner(
-            settings, llm, ctx, _StoppingAgentLoop(event),
-        )
-
-        events = await self._collect(
-            planner.run("refactor the database layer", config=TEST_TURN_CONFIG),
-        )
-
-        assert events[-1] is event
-        assert not [e for e in events if isinstance(e, PlanProposed)]
-        assert planner.plan is None
-        assert planner._sm.current_mode == AgentMode.PLAN_EXPLORING
-
-    @pytest.mark.asyncio
-    async def test_approve_plan(self, settings, llm, agent_loop, ctx):
-        """Approve transitions to PLAN_EXECUTING and plan is set."""
-        planner = self._make_planner(settings, llm, ctx, agent_loop)
-        gen = planner.run("refactor the database layer", config=TEST_TURN_CONFIG)
-        async for event in gen:
-            if isinstance(event, PlanProposed):
-                break
-
-        assert planner._sm.current_mode == AgentMode.PLAN_WAITING
-        planner.approve_plan(plan_id=planner.plan.id)
-        assert planner._sm.current_mode == AgentMode.PLAN_EXECUTING
-        assert planner.plan is not None
-        assert planner.plan.title == "Mock Plan"
-
-    @pytest.mark.asyncio
-    async def test_approve_plan_with_numeric_id_is_not_stale(
-        self, settings, llm, agent_loop, ctx,
-    ):
-        """A numeric plan id from the LLM is coerced to str — otherwise
-        ``int != str`` would treat every approval as stale input and the
-        turn would hang waiting for a decision that never takes effect."""
-        llm._plan_json["id"] = 123
-        planner = self._make_planner(settings, llm, ctx, agent_loop)
-        gen = planner.run("refactor the database layer", config=TEST_TURN_CONFIG)
-        async for event in gen:
-            if isinstance(event, PlanProposed):
-                break
-
-        assert planner.plan.id == "123"
-        assert planner.approve_plan(plan_id="123") is True
-        assert planner._sm.current_mode == AgentMode.PLAN_EXECUTING
-
-    @pytest.mark.asyncio
-    async def test_reject_plan_outright(
-        self, settings, llm, agent_loop, ctx,
-    ):
-        """Reject without feedback → FINISHED, plan cleared."""
-        planner = self._make_planner(settings, llm, ctx, agent_loop)
-        gen = planner.run("refactor the database layer", config=TEST_TURN_CONFIG)
-        async for event in gen:
-            if isinstance(event, PlanProposed):
-                break
-
-        assert planner.reject_plan(plan_id=planner.plan.id) is True
-        assert planner._sm.current_mode == AgentMode.FINISHED
-        assert planner.plan is None
-
-    @pytest.mark.asyncio
-    async def test_reject_with_feedback_loops(
-        self, settings, llm, agent_loop, ctx,
-    ):
-        """Reject with feedback → loops back to PLAN_EXPLORING."""
-        planner = self._make_planner(settings, llm, ctx, agent_loop)
-        gen = planner.run("refactor the database layer", config=TEST_TURN_CONFIG)
-        async for event in gen:
-            if isinstance(event, PlanProposed):
-                break
-
-        assert planner.reject_plan(
-            plan_id=planner.plan.id, feedback="Add more steps",
-        ) is True
-        assert planner._sm.current_mode == AgentMode.PLAN_EXPLORING
-        assert planner.plan is None
-
-        # Advance the generator one step so the feedback injection code
-        # runs (the generator was paused at `yield PlanProposed`; after
-        # reject_plan() sets the event, we need to resume past the
-        # `await event.wait()` to reach the `ctx.append()` call).
-        with contextlib.suppress(StopAsyncIteration):
-            await gen.__anext__()
-
-        # Verify feedback was injected into context.
-        feedback_msgs = [
-            m for m in ctx._appended
-            if "Add more steps" in (m.content or "")
-        ]
-        assert len(feedback_msgs) == 1
-
-    @pytest.mark.asyncio
-    async def test_double_approve_is_idempotent(
-        self, settings, llm, agent_loop, ctx,
-    ):
-        """Approving an already-approved plan is a no-op success — it
-        must not fail the transition and kill the turn."""
-        planner = self._make_planner(settings, llm, ctx, agent_loop)
-        gen = planner.run("refactor the database layer", config=TEST_TURN_CONFIG)
-        async for event in gen:
-            if isinstance(event, PlanProposed):
-                break
-
-        assert planner.approve_plan(plan_id=planner.plan.id) is True
-        # Second approval is stale input — ignored, not an error.
-        assert planner.approve_plan(plan_id=planner.plan.id) is False
-        assert planner._sm.current_mode == AgentMode.PLAN_EXECUTING
-        assert planner.plan is not None
-        assert planner.plan.title == "Mock Plan"
-
-    @pytest.mark.asyncio
-    async def test_approve_wrong_plan_is_ignored(
-        self, settings, llm, agent_loop, ctx,
-    ):
-        """An approval for a different plan is stale input — the machine
-        keeps waiting on the current plan's own decision."""
-        planner = self._make_planner(settings, llm, ctx, agent_loop)
-        gen = planner.run("refactor the database layer", config=TEST_TURN_CONFIG)
-        async for event in gen:
-            if isinstance(event, PlanProposed):
-                break
-
-        current = planner.plan
-        assert planner.approve_plan(plan_id="some-other-plan") is False
-        assert planner._sm.current_mode == AgentMode.PLAN_WAITING
-        assert planner.plan is current
-        # The decision for the current plan still goes through.
-        assert planner.approve_plan(plan_id=current.id) is True
-        assert planner._sm.current_mode == AgentMode.PLAN_EXECUTING
-
-    @pytest.mark.asyncio
-    async def test_reject_after_approve_is_ignored(
-        self, settings, llm, agent_loop, ctx,
-    ):
-        """A rejection arriving after approval is stale input — the
-        approval stands and the plan is not cleared."""
-        planner = self._make_planner(settings, llm, ctx, agent_loop)
-        gen = planner.run("refactor the database layer", config=TEST_TURN_CONFIG)
-        async for event in gen:
-            if isinstance(event, PlanProposed):
-                break
-
-        planner.approve_plan(plan_id=planner.plan.id)
-        # The contract is explicit: a rejection outside PLAN_WAITING is
-        # ignored and reports False — an executing plan runs to
-        # completion.
-        assert planner.reject_plan(
-            plan_id=planner.plan.id, feedback="too late",
-        ) is False
-        assert planner._sm.current_mode == AgentMode.PLAN_EXECUTING
-        assert planner.plan is not None
-
-    @pytest.mark.asyncio
-    async def test_double_reject_keeps_first_feedback(
-        self, settings, llm, agent_loop, ctx,
-    ):
-        """A second reject_plan() while a decision is pending is stale
-        input — the first feedback survives and drives the
-        re-exploration."""
-        planner = self._make_planner(settings, llm, ctx, agent_loop)
-        gen = planner.run("refactor the database layer", config=TEST_TURN_CONFIG)
-        async for event in gen:
-            if isinstance(event, PlanProposed):
-                break
-
-        assert planner.reject_plan(
-            plan_id=event.plan.id, feedback="avoid sqlite",
-        ) is True
-        assert planner.reject_plan(
-            plan_id=event.plan.id, feedback="stale feedback",
-        ) is False
-        assert planner._sm.current_mode == AgentMode.PLAN_EXPLORING
-        assert planner.plan is None
-
-        # Resume past the wait so the feedback injection runs.
-        with contextlib.suppress(StopAsyncIteration):
-            await gen.__anext__()
-
-        # Only the FIRST feedback reached the context.
-        feedback_msgs = [
-            m for m in ctx._appended
-            if "avoid sqlite" in (m.content or "")
-        ]
-        assert len(feedback_msgs) == 1
-        stale_msgs = [
-            m for m in ctx._appended
-            if "stale feedback" in (m.content or "")
-        ]
-        assert len(stale_msgs) == 0
-
-    @pytest.mark.asyncio
-    async def test_reject_wrong_plan_is_ignored(
-        self, settings, llm, agent_loop, ctx,
-    ):
-        """A rejection for a different plan is stale input — the machine
-        keeps waiting on the current plan's own decision."""
-        planner = self._make_planner(settings, llm, ctx, agent_loop)
-        gen = planner.run("refactor the database layer", config=TEST_TURN_CONFIG)
-        async for event in gen:
-            if isinstance(event, PlanProposed):
-                break
-
-        current = planner.plan
-        assert planner.reject_plan(
-            plan_id="some-other-plan", feedback="stale",
-        ) is False
-        assert planner._sm.current_mode == AgentMode.PLAN_WAITING
-        assert planner.plan is current
-        # The decision for the current plan still goes through.
-        assert planner.reject_plan(
-            plan_id=current.id, feedback="real feedback",
-        ) is True
-        assert planner._sm.current_mode == AgentMode.PLAN_EXPLORING
-        assert planner.plan is None
-
-    @pytest.mark.asyncio
-    async def test_plan_generation_failure(
-        self, settings, llm, agent_loop, ctx,
-    ):
-        """Empty steps → AgentError yielded."""
-        llm._plan_json = {"title": "Bad", "steps": []}
-        planner = self._make_planner(settings, llm, ctx, agent_loop)
-        gen = planner.run("refactor the database layer", config=TEST_TURN_CONFIG)
-        events = await self._collect(gen)
-
-        errors = [e for e in events if isinstance(e, AgentError)]
-        assert len(errors) >= 1
-        assert planner._sm.current_mode == AgentMode.FINISHED
-        assert planner.plan is None
-
-    @pytest.mark.asyncio
-    async def test_reuses_state_machine(self, settings, llm, agent_loop, ctx):
-        """Planner should accept and use an external state machine."""
-        sm = self._plan_sm()
-        planner = self._make_planner(
-            settings, llm, ctx, agent_loop, state_machine=sm,
-        )
-        gen = planner.run("refactor the database layer", config=TEST_TURN_CONFIG)
-        async for event in gen:
-            if isinstance(event, PlanProposed):
-                break
-
-        # State machine should be the same instance and in PLAN_WAITING.
-        assert sm.current_mode == AgentMode.PLAN_WAITING
-        assert planner._sm.current_mode == AgentMode.PLAN_WAITING
+        gen = session_mgr.process_turn("make this better")
+        await self._until_proposed(gen)
+        assert session_mgr.permission_mode is PermissionMode.MANUAL
 
 
 class TestModeDisplayLabel:
@@ -1923,7 +1012,7 @@ class TestPermissionMode:
         assert perm.is_mutating is expected
 
     # Tests for plan-entry reset at the SessionManager level are in
-    # TestSessionManagerPlanWorkflow below.
+    # TestSessionManagerPlanWorkflow above.
 
 
 # ============================================================================
@@ -2017,42 +1106,55 @@ class TestCLIAppPlanApproval:
         return renderer
 
     @pytest.mark.asyncio
-    async def test_approve_with_manual_executes(self, cli, session_mgr):
+    async def test_approve_with_manual_executes(self, cli, session_mgr, llm):
         """approve_with_manual approves the plan and runs execution."""
+        llm._sequence = [_proposal(), text_response("Executing plan.")]
         renderer = await self._run_plan_turn(
             cli, ConfirmResult(decision="approve_with_manual"),
         )
 
-        assert session_mgr.planner.plan is not None
         assert session_mgr.permission_mode == PermissionMode.MANUAL
+        assert llm.call_count == 2
         assert renderer.calls.count("confirm") == 1
         assert "on_agent_finished" in renderer.calls
 
     @pytest.mark.asyncio
-    async def test_approve_with_auto_switches_gating(self, cli, session_mgr):
+    async def test_approve_with_auto_switches_gating(
+        self, cli, session_mgr, llm,
+    ):
         """approve_with_auto approves the plan and switches gating to AUTO."""
+        llm._sequence = [_proposal(), text_response("Executing plan.")]
         renderer = await self._run_plan_turn(
             cli, ConfirmResult(decision="approve_with_auto"),
         )
 
-        assert session_mgr.planner.plan is not None
         assert session_mgr.permission_mode == PermissionMode.AUTO
+        assert llm.call_count == 2
         assert "on_agent_finished" in renderer.calls
 
     @pytest.mark.asyncio
-    async def test_deny_finishes_turn(self, cli, session_mgr):
+    async def test_deny_finishes_turn(self, cli, session_mgr, llm):
         """deny rejects the plan outright and ends the turn."""
+        llm._sequence = [_proposal()]
         renderer = await self._run_plan_turn(
             cli, ConfirmResult(decision="deny"),
         )
 
-        assert session_mgr.planner.plan is None
+        assert llm.call_count == 1
+        assert renderer.calls.count("confirm") == 1
         assert "on_agent_finished" in renderer.calls
 
     @pytest.mark.asyncio
-    async def test_feedback_reproposes_then_approves(self, cli, session_mgr):
-        """feedback re-enters the explore loop and re-proposes a plan,
-        which is then approved — confirm() is asked twice."""
+    async def test_feedback_reproposes_then_approves(
+        self, cli, session_mgr, llm,
+    ):
+        """feedback re-proposes a plan, which is then approved — confirm()
+        is asked twice."""
+        llm._sequence = [
+            _proposal(_mock_plan(plan_id="plan-1")),
+            _proposal(_mock_plan(plan_id="plan-2", title="Revised")),
+            text_response("Executing plan."),
+        ]
         renderer = await self._run_plan_turn(
             cli,
             ConfirmResult(decision="feedback", feedback="avoid sqlite"),
@@ -2060,5 +1162,5 @@ class TestCLIAppPlanApproval:
         )
 
         assert renderer.calls.count("confirm") == 2
-        assert session_mgr.planner.plan is not None
+        assert llm.call_count == 3
         assert "on_agent_finished" in renderer.calls

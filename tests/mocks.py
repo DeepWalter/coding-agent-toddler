@@ -14,7 +14,6 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 
-from toddler.tools.plan import Plan
 from toddler.config.models import TurnConfig
 from toddler.llm import (
     LLMResponse,
@@ -24,6 +23,7 @@ from toddler.llm import (
     TokenUsage,
 )
 from toddler.llm.base import BaseLLMProvider
+from toddler.tools.plan import Plan
 
 __all__ = [
     "TEST_MODEL",
@@ -33,7 +33,7 @@ __all__ = [
     "ask_user_response",
     "make_mock_llm",
     "pause_on_write",
-    "plan_proposal_response",
+    "propose_plan_response",
     "reasoning_response",
     "text_response",
     "tool_use_response",
@@ -286,10 +286,17 @@ def pause_on_write(file_path: str, content: str = "hello") -> LLMResponse:
     )
 
 
-def plan_proposal_response(plan: Plan) -> LLMResponse:
-    """The response for the plan-generation call.
+def propose_plan_response(
+    plan: Plan, *, tool_id: str | None = None,
+) -> LLMResponse:
+    """A ``propose_plan`` call carrying *plan* as markdown.
 
-    That call is non-streaming and expects raw JSON text in the reply —
-    ``Plan.to_json()`` is exactly what the planner parses back.
+    The plan's id becomes the tool call id, so the PlanProposed event and
+    the approve/reject round-trip use one identity.
     """
-    return text_response(plan.to_json(), stop_reason="end_turn")
+    markdown = plan.markdown or plan.format_for_display()
+    return tool_use_response(
+        "propose_plan",
+        {"title": plan.title, "plan_markdown": markdown},
+        tool_id=tool_id or plan.id,
+    )

@@ -110,7 +110,7 @@ class ToolCallEnd(AgentEvent):
 class PlanProposed(AgentEvent):
     """The agent is presenting a plan for user approval."""
 
-    plan: Plan  # forward reference to agent.planner.Plan
+    plan: Plan  # forward reference to tools.plan.Plan
 
 
 @dataclass
