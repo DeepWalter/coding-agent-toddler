@@ -522,7 +522,7 @@ class SessionManager:
         self._proposed_plan = None
 
         # --- Arm the tools for the phase the turn starts in ---
-        if self._sm.is_plan_exploring:
+        if self._sm.is_plan:
             # Every plan cycle starts from the safe baseline — the
             # approval UI then lets the user explicitly choose AUTO.
             # Goes through set_permission_mode so observers (the web
@@ -572,7 +572,7 @@ class SessionManager:
                 if (
                     isinstance(event, AgentFinished)
                     and event.stopped
-                    and self._sm.current_mode is AgentMode.PLAN_EXPLORING
+                    and self._sm.current_mode is AgentMode.PLAN
                 ):
                     # The loop reports the denied tool generically; in a
                     # plan turn that denial *is* the plan decision.
@@ -941,7 +941,7 @@ class SessionManager:
         """
         if (
             self._proposed_plan is None
-            or self._sm.current_mode is not AgentMode.PLAN_EXPLORING
+            or self._sm.current_mode is not AgentMode.PLAN
         ):
             return
         if not self._sm.transition(AgentMode.EXECUTING):

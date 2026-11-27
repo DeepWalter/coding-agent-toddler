@@ -347,7 +347,7 @@ async def _cmd_set_mode(
         # approved: reject flips while it is explored, proposed, or
         # awaiting approval; idle and the execution phases allow them.
         sm = mgr.state_machine
-        if sm.current_mode.is_plan_related and not sm.is_plan_executing:
+        if sm.is_plan:
             await _send_error(
                 websocket, "frozen",
                 "Gating is fixed to manual until the plan is approved.",

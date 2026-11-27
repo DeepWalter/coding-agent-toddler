@@ -24,7 +24,7 @@ def _ctx() -> ContextManager:
 async def test_mode_switch_replaces_the_system_prompt():
     ctx = _ctx()
     ctx.load([])
-    await ctx.prepare_turn("research this", mode="plan_exploring")
+    await ctx.prepare_turn("research this", mode="plan")
     assert ctx.messages[0].role == "system"
     assert "PLAN (Research)" in ctx.messages[0].content
 
@@ -50,7 +50,7 @@ async def test_same_mode_does_not_rebuild_the_prompt():
 async def test_set_mode_rebuilds_mid_conversation():
     ctx = _ctx()
     ctx.load([])
-    await ctx.prepare_turn("go", mode="plan_exploring")
+    await ctx.prepare_turn("go", mode="plan")
     system = ctx.messages[0]
     ctx.set_mode("execute")
     assert ctx.messages[0] is not system

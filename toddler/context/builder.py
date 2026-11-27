@@ -51,7 +51,7 @@ tools — read files to understand context, then edit, run commands, or search
 as needed.  Be concise and direct.  For multi-step work, maintain a todo
 list with todo_write and keep it current."""
 
-_PLAN_EXPLORING_INSTRUCTIONS = """\
+_PLAN_INSTRUCTIONS = """\
 ## Current Mode: PLAN (Research)
 
 RESEARCH only.  DO NOT make any changes to files or run mutating commands.
@@ -78,7 +78,7 @@ _COMPACT_EXECUTING = (
     "Mode: EXECUTE — make changes, be concise; track multi-step work with "
     "todo_write."
 )
-_COMPACT_PLAN_EXPLORING = (
+_COMPACT_PLAN = (
     "Mode: PLAN (Research) — READ ONLY, gather context; call propose_plan "
     "when ready."
 )
@@ -148,7 +148,7 @@ class SystemPromptBuilder:
         Parameters
         ----------
         mode:
-            One of ``"execute"`` or ``"plan_exploring"``.  Controls which
+            One of ``"execute"`` or ``"plan"``.  Controls which
             mode-specific instructions are appended.
         prior_conversation_summaries:
             Optional list of ``"(title)"`` strings from earlier
@@ -352,10 +352,10 @@ class SystemPromptBuilder:
 
 _MODE_INSTRUCTIONS: dict[str, str] = {
     "execute": _EXECUTING_INSTRUCTIONS,
-    "plan_exploring": _PLAN_EXPLORING_INSTRUCTIONS,
+    "plan": _PLAN_INSTRUCTIONS,
 }
 
 _COMPACT_MODE_INSTRUCTIONS: dict[str, str] = {
     "execute": _COMPACT_EXECUTING,
-    "plan_exploring": _COMPACT_PLAN_EXPLORING,
+    "plan": _COMPACT_PLAN,
 }

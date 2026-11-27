@@ -299,9 +299,8 @@ class AgentLoop:
             token-by-token output (default ``False`` for backward
             compatibility with tests and non-streaming flows).
         mode:
-            Agent mode hint — ``"execute"``, ``"plan_exploring"``, or
-            ``"plan_executing"``.  Used by the prompt builder to select
-            mode-specific instructions.
+            Agent mode hint — ``"execute"`` or ``"plan"``.  Used by the
+            prompt builder to select mode-specific instructions.
         request_title:
             Ask the endpoint to write a conversation title alongside the
             answer.  Kept on across this run's requests until one arrives:

@@ -54,7 +54,7 @@ class Session:
     total_output_tokens:
         Cumulative output tokens across all LLM calls in this session.
     mode:
-        Current agent mode — ``"execute"``, ``"plan"``, or ``"plan_execute"``.
+        Current agent mode — ``"execute"`` or ``"plan"``.
     project_path:
         Absolute, symlink-resolved working directory the session belongs to.
         Sessions are resumed by this key when no explicit ID is given, so

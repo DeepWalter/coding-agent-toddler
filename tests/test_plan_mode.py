@@ -78,33 +78,32 @@ class TestAgentStateMachineTransitions:
     def test_classify_simple_goes_to_executing(self, sm):
         assert sm.classify_and_transition("fix a typo") == AgentMode.EXECUTING
 
-    def test_classify_complex_goes_to_plan_exploring(self, sm):
+    def test_classify_complex_goes_to_plan(self, sm):
         assert (
             sm.classify_and_transition("refactor the CLI app")
-            == AgentMode.PLAN_EXPLORING
+            == AgentMode.PLAN
         )
 
     def test_force_plan_overrides_simple(self, sm):
         assert (
             sm.classify_and_transition("fix a typo", force_plan=True)
-            == AgentMode.PLAN_EXPLORING
+            == AgentMode.PLAN
         )
 
     def test_flag_plan_pending_forces_next_turn(self, sm):
         sm.flag_plan_pending()
-        assert sm.classify_and_transition("fix a typo") == AgentMode.PLAN_EXPLORING
+        assert sm.classify_and_transition("fix a typo") == AgentMode.PLAN
         # Reset and re-classify — flag is consumed, so normal EXECUTING.
         sm.reset()
         assert sm.classify_and_transition("fix another typo") == AgentMode.EXECUTING
 
-    def test_exploring_to_proposing(self, sm):
+    def test_plan_approves_to_executing(self, sm):
         sm.classify_and_transition("refactor auth")
-        assert sm.transition(AgentMode.PLAN_PROPOSING) is True
+        assert sm.transition(AgentMode.EXECUTING) is True
 
-    def test_proposing_to_waiting(self, sm):
+    def test_plan_denies_to_finished(self, sm):
         sm.classify_and_transition("refactor auth")
-        sm.transition(AgentMode.PLAN_PROPOSING)
-        assert sm.transition(AgentMode.PLAN_WAITING) is True
+        assert sm.transition(AgentMode.FINISHED) is True
 
     def test_mark_finished_from_executing(self, sm):
         sm.classify_and_transition("fix a typo")
@@ -117,24 +116,21 @@ class TestAgentStateMachineTransitions:
         assert sm.current_mode == AgentMode.IDLE
 
     def test_invalid_transition_returns_false(self, sm):
-        assert sm.transition(AgentMode.PLAN_WAITING) is False
+        assert sm.transition(AgentMode.FINISHED) is False
         assert sm.current_mode == AgentMode.IDLE
 
     def test_observer_notified_after_each_transition(self, sm):
         seen = []
         sm.add_observer(lambda m: seen.append(m.current_mode))
         sm.classify_and_transition("refactor auth")
-        assert seen == [AgentMode.PLAN_EXPLORING]
-        sm.transition(AgentMode.PLAN_PROPOSING)
-        assert seen == [
-            AgentMode.PLAN_EXPLORING,
-            AgentMode.PLAN_PROPOSING,
-        ]
+        assert seen == [AgentMode.PLAN]
+        sm.transition(AgentMode.EXECUTING)
+        assert seen == [AgentMode.PLAN, AgentMode.EXECUTING]
 
     def test_observer_not_notified_on_invalid_transition(self, sm):
         seen = []
         sm.add_observer(lambda m: seen.append(m.current_mode))
-        assert sm.transition(AgentMode.PLAN_WAITING) is False
+        assert sm.transition(AgentMode.FINISHED) is False
         assert seen == []
 
     def test_notify_observers_manual_call(self, sm):
@@ -147,7 +143,7 @@ class TestAgentStateMachineTransitions:
 
 
 # ============================================================================
-# Plan serialization tests
+# Tool-driven plan workflow
 # ============================================================================
 
 
@@ -510,14 +506,8 @@ class TestModeDisplayLabel:
         assert AgentMode.FINISHED.display_label == "EXECUTE"
 
     def test_plan_label(self):
-        """All PLAN_* modes return PLAN."""
-        for mode in (
-            AgentMode.PLAN_EXPLORING,
-            AgentMode.PLAN_PROPOSING,
-            AgentMode.PLAN_WAITING,
-            AgentMode.PLAN_EXECUTING,
-        ):
-            assert mode.display_label == "PLAN"
+        """The PLAN mode returns PLAN."""
+        assert AgentMode.PLAN.display_label == "PLAN"
 
     def test_all_modes_have_label(self):
         """Every AgentMode has a non-empty display label."""

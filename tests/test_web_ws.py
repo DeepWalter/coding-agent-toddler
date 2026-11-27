@@ -1988,9 +1988,9 @@ class TestSimpleCommands:
             _wait_for(ws, "ack")
             _wait_for(ws, "agent_finished")
 
-    def test_set_mode_gating_allowed_during_plan_executing(self, tmp_path):
-        """Once the plan is approved (PLAN_EXECUTING), gating flips are
-        live again — e.g. downgrading back to manual mid-execution."""
+    def test_set_mode_gating_allowed_during_execution(self, tmp_path):
+        """Once the plan is approved (EXECUTING), gating flips are live
+        again — e.g. downgrading back to manual mid-execution."""
         llm = make_mock_llm()
         app = _app(tmp_path, llm)
         with TestClient(app) as client, client.websocket_connect("/ws") as ws:
@@ -1998,11 +1998,9 @@ class TestSimpleCommands:
             sm = client.app.state.web.session_mgr.state_machine
             # Each transition broadcasts a session_info now — drain them
             # before asserting the ack's frame order.
-            assert sm.transition(AgentMode.PLAN_EXPLORING)
-            assert sm.transition(AgentMode.PLAN_PROPOSING)
-            assert sm.transition(AgentMode.PLAN_WAITING)
-            assert sm.transition(AgentMode.PLAN_EXECUTING)
-            for _ in range(4):
+            assert sm.transition(AgentMode.PLAN)
+            assert sm.transition(AgentMode.EXECUTING)
+            for _ in range(2):
                 assert ws.receive_json()["type"] == "session_info"
 
             ws.send_json({"cmd": "set_mode", "mode": "auto"})
@@ -2012,8 +2010,8 @@ class TestSimpleCommands:
             info = _wait_for(ws, "session_info")
             assert info["session"]["gating_editable"] is True
             assert info["session"]["permission_mode"] == "auto"
-            # The plan turn is still reported as PLAN.
-            assert info["session"]["mode_label"] == "PLAN"
+            # Execution is ordinary EXECUTING, so the pill reads the gate.
+            assert info["session"]["mode_label"] == "AUTO"
 
     def test_unknown_command(self, tmp_path):
         llm = make_mock_llm()

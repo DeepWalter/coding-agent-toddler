@@ -14,21 +14,8 @@ State diagram (see ``docs/plans/plan.md``):
 ```
     IDLE ──► classify ──► EXECUTING ──► FINISHED
                │
-               └──► PLAN_EXPLORING ◄──────────────────┐
-                       │                              │
-                       ▼                              │
-                 PLAN_PROPOSING                       │
-                       │                              │
-                       ▼                              │
-                 PLAN_WAITING ─── reject (feedback) ──┘
-                  /         ╲
-         approve /           ╲ reject (plain)
-                /             ╲
-               ▼               ▼
-      PLAN_EXECUTING        FINISHED
-               │
-               ▼
-           FINISHED
+               └──► PLAN ──► EXECUTING   (approved)
+                        └──► FINISHED    (rejected / ended)
 ```
 """
 
@@ -55,25 +42,18 @@ logger = logging.getLogger(__name__)
 class AgentMode(Enum):
     """Operating modes for the agent loop.
 
-    There are five active operational states (plus IDLE / FINISHED bookends):
+    There are two active operational states (plus IDLE / FINISHED
+    bookends):
 
     * **EXECUTING** — normal tool-calling loop; make changes to accomplish
-      the user's request.
-    * **PLAN_EXPLORING** — research-only; read files, search code, gather
-      context.  No mutating tools allowed.
-    * **PLAN_PROPOSING** — the agent has finished exploring and is asked to
-      produce a structured JSON plan.
-    * **PLAN_WAITING** — a plan has been presented to the user; awaiting
-      approval, rejection, or feedback.
-    * **PLAN_EXECUTING** — executing the approved plan step by step.
+      the user's request.  An approved plan runs here too.
+    * **PLAN** — research-only planning; the model explores, calls
+      ``propose_plan``, and waits for the user's decision inside the loop.
     """
 
     IDLE = "idle"
     EXECUTING = "executing"
-    PLAN_EXPLORING = "plan_exploring"
-    PLAN_PROPOSING = "plan_proposing"
-    PLAN_WAITING = "plan_waiting"
-    PLAN_EXECUTING = "plan_executing"
+    PLAN = "plan"
     FINISHED = "finished"
 
     # ------------------------------------------------------------------
@@ -82,13 +62,8 @@ class AgentMode(Enum):
 
     @property
     def is_plan_related(self) -> bool:
-        """Return ``True`` when the mode is part of the plan workflow."""
-        return self in (
-            AgentMode.PLAN_EXPLORING,
-            AgentMode.PLAN_PROPOSING,
-            AgentMode.PLAN_WAITING,
-            AgentMode.PLAN_EXECUTING,
-        )
+        """Return ``True`` when the mode is the plan phase."""
+        return self is AgentMode.PLAN
 
     @property
     def is_terminal(self) -> bool:
@@ -206,13 +181,10 @@ class AgentStateMachine:
 
         # Classify the user's request:
         if sm.classify_and_transition(user_input, force_plan=False):
-            mode = sm.current_mode  # EXECUTING or PLAN_EXPLORING
+            mode = sm.current_mode  # EXECUTING or PLAN
 
-        # After the agent finishes exploring:
-        sm.transition(AgentMode.PLAN_PROPOSING)
-
-        # After the user approves:
-        sm.transition(AgentMode.PLAN_EXECUTING)
+        # After the user approves the proposed plan:
+        sm.transition(AgentMode.EXECUTING)
     """
 
     # ------------------------------------------------------------------
@@ -222,27 +194,14 @@ class AgentStateMachine:
     _VALID_TRANSITIONS: dict[AgentMode, set[AgentMode]] = {
         AgentMode.IDLE: {
             AgentMode.EXECUTING,
-            AgentMode.PLAN_EXPLORING,
+            AgentMode.PLAN,
         },
         AgentMode.EXECUTING: {
             AgentMode.FINISHED,
         },
-        AgentMode.PLAN_EXPLORING: {
-            AgentMode.PLAN_PROPOSING,
-            AgentMode.EXECUTING,   # plan approved — execution is ordinary
-            AgentMode.FINISHED,    # agent gives up / error
-        },
-        AgentMode.PLAN_PROPOSING: {
-            AgentMode.PLAN_WAITING,
-            AgentMode.FINISHED,  # failed to produce a valid plan
-        },
-        AgentMode.PLAN_WAITING: {
-            AgentMode.PLAN_EXECUTING,  # approved
-            AgentMode.PLAN_EXPLORING,  # rejected with feedback
-            AgentMode.FINISHED,        # rejected outright
-        },
-        AgentMode.PLAN_EXECUTING: {
-            AgentMode.FINISHED,
+        AgentMode.PLAN: {
+            AgentMode.EXECUTING,  # plan approved — execution is ordinary
+            AgentMode.FINISHED,   # rejected / ended without a plan
         },
         AgentMode.FINISHED: {
             AgentMode.IDLE,  # reset for next turn
@@ -318,19 +277,14 @@ class AgentStateMachine:
         return self._plan_pending
 
     @property
-    def is_plan_exploring(self) -> bool:
-        """Whether the machine is in the plan exploration phase."""
-        return self._mode == AgentMode.PLAN_EXPLORING
-
-    @property
-    def is_plan_executing(self) -> bool:
-        """Whether the machine is executing an approved plan."""
-        return self._mode == AgentMode.PLAN_EXECUTING
+    def is_plan(self) -> bool:
+        """Whether the machine is in the plan phase."""
+        return self._mode is AgentMode.PLAN
 
     @property
     def is_executing(self) -> bool:
-        """Whether the machine is in an execution phase — plain or plan."""
-        return self._mode in (AgentMode.EXECUTING, AgentMode.PLAN_EXECUTING)
+        """Whether the machine is in the ordinary execution loop."""
+        return self._mode is AgentMode.EXECUTING
 
     # ------------------------------------------------------------------
     # Transitions
@@ -382,7 +336,7 @@ class AgentStateMachine:
         Returns
         -------
         AgentMode
-            The new current mode (``EXECUTING`` or ``PLAN_EXPLORING``).
+            The new current mode (``EXECUTING`` or ``PLAN``).
         """
         should_plan = (
             force_plan
@@ -391,9 +345,7 @@ class AgentStateMachine:
         )
         self._plan_pending = False  # consume the flag
 
-        target = (
-            AgentMode.PLAN_EXPLORING if should_plan else AgentMode.EXECUTING
-        )
+        target = AgentMode.PLAN if should_plan else AgentMode.EXECUTING
         self.transition(target)
         return self._mode
 
@@ -444,15 +396,12 @@ class AgentStateMachine:
         :class:`~toddler.context.builder.SystemPromptBuilder`.
 
         Maps internal :class:`AgentMode` values to the strings that
-        :meth:`SystemPromptBuilder.build` understands:
-        ``"execute"``, ``"plan_exploring"``, or ``"plan_executing"``.
+        :meth:`SystemPromptBuilder.build` understands: ``"execute"`` or
+        ``"plan"``.
         """
         _map: dict[AgentMode, str] = {
             AgentMode.EXECUTING: "execute",
-            AgentMode.PLAN_EXPLORING: "plan_exploring",
-            AgentMode.PLAN_PROPOSING: "plan_exploring",
-            AgentMode.PLAN_WAITING: "plan_exploring",
-            AgentMode.PLAN_EXECUTING: "plan_executing",
+            AgentMode.PLAN: "plan",
         }
         return _map.get(self._mode, "execute")
 

@@ -64,9 +64,9 @@ def session_payload(mgr: SessionManager, cwd: str) -> dict:
     Everything here is read from the manager rather than captured at
     startup, so a frame cannot carry a model the session has moved off.
 
-    ``gating_editable`` is False while a plan is explored, proposed, or
-    awaiting approval — gating is pinned to manual until the plan is
-    approved, so the frontend's pill is frozen.
+    ``gating_editable`` is False while the turn is in ``PLAN`` — gating is
+    pinned to manual until the plan is approved, so the frontend's pill is
+    frozen.
 
     ``model`` is the *spec* the conversation runs with, and ``model_slots``
     the slots it could be switched to — each with the context window its
@@ -83,9 +83,7 @@ def session_payload(mgr: SessionManager, cwd: str) -> dict:
         "title": session.title if session else None,
         "mode_label": mgr.mode_label,
         "permission_mode": mgr.permission_mode.value,
-        "gating_editable": not (
-            sm.current_mode.is_plan_related and not sm.is_plan_executing
-        ),
+        "gating_editable": not sm.is_plan,
         "context_usage_pct": mgr.context_usage_pct,
         "model": mgr.model,
         "model_slot": mgr.model_slot,
@@ -298,7 +296,7 @@ class TurnRunner:
         """Broadcast the latest session info after a state-machine change.
 
         Synchronous observer called on every successful transition (and
-        gating flips) — e.g. classification into PLAN_EXPLORING must flip
+        gating flips) — e.g. classification into PLAN must flip
         the frontend's ``mode_label`` from MANUAL to PLAN mid-turn, and a
         plan approval may unpin gating / switch to auto.  The frame is the
         same ``session_info`` the slash commands broadcast, so tabs update
